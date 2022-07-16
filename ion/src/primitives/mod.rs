@@ -4,8 +4,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-pub use arguments::Arguments;
-pub use function::{Function, NativeFunction};
+pub use boolean::Boolean;
+pub use number::Number;
+pub use string::String;
 
-mod arguments;
-mod function;
+mod boolean;
+mod number;
+mod string;

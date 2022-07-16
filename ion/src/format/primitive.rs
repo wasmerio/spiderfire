@@ -6,39 +6,34 @@
 
 use colored::Colorize;
 use mozjs::conversions::jsstr_to_string;
-use mozjs::jsapi::Value;
 
-use crate::format::config::FormatConfig;
-use crate::IonContext;
+use crate::{Context, Local, Value};
+use crate::format::Config;
 
-/// Formats a primitive values to a [String] using the given configuration options
-/// Supported types are `boolean`, `number`, `string`, `null` and `undefined`
-pub fn format_primitive(cx: IonContext, cfg: FormatConfig, value: Value) -> String {
-	let colors = cfg.colors;
-
+pub fn format_primitive<'c>(cx: &Context<'c>, cfg: Config, value: &Local<'c, Value>) -> String {
 	if value.is_boolean() {
-		value.to_boolean().to_string().color(colors.boolean).to_string()
+		value.to_boolean().to_string().color(cfg.colors.boolean).to_string()
 	} else if value.is_number() {
 		let number = value.to_number();
 
 		if number == f64::INFINITY {
-			"Infinity".color(colors.number).to_string()
+			"Infinity".color(cfg.colors.number).to_string()
 		} else if number == f64::NEG_INFINITY {
-			"-Infinity".color(colors.number).to_string()
+			"-Infinity".color(cfg.colors.number).to_string()
 		} else {
-			number.to_string().color(colors.number).to_string()
+			number.to_string().color(cfg.colors.number).to_string()
 		}
 	} else if value.is_string() {
-		let str = unsafe { jsstr_to_string(cx, value.to_string()) };
+		let str = unsafe { jsstr_to_string(cx.cx(), value.to_jsstr()) };
 		if cfg.quoted {
-			format!("\"{}\"", str).color(colors.string).to_string()
+			format!(r#""{}""#, str).color(cfg.colors.string).to_string()
 		} else {
 			str
 		}
 	} else if value.is_null() {
-		"null".color(colors.null).to_string()
+		"null".color(cfg.colors.null).to_string()
 	} else if value.is_undefined() {
-		"undefined".color(colors.undefined).to_string()
+		"undefined".color(cfg.colors.undefined).to_string()
 	} else {
 		unreachable!("Internal Error: Expected Primitive")
 	}

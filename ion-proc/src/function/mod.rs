@@ -32,7 +32,7 @@ pub(crate) fn impl_js_fn(function: ItemFn) -> syn::Result<TokenStream> {
 	outer.sig.asyncness = None;
 	outer.sig.unsafety = Some(parse_quote!(unsafe));
 	let outer_params: [FnArg; 3] = [
-		parse_quote!(cx: #krate::IonContext),
+		parse_quote!(cx: *mut ::mozjs::jsapi::JSContext),
 		parse_quote!(argc: ::core::primitive::u32),
 		parse_quote!(vp: *mut ::mozjs::jsapi::Value),
 	];
@@ -40,7 +40,7 @@ pub(crate) fn impl_js_fn(function: ItemFn) -> syn::Result<TokenStream> {
 	outer.sig.output = parse_quote!(-> ::core::primitive::bool);
 
 	let body = quote!({
-		let args = #krate::functions::arguments::Arguments::new(argc, vp);
+		let args = #krate::functions::Arguments::new(argc, vp);
 
 		#inner
 

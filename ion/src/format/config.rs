@@ -9,7 +9,7 @@ use derivative::Derivative;
 
 #[derive(Clone, Copy, Debug, Derivative)]
 #[derivative(Default)]
-pub struct FormatConfig {
+pub struct Config {
 	pub colors: ColorConfig,
 	pub depth: u16,
 	pub indentation: u16,
@@ -18,21 +18,21 @@ pub struct FormatConfig {
 	pub quoted: bool,
 }
 
-impl FormatConfig {
-	pub fn depth(self, depth: u16) -> FormatConfig {
-		FormatConfig { depth, ..self }
+impl Config {
+	pub fn depth(self, depth: u16) -> Config {
+		Config { depth, ..self }
 	}
 
-	pub fn indentation(self, indentation: u16) -> FormatConfig {
-		FormatConfig { indentation, ..self }
+	pub fn indentation(self, indentation: u16) -> Config {
+		Config { indentation, ..self }
 	}
 
-	pub fn multiline(self, multiline: bool) -> FormatConfig {
-		FormatConfig { multiline, ..self }
+	pub fn multiline(self, multiline: bool) -> Config {
+		Config { multiline, ..self }
 	}
 
-	pub fn quoted(self, quoted: bool) -> FormatConfig {
-		FormatConfig { quoted, ..self }
+	pub fn quoted(self, quoted: bool) -> Config {
+		Config { quoted, ..self }
 	}
 }
 

@@ -6,101 +6,53 @@
 
 use std::ops::RangeBounds;
 
-use mozjs::jsapi::{CallArgs, Handle, MutableHandle, UndefinedHandleValue, Value};
-use mozjs::jsval::UndefinedValue;
+use mozjs::jsapi::CallArgs;
+use mozjs::jsval::JSVal;
 
-#[derive(Clone, Debug)]
-pub struct Arguments {
-	values: Vec<Handle<Value>>,
-	this: Handle<Value>,
-	rval: MutableHandle<Value>,
-	#[allow(dead_code)]
+use crate::{Context, Local, Value};
+
+pub struct Arguments<'s> {
+	values: Vec<Local<'s, Value>>,
+	this: Local<'s, Value>,
+	rval: Local<'s, Value>,
 	call_args: CallArgs,
 }
 
-impl Arguments {
-	pub unsafe fn new(argc: u32, vp: *mut Value) -> Arguments {
+impl<'s> Arguments<'s> {
+	pub unsafe fn new<'c>(cx: &'c Context, argc: u32, vp: *mut JSVal) -> Arguments<'c> {
 		let call_args = CallArgs::from_vp(vp, argc);
-		let values = (0..(argc + 1)).map(|i| call_args.get(i)).collect();
-		let this = call_args.thisv();
-		let rval = call_args.rval();
+		let values = (0..(argc + 1)).map(|i| Value::from_raw(cx, call_args.get(i).get())).collect();
+		let this = Value::from_raw(cx, call_args.thisv().get());
+		let rval = Value::from_raw(cx, call_args.rval().get());
 
 		Arguments { values, this, rval, call_args }
 	}
 
-	/// Returns the number of arguments.
 	#[allow(clippy::len_without_is_empty)]
 	pub fn len(&self) -> usize {
 		self.values.len()
 	}
 
-	/// Gets the handle of the value at the given index.
-	///
-	/// Returns [None] if the given index is larger than the number of arguments.
-	pub fn handle(&self, index: usize) -> Option<Handle<Value>> {
+	pub fn get(&self, index: usize) -> Option<&Local<'s, Value>> {
 		if self.len() > index + 1 {
-			return Some(self.values[index]);
+			return Some(&self.values[index]);
 		}
 		None
 	}
 
-	/// Gets the handle of the value at the given index.
-	///
-	/// Returns `undefined` if the given index is larger than the number of arguments.
-	pub fn handle_or_undefined(&self, index: usize) -> Handle<Value> {
-		if self.len() > index + 1 {
-			return self.values[index];
-		}
-		unsafe { UndefinedHandleValue }
+	pub fn range<R: Iterator<Item = usize> + RangeBounds<usize>>(&self, range: R) -> Vec<&Local<Value>> {
+		range.filter_map(|index| self.get(index)).collect()
 	}
 
-	/// Gets the value at the given index.
-	///
-	/// Returns [None] if the given index is larger than the number of arguments.
-	pub fn value(&self, index: usize) -> Option<Value> {
-		if self.len() > index + 1 {
-			return Some(self.values[index].get());
-		}
-		None
+	pub fn this(&self) -> &Local<'s, Value> {
+		&self.this
 	}
 
-	/// Gets the value at the given index.
-	///
-	/// Returns `undefined` if the given index is larger than the number of arguments.
-	pub fn value_or_undefined(&self, index: usize) -> Value {
-		if self.len() > index + 1 {
-			return self.values[index].get();
-		}
-		UndefinedValue()
-	}
-
-	pub fn range<R: Iterator<Item = usize> + RangeBounds<usize>>(&self, range: R) -> Vec<Value> {
-		range.filter_map(|index| self.value(index)).collect()
-	}
-
-	pub fn range_handles<R: Iterator<Item = usize> + RangeBounds<usize>>(&self, range: R) -> Vec<Handle<Value>> {
-		range.filter_map(|index| self.handle(index)).collect()
-	}
-
-	pub fn range_full(&self) -> Vec<Value> {
-		self.values.iter().map(|value| value.get()).collect()
-	}
-
-	/// Returns the `this` value of the current scope.
-	pub fn this(&self) -> Handle<Value> {
-		self.this
-	}
-
-	/// Returns the mutable return value of the function.
-	pub fn rval(&self) -> MutableHandle<Value> {
-		self.rval
+	pub fn rval(&mut self) -> &mut Local<'s, Value> {
+		&mut self.rval
 	}
 
 	pub fn is_constructing(&self) -> bool {
 		self.call_args.constructing_()
-	}
-
-	pub fn call_args(&self) -> CallArgs {
-		self.call_args
 	}
 }

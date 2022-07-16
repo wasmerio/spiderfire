@@ -5,28 +5,27 @@
  */
 
 use mozjs::jsapi::{ESClass, Unbox};
+use mozjs::rust::{Handle, MutableHandle};
 
-use crate::format::config::FormatConfig;
+use crate::{Context, Local, Object, Value};
+use crate::format::Config;
 use crate::format::primitive::format_primitive;
-use crate::IonContext;
-use crate::objects::object::{IonObject, IonRawObject};
 
-/// Formats a boxed object to a [String] using the given configuration options
-/// Supported types are `Boolean`, `Number`, `String` and `BigInt`
-pub fn format_boxed(cx: IonContext, cfg: FormatConfig, object: IonRawObject, class: ESClass) -> String {
-	rooted!(in(cx) let robj = object);
-	rooted!(in(cx) let mut unboxed = IonObject::new(cx).to_value());
+pub fn format_boxed<'c>(cx: &Context<'c>, cfg: Config, object: &Local<'c, Object>, class: ESClass) -> String {
+	let handle = unsafe { Handle::from_marked_location(&object.obj) };
+	let mut unboxed = Value::undefined(cx);
+	let unboxed_handle = unsafe { MutableHandle::from_marked_location(&mut unboxed.val) };
 
 	unsafe {
-		if Unbox(cx, robj.handle().into(), unboxed.handle_mut().into()) {
+		if Unbox(cx.cx(), handle.into(), unboxed_handle.into()) {
 			use ESClass::*;
 			match class {
-				Boolean | Number | String => format_primitive(cx, cfg, unboxed.get()),
+				Boolean | Number | String => format_primitive(cx, cfg, &unboxed),
 				BigInt => format!("Unimplemented Formatting: {}", "BigInt"),
 				_ => unreachable!(),
 			}
 		} else {
-			String::from("Boxed Value")
+			String::from("Internal Error: Unbox Failure")
 		}
 	}
 }

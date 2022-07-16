@@ -4,106 +4,79 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
-use mozjs::conversions::{ConversionResult, FromJSValConvertible, ToJSValConvertible};
+use mozjs::conversions::{ConversionResult, FromJSValConvertible};
 use mozjs::error::throw_type_error;
-use mozjs::jsapi::{
-	AssertSameCompartment, GetArrayLength, HandleValueArray, IsArray, JS_DefineElement, JS_DeleteElement1, JS_GetElement, JS_HasElement,
-	JS_SetElement, JSTracer, NewArrayObject, Value,
-};
-use mozjs::jsval::{ObjectValue, UndefinedValue};
-use mozjs::rust::{CustomTrace, HandleValue, maybe_wrap_object_value, MutableHandleValue};
+use mozjs::jsapi::{AssertSameCompartment, HandleValueArray, JS, JSObject, JSVal, NewArrayObject, ObjectOpResult};
+use mozjs::jsval::ObjectValue;
+use mozjs::rust::{Handle, MutableHandle};
+use mozjs::rust::jsapi_wrapped::{GetArrayLength, IsArray, JS_DefineElement, JS_DeleteElement, JS_GetElement, JS_HasElement, JS_SetElement};
+use mozjs_sys::jsgc::{GCMethods, RootKind};
+use mozjs_sys::jsval::JSVal;
 
+use crate::{Context, Local, Value};
 use crate::exception::Exception;
-use crate::IonContext;
-use crate::objects::object::IonRawObject;
-use crate::types::values::from_value;
+use crate::flags::PropertyFlags;
+use crate::value::{FromValue, ToValue};
 
-#[derive(Clone, Copy, Debug)]
-pub struct IonArray {
-	obj: IonRawObject,
+#[derive(Clone, Debug)]
+pub struct Array {
+	pub(crate) arr: *mut JSObject,
 }
 
-impl IonArray {
-	/// Returns the wrapped [IonRawObject].
-	pub unsafe fn raw(&self) -> IonRawObject {
-		self.obj
+impl Array {
+	pub fn new<'c>(cx: &Context<'c>) -> Local<'c, Array> {
+		Array::from_slice(cx, &[])
 	}
 
-	/// Creates an empty [IonArray].
-	pub unsafe fn new(cx: IonContext) -> IonArray {
-		IonArray::from_slice(cx, &[])
+	pub fn from_slice<'c>(cx: &Context<'c>, slice: &[Local<Value>]) -> Local<'c, Array> {
+		let values: Vec<_> = slice.iter().map(|x| ***x).collect();
+		Array::from_handle(cx, unsafe { HandleValueArray::from_rooted_slice(values.as_slice()) })
 	}
 
-	/// Creates an [IonArray] from a [Vec].
-	pub unsafe fn from_vec(cx: IonContext, vec: Vec<Value>) -> IonArray {
-		IonArray::from_slice(cx, vec.as_slice())
+	pub(crate) fn from_handle<'c>(cx: &Context<'c>, handle: HandleValueArray) -> Local<'c, Array> {
+		let arr = unsafe { NewArrayObject(cx.cx(), &handle) };
+		Local::new(cx, Array { arr })
 	}
 
-	/// Creates an [IonArray] from a slice.
-	pub unsafe fn from_slice(cx: IonContext, slice: &[Value]) -> IonArray {
-		IonArray::from_handle(cx, HandleValueArray::from_rooted_slice(slice))
-	}
-
-	/// Creates an [IonArray] from a [HandleValueArray].
-	pub unsafe fn from_handle(cx: IonContext, handle: HandleValueArray) -> IonArray {
-		IonArray::from(cx, NewArrayObject(cx, &handle)).unwrap()
-	}
-
-	/// Creates an [IonArray] from an [IonRawObject].
-	///
-	/// Returns [None] if the object is not an array.
-	pub unsafe fn from(cx: IonContext, obj: IonRawObject) -> Option<IonArray> {
-		if IonArray::is_array_raw(cx, obj) {
-			Some(IonArray { obj })
+	pub(crate) fn from_raw<'c>(cx: &Context<'c>, arr: *mut JSObject) -> Option<Local<'c, Array>> {
+		if unsafe { Array::is_array_raw(cx, arr) } {
+			Some(Local::new(cx, Array { arr }))
 		} else {
 			None
 		}
 	}
 
-	/// Creates an [IonArray] from a [Value].
-	///
-	/// Returns [None] if the value is not an object or an array.
-	pub unsafe fn from_value(cx: IonContext, val: Value) -> Option<IonArray> {
-		if val.is_object() {
-			IonArray::from(cx, val.to_object())
-		} else {
-			None
-		}
-	}
-
-	/// Converts an [IonArray] to a [Vec].
-	///
-	/// Returns an empty [Vec] if the conversion fails.
-	pub unsafe fn to_vec(&self, cx: IonContext) -> Vec<Value> {
-		rooted!(in(cx) let obj = ObjectValue(self.obj));
-		if let ConversionResult::Success(vec) = Vec::<Value>::from_jsval(cx, obj.handle(), ()).unwrap() {
-			vec
+	pub fn to_vec<'c>(&self, cx: &Context<'c>) -> Vec<Local<'c, Value>> {
+		let handle = unsafe { Handle::from_marked_location(&**self.to_value(cx)) };
+		if let ConversionResult::Success(vec) = unsafe { Vec::<JSVal>::from_jsval(cx.cx(), handle, ()).unwrap() } {
+			vec.into_iter().map(|v| Value::from_raw(cx, v)).collect()
 		} else {
 			Vec::new()
 		}
 	}
 
-	/// Converts an [IonArray] to a [Value].
-	pub unsafe fn to_value(&self) -> Value {
-		ObjectValue(self.obj)
+	pub fn to_value<'c>(&self, cx: &Context<'c>) -> Local<'c, Value> {
+		Value::from_raw(cx, ObjectValue(self.arr))
 	}
 
-	/// Returns the length of an [IonArray].
-	#[allow(clippy::len_without_is_empty)]
-	pub unsafe fn len(&self, cx: IonContext) -> u32 {
-		rooted!(in(cx) let robj = self.obj);
-		let mut length = 0;
-		GetArrayLength(cx, robj.handle().into(), &mut length);
-		length
+	pub fn len(&self, cx: &Context) -> Option<u32> {
+		let handle = unsafe { Handle::from_marked_location(&self.arr) };
+
+		let mut length = u32::MAX;
+		if unsafe { GetArrayLength(cx.cx(), handle, &mut length) } {
+			Some(length)
+		} else {
+			None
+		}
 	}
 
-	/// Checks if an array has the given index.
-	pub unsafe fn has(&self, cx: IonContext, index: u32) -> bool {
-		rooted!(in(cx) let robj = self.obj);
+	pub fn has(&self, cx: &Context, index: u32) -> bool {
+		let handle = unsafe { Handle::from_marked_location(&self.arr) };
 		let mut found = false;
-		if JS_HasElement(cx, robj.handle().into(), index, &mut found) {
+
+		if unsafe { JS_HasElement(cx.cx(), handle, index, &mut found) } {
 			found
 		} else {
 			Exception::clear(cx);
@@ -111,100 +84,96 @@ impl IonArray {
 		}
 	}
 
-	/// Gets the [Value] at the given index.
-	pub unsafe fn get(&self, cx: IonContext, index: u32) -> Option<Value> {
+	pub fn get<'c>(&self, cx: &Context<'c>, index: u32) -> Option<Local<'c, Value>> {
 		if self.has(cx, index) {
-			rooted!(in(cx) let robj = self.obj);
-			rooted!(in(cx) let mut rval: Value);
-			JS_GetElement(cx, robj.handle().into(), index, rval.handle_mut().into());
-			Some(rval.get())
+			let handle = unsafe { Handle::from_marked_location(&self.arr) };
+			let mut val = Value::undefined(cx);
+			unsafe { JS_GetElement(cx.cx(), handle, index, &mut MutableHandle::from_marked_location(&mut **val)) };
+			Some(val)
 		} else {
 			None
 		}
 	}
 
-	/// Gets the [Value] at the given index as a Rust type.
-	pub unsafe fn get_as<T: FromJSValConvertible>(&self, cx: IonContext, index: u32, config: T::Config) -> Option<T> {
-		let opt = self.get(cx, index);
-		opt.map(|val| from_value(cx, val, config)).flatten()
+	pub fn set(&mut self, cx: &Context, index: u32, value: Local<Value>) -> bool {
+		let handle = unsafe { Handle::from_marked_location(&self.arr) };
+
+		unsafe { JS_SetElement(cx.cx(), handle, index, Handle::from_marked_location(&**value)) }
 	}
 
-	/// Sets the [Value] at the given index.
-	pub unsafe fn set(&mut self, cx: IonContext, index: u32, value: Value) -> bool {
-		rooted!(in(cx) let robj = self.obj);
-		rooted!(in(cx) let rval = value);
-		JS_SetElement(cx, robj.handle().into(), index, rval.handle().into())
+	pub fn define(&mut self, cx: &Context, index: u32, value: Local<Value>, attrs: PropertyFlags) -> bool {
+		let handle = unsafe { Handle::from_marked_location(&self.arr) };
+
+		unsafe { JS_DefineElement(cx.cx(), handle, index, Handle::from_marked_location(&**value), attrs.bits() as u32) }
 	}
 
-	pub unsafe fn set_as<T: ToJSValConvertible>(&mut self, cx: IonContext, index: u32, value: T) -> bool {
-		rooted!(in(cx) let mut val = UndefinedValue());
-		value.to_jsval(cx, val.handle_mut());
-		self.set(cx, index, val.get())
+	pub fn delete(&self, cx: &Context, index: u32) -> (bool, ObjectOpResult) {
+		let handle = unsafe { Handle::from_marked_location(&self.arr) };
+
+		let mut result = ObjectOpResult { code_: 0 };
+
+		(unsafe { JS_DeleteElement(cx.cx(), handle, index, &mut result) }, result)
 	}
 
-	/// Defines the [Value] at the given index with the given attributes.
-	unsafe fn define(&mut self, cx: IonContext, index: u32, value: Value, attrs: u32) -> bool {
-		rooted!(in(cx) let robj = self.obj);
-		rooted!(in(cx) let rval = value);
-		JS_DefineElement(cx, robj.handle().into(), index, rval.handle().into(), attrs)
-	}
+	pub(crate) unsafe fn is_array_raw(cx: &Context, obj: *mut JSObject) -> bool {
+		rooted!(in(cx.cx()) let mut robj = obj);
 
-	pub unsafe fn define_as<T: ToJSValConvertible>(&mut self, cx: IonContext, index: u32, value: T, attrs: u32) -> bool {
-		rooted!(in(cx) let mut val = UndefinedValue());
-		value.to_jsval(cx, val.handle_mut());
-		self.define(cx, index, val.get(), attrs)
-	}
-
-	/// Deletes the [Value] at the given index.
-	pub unsafe fn delete(&mut self, cx: IonContext, index: u32) -> bool {
-		rooted!(in(cx) let robj = self.obj);
-		JS_DeleteElement1(cx, robj.handle().into(), index)
-	}
-
-	/// Checks if an [IonRawObject] is an array.
-	pub unsafe fn is_array_raw(cx: IonContext, obj: IonRawObject) -> bool {
-		rooted!(in(cx) let mut robj = obj);
 		let mut is_array = false;
-		IsArray(cx, robj.handle().into(), &mut is_array) && is_array
+		IsArray(cx.cx(), robj.handle(), &mut is_array) && is_array
 	}
 }
 
-impl FromJSValConvertible for IonArray {
-	type Config = ();
-	#[inline]
-	unsafe fn from_jsval(cx: IonContext, value: HandleValue, _option: ()) -> Result<ConversionResult<IonArray>, ()> {
+impl RootKind for Array {
+	#[allow(non_snake_case)]
+	fn rootKind() -> JS::RootKind {
+		JS::RootKind::Object
+	}
+}
+
+impl GCMethods for Array {
+	unsafe fn initial() -> Self {
+		Array { arr: GCMethods::initial() }
+	}
+
+	unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self) {
+		GCMethods::post_barrier(&mut (*v).arr, prev.arr, next.arr)
+	}
+}
+
+impl Deref for Array {
+	type Target = *mut JSObject;
+
+	fn deref(&self) -> &Self::Target {
+		&self.arr
+	}
+}
+
+impl DerefMut for Array {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.arr
+	}
+}
+
+impl FromValue for Array {
+	fn from_value<'c, 's: 'c>(cx: &Context<'c>, value: Local<'s, Value>) -> Result<Local<'c, Self>, ()> {
 		if !value.is_object() {
-			throw_type_error(cx, "Value is not an object");
+			unsafe { throw_type_error(cx.cx(), "Value is not an object") };
 			return Err(());
 		}
 
-		AssertSameCompartment(cx, value.to_object());
-		if let Some(array) = IonArray::from(cx, value.to_object()) {
-			Ok(ConversionResult::Success(array))
-		} else {
-			Err(())
+		let object = value.to_object();
+		unsafe { AssertSameCompartment(cx.cx(), object) };
+		if unsafe { !Array::is_array_raw(cx, object) } {
+			unsafe { throw_type_error(cx.cx(), "Value is not an array") };
+			return Err(());
 		}
+
+		Array::from_raw(cx, object).ok_or(())
 	}
 }
 
-impl ToJSValConvertible for IonArray {
-	#[inline]
-	unsafe fn to_jsval(&self, cx: IonContext, mut rval: MutableHandleValue) {
-		rval.set(self.to_value());
-		maybe_wrap_object_value(cx, rval);
-	}
-}
-
-impl Deref for IonArray {
-	type Target = IonRawObject;
-
-	fn deref(&self) -> &Self::Target {
-		&self.obj
-	}
-}
-
-unsafe impl CustomTrace for IonArray {
-	fn trace(&self, tracer: *mut JSTracer) {
-		self.obj.trace(tracer)
+impl ToValue for Array {
+	fn to_value<'c, 's: 'c>(this: Local<'s, Self>, cx: &Context<'c>) -> Local<'c, Value> {
+		this.to_value(cx)
 	}
 }

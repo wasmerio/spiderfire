@@ -6,17 +6,13 @@
 
 use colored::Colorize;
 
-use crate::format::config::FormatConfig;
-use crate::IonContext;
-use crate::objects::date::IonDate;
+use crate::{Context, Date, Local};
+use crate::format::Config;
 
-/// Formats an [IonDate] to a [String] using the given configuration options
-pub fn format_date(cx: IonContext, cfg: FormatConfig, date: IonDate) -> String {
-	unsafe {
-		if let Some(date) = date.to_date(cx) {
-			date.to_string().color(cfg.colors.date).to_string()
-		} else {
-			panic!("Failed to unbox Date");
-		}
+pub fn format_date<'c>(cx: &Context<'c>, cfg: Config, date: &Local<'c, Date>) -> String {
+	if let Some(date) = date.to_date(cx) {
+		date.to_string().color(cfg.colors.date).to_string()
+	} else {
+		String::from("Format Error: Failed to Unbox Date")
 	}
 }

@@ -4,136 +4,113 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use mozjs::conversions::{ConversionResult, FromJSValConvertible, jsstr_to_string, ToJSValConvertible};
+use std::ops::{Deref, DerefMut};
+
+use mozjs::conversions::jsstr_to_string;
 use mozjs::error::throw_type_error;
 use mozjs::jsapi::{
-	AssertSameCompartment, HandleValueArray, JS_CallFunction, JS_DecompileFunction, JS_GetFunctionArity, JS_GetFunctionDisplayId, JS_GetFunctionId,
-	JS_GetFunctionLength, JS_GetFunctionObject, JS_GetObjectFunction, JS_IsBuiltinEvalFunction, JS_IsBuiltinFunctionConstructor, JS_IsConstructor,
-	JS_IsFunctionBound, JS_NewFunction, JS_ObjectIsFunction, JSFunction, JSFunctionSpec, JSTracer, NewFunctionFromSpec1, Value,
+	AssertSameCompartment, HandleValueArray, JS, JS_GetFunctionArity, JS_GetFunctionDisplayId, JS_GetFunctionId, JS_GetFunctionObject,
+	JS_GetObjectFunction, JS_NewFunction, JS_ObjectIsFunction, JSContext, JSFunction, JSFunctionSpec, JSObject, NewFunctionFromSpec1,
 };
-use mozjs::jsval::{ObjectValue, UndefinedValue};
-use mozjs::rust::{CustomTrace, HandleValue, maybe_wrap_object_value, MutableHandleValue};
+use mozjs::jsval::JSVal;
+use mozjs::rust::{Handle, MutableHandle};
+use mozjs::rust::jsapi_wrapped::{JS_CallFunction, JS_DecompileFunction, JS_GetFunctionLength};
+use mozjs_sys::jsgc::{GCMethods, RootKind};
 
+use crate::{Context, Local, Object, Value};
 use crate::exception::{ErrorReport, Exception};
-use crate::IonContext;
-use crate::objects::object::{IonObject, IonRawObject};
+use crate::value::{FromValue, ToValue};
 
-pub type IonNativeFunction = unsafe extern "C" fn(IonContext, u32, *mut Value) -> bool;
-pub type IonRawFunction = *mut JSFunction;
+pub type NativeFunction = unsafe extern "C" fn(*mut JSContext, u32, *mut JSVal) -> bool;
 
-#[derive(Clone, Copy, Debug)]
-pub struct IonFunction {
-	fun: IonRawFunction,
+#[derive(Clone, Debug)]
+pub struct Function {
+	pub(crate) func: *mut JSFunction,
 }
 
-impl IonFunction {
-	/// Returns the wrapped [IonRawFunction].
-	pub unsafe fn raw(&self) -> IonRawFunction {
-		self.fun
-	}
-
-	/// Creates a new [IonFunction] with the given name, native function, number of arguments and flags.
-	pub unsafe fn new(cx: IonContext, name: &str, func: Option<IonNativeFunction>, nargs: u32, flags: u32) -> IonFunction {
+impl Function {
+	pub fn new<'c>(cx: &Context<'c>, name: &str, func: Option<NativeFunction>, nargs: u32, flags: u32) -> Local<'c, Function> {
 		let name = format!("{}\0", name);
-		IonFunction::from(JS_NewFunction(cx, func, nargs, flags, name.as_ptr() as *const i8))
+		Function::from_raw(cx, unsafe { JS_NewFunction(cx.cx(), func, nargs, flags, name.as_ptr() as *const i8) })
 	}
 
-	/// Creates a new [IonFunction] with the given function spec.
-	pub unsafe fn from_spec(cx: IonContext, spec: *const JSFunctionSpec) -> IonFunction {
-		IonFunction::from(NewFunctionFromSpec1(cx, spec))
+	pub fn from_spec<'c>(cx: &Context<'c>, spec: *const JSFunctionSpec) -> Local<'c, Function> {
+		Function::from_raw(cx, unsafe { NewFunctionFromSpec1(cx.cx(), spec) })
 	}
 
-	/// Creates a new [IonFunction] from an [IonRawFunction].
-	pub unsafe fn from(fun: IonRawFunction) -> IonFunction {
-		IonFunction { fun }
-	}
-
-	/// Creates a new [IonFunction] from an [IonRawObject].
-	///
-	/// Returns [None] if the object is not a function.
-	pub unsafe fn from_object(obj: IonRawObject) -> Option<IonFunction> {
-		if IonFunction::is_function_raw(obj) {
-			Some(IonFunction { fun: JS_GetObjectFunction(obj) })
+	pub unsafe fn from_object_raw<'c>(cx: &Context<'c>, obj: *mut JSObject) -> Option<Local<'c, Function>> {
+		if Function::is_function_raw(obj) {
+			Some(Function::from_raw(cx, JS_GetObjectFunction(obj)))
 		} else {
 			None
 		}
 	}
 
-	/// Creates a new [IonFunction] from an [IonRawObject].
-	///
-	/// Returns [None] if the object is not a function.
-	pub unsafe fn from_value(val: Value) -> Option<IonFunction> {
-		if val.is_object() {
-			IonFunction::from_object(val.to_object())
-		} else {
-			None
+	pub fn from_raw<'c>(cx: &Context<'c>, func: *mut JSFunction) -> Local<'c, Function> {
+		Local::new(cx, Function { func })
+	}
+
+	pub fn to_object<'c>(&self, cx: &Context<'c>) -> Local<'c, Object> {
+		Object::from_raw(cx, unsafe { JS_GetFunctionObject(self.func) })
+	}
+
+	pub fn to_string(&self, cx: &Context) -> String {
+		unsafe {
+			let handle = Handle::from_marked_location(&self.func);
+			let str = JS_DecompileFunction(cx.cx(), handle);
+			jsstr_to_string(cx.cx(), str)
 		}
 	}
 
-	/// Converts a [IonFunction] to a [IonRawObject].
-	pub unsafe fn to_object(&self) -> IonRawObject {
-		JS_GetFunctionObject(self.fun)
-	}
-
-	/// Converts a [IonFunction] to a [Value].
-	pub unsafe fn to_value(&self) -> Value {
-		ObjectValue(self.to_object())
-	}
-
-	/// Converts a [IonFunction] to a [String].
-	pub unsafe fn to_string(&self, cx: IonContext) -> String {
-		rooted!(in(cx) let fun = self.fun);
-		let str = JS_DecompileFunction(cx, fun.handle().into());
-		jsstr_to_string(cx, str)
-	}
-
-	/// Returns the name of a function.
-	pub unsafe fn name(&self, cx: IonContext) -> Option<String> {
-		let id = JS_GetFunctionId(self.fun);
-
+	pub fn name(&self, cx: &Context) -> Option<String> {
+		let id = unsafe { JS_GetFunctionId(self.func) };
 		if !id.is_null() {
-			Some(jsstr_to_string(cx, id))
+			Some(unsafe { jsstr_to_string(cx.cx(), id) })
 		} else {
 			None
 		}
 	}
 
-	/// Returns the display name of a function.
-	pub unsafe fn display_name(&self, cx: IonContext) -> Option<String> {
-		let id = JS_GetFunctionDisplayId(self.fun);
+	pub fn display_name(&self, cx: &Context) -> Option<String> {
+		let id = unsafe { JS_GetFunctionDisplayId(self.func) };
 		if !id.is_null() {
-			Some(jsstr_to_string(cx, id))
+			Some(unsafe { jsstr_to_string(cx.cx(), id) })
 		} else {
 			None
 		}
 	}
 
-	/// Returns the number of arguments of a function.
-	pub unsafe fn nargs(&self) -> u16 {
-		JS_GetFunctionArity(self.fun)
+	pub fn nargs(&self) -> u16 {
+		unsafe { JS_GetFunctionArity(self.func) }
 	}
 
-	/// Returns the length of a function.
-	pub unsafe fn length(&self, cx: IonContext) -> Option<u16> {
-		rooted!(in(cx) let fun = self.fun);
+	pub fn length(&self, cx: &Context) -> Option<u16> {
+		let handle = unsafe { Handle::from_marked_location(&self.func) };
 		let mut length = 0;
-		if JS_GetFunctionLength(cx, fun.handle().into(), &mut length) {
+		if unsafe { JS_GetFunctionLength(cx.cx(), handle, &mut length) } {
 			Some(length)
 		} else {
 			None
 		}
 	}
 
-	/// Calls a function with the given `this` object and arguments.
-	///
-	/// Returns [Err] if the function call fails or an exception occurs.
-	pub unsafe fn call(&self, cx: IonContext, this: IonObject, args: HandleValueArray) -> Result<Value, Option<ErrorReport>> {
-		rooted!(in(cx) let fun = self.fun);
-		rooted!(in(cx) let this = this.raw());
-		rooted!(in(cx) let mut rval = UndefinedValue());
+	pub fn call<'c>(
+		&self, cx: &Context<'c>, this: &Local<'c, Object>, args: Vec<&Local<'c, Value>>,
+	) -> Result<Local<'c, Value>, Option<ErrorReport>> {
+		let values = args.iter().map(|v| ****v).collect::<Vec<JSVal>>();
+		self.call_handle(cx, this, unsafe { HandleValueArray::from_rooted_slice(&values) })
+	}
 
-		if JS_CallFunction(cx, this.handle().into(), fun.handle().into(), &args, rval.handle_mut().into()) {
-			Ok(rval.get())
+	pub fn call_handle<'c>(
+		&self, cx: &Context<'c>, this: &Local<'c, Object>, args: HandleValueArray,
+	) -> Result<Local<'c, Value>, Option<ErrorReport>> {
+		let handle = unsafe { Handle::from_marked_location(&self.func) };
+		let this = unsafe { Handle::from_marked_location(&(*this).obj) };
+		let mut rval = Value::undefined(cx);
+		let mut rval_handle = unsafe { MutableHandle::from_marked_location(&mut rval.val) };
+
+		if unsafe { JS_CallFunction(cx.cx(), this, handle, &args, &mut rval_handle) } {
+			Ok(rval)
 		} else if let Some(exception) = Exception::new(cx) {
 			Err(Some(ErrorReport::new(exception)))
 		} else {
@@ -141,67 +118,57 @@ impl IonFunction {
 		}
 	}
 
-	/// Calls a function with the given `this` object and arguments as a [Vec].
-	///
-	/// Returns [Err] if the function call fails or an exception occurs.
-	pub unsafe fn call_with_vec(&self, cx: IonContext, this: IonObject, args: Vec<Value>) -> Result<Value, Option<ErrorReport>> {
-		self.call(cx, this, HandleValueArray::from_rooted_slice(args.as_slice()))
-	}
-
-	/// Checks if an [IonRawObject] is a function.
-	pub unsafe fn is_function_raw(obj: IonRawObject) -> bool {
+	pub(crate) unsafe fn is_function_raw(obj: *mut JSObject) -> bool {
 		JS_ObjectIsFunction(obj)
-	}
-
-	/// Checks if a function is bound.
-	pub unsafe fn is_bound(&self) -> bool {
-		JS_IsFunctionBound(self.fun)
-	}
-
-	/// Checks if a function is the built-in eval function.
-	pub unsafe fn is_eval(&self) -> bool {
-		JS_IsBuiltinEvalFunction(self.fun)
-	}
-
-	/// Checks if a function is a constructor.
-	pub unsafe fn is_constructor(&self) -> bool {
-		JS_IsConstructor(self.fun)
-	}
-
-	/// Checks if a function is a built-in function constructor.
-	pub unsafe fn is_function_constructor(&self) -> bool {
-		JS_IsBuiltinFunctionConstructor(self.fun)
 	}
 }
 
-impl FromJSValConvertible for IonFunction {
-	type Config = ();
-	#[inline]
-	unsafe fn from_jsval(cx: IonContext, value: HandleValue, _option: ()) -> Result<ConversionResult<IonFunction>, ()> {
-		if !value.is_object() {
-			throw_type_error(cx, "Value is not an object");
+impl RootKind for Function {
+	#[allow(non_snake_case)]
+	fn rootKind() -> JS::RootKind {
+		JS::RootKind::Object
+	}
+}
+
+impl GCMethods for Function {
+	unsafe fn initial() -> Self {
+		Function { func: GCMethods::initial() }
+	}
+
+	unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self) {
+		GCMethods::post_barrier(&mut (*v).func, prev.func, next.func)
+	}
+}
+
+impl Deref for Function {
+	type Target = *mut JSFunction;
+
+	fn deref(&self) -> &Self::Target {
+		&self.func
+	}
+}
+
+impl DerefMut for Function {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.func
+	}
+}
+
+impl FromValue for Function {
+	fn from_value<'c, 's: 'c>(cx: &Context<'c>, value: Local<'s, Value>) -> Result<Local<'c, Self>, ()> {
+		if !value.is_object() && unsafe { !Function::is_function_raw((**value).to_object()) } {
+			unsafe { throw_type_error(cx.cx(), "Value is not a function") };
 			return Err(());
 		}
 
-		AssertSameCompartment(cx, value.to_object());
-		if let Some(fun) = IonFunction::from_object(value.to_object()) {
-			Ok(ConversionResult::Success(fun))
-		} else {
-			Err(())
-		}
+		let object = value.to_object();
+		unsafe { AssertSameCompartment(cx.cx(), object) };
+		Ok(unsafe { Function::from_object_raw(cx, object).unwrap() })
 	}
 }
 
-impl ToJSValConvertible for IonFunction {
-	#[inline]
-	unsafe fn to_jsval(&self, cx: IonContext, mut rval: MutableHandleValue) {
-		rval.set(self.to_value());
-		maybe_wrap_object_value(cx, rval);
-	}
-}
-
-unsafe impl CustomTrace for IonFunction {
-	fn trace(&self, tracer: *mut JSTracer) {
-		unsafe { self.to_object().trace(tracer) }
+impl ToValue for Function {
+	fn to_value<'c, 's: 'c>(this: Local<'s, Self>, cx: &Context<'c>) -> Local<'c, Value> {
+		this.to_object(cx).to_value(cx)
 	}
 }

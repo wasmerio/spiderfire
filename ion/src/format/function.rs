@@ -6,10 +6,10 @@
 
 use indent::indent_by;
 
-use crate::format::config::FormatConfig;
-use crate::functions::function::IonFunction;
-use crate::IonContext;
+use crate::{Context, Local};
+use crate::format::Config;
+use crate::functions::Function;
 
-pub unsafe fn format_function(cx: IonContext, cfg: FormatConfig, function: IonFunction) -> String {
+pub fn format_function<'c>(cx: &Context<'c>, cfg: Config, function: &Local<'c, Function>) -> String {
 	indent_by((2 * (cfg.indentation + cfg.depth)) as usize, &function.to_string(cx))
 }

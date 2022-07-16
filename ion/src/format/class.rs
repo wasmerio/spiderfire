@@ -9,15 +9,14 @@ use std::ffi::CStr;
 use colored::Colorize;
 use mozjs::rust::get_object_class;
 
-use crate::format::config::FormatConfig;
-use crate::format::object::format_object_raw;
-use crate::IonContext;
-use crate::objects::object::IonObject;
+use crate::{Context, Local, Object};
+use crate::format::Config;
+use crate::format::object::format_plain_object;
 
-pub unsafe fn format_class_object(cx: IonContext, cfg: FormatConfig, object: IonObject) -> String {
-	let class = get_object_class(object.raw());
-	let name = CStr::from_ptr((*class).name).to_str().unwrap();
+pub fn format_class_object<'c>(cx: &Context<'c>, cfg: Config, object: &Local<'c, Object>) -> String {
+	let class = unsafe { get_object_class(***object) };
+	let name = unsafe { CStr::from_ptr((*class).name).to_str().unwrap() };
 
-	let string = format_object_raw(cx, cfg, object);
+	let string = format_plain_object(cx, cfg, object);
 	format!("{} {}", name.color(cfg.colors.object), string)
 }
