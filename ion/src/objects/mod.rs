@@ -8,12 +8,15 @@ use mozjs::jsapi::{JSCLASS_RESERVED_SLOTS_MASK, JSCLASS_RESERVED_SLOTS_SHIFT};
 
 pub use array::Array;
 pub use date::Date;
+pub(crate) use iterator::ForOfIteratorGuard;
+pub use iterator::Iterator;
 pub use key::Key;
 pub use object::Object;
 pub use promise::Promise;
 
 mod array;
 mod date;
+mod iterator;
 mod key;
 mod object;
 mod promise;

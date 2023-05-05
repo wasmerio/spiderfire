@@ -10,12 +10,13 @@ use std::ops::Deref;
 use std::ptr;
 
 use mozjs::gc::RootedTraceableSet;
-use mozjs::jsapi::{Heap, JSContext, JSFunction, JSObject, JSScript, JSString, PropertyKey, Rooted, Symbol};
+use mozjs::jsapi::{ForOfIterator, Heap, JSContext, JSFunction, JSObject, JSScript, JSString, PropertyKey, Rooted, Symbol};
 use mozjs::jsval::JSVal;
 use mozjs::rust::RootedGuard;
 use typed_arena::Arena;
 
 use crate::Local;
+use crate::objects::ForOfIteratorGuard;
 
 /// Represents Types that can be Rooted in SpiderMonkey
 #[allow(dead_code)]
@@ -27,6 +28,7 @@ pub enum GCType {
 	PropertyKey,
 	Function,
 	Symbol,
+	Iterator,
 }
 
 /// Holds Rooted Values
@@ -39,6 +41,7 @@ struct RootedArena {
 	property_keys: Arena<Rooted<PropertyKey>>,
 	functions: Arena<Rooted<*mut JSFunction>>,
 	symbols: Arena<Rooted<*mut Symbol>>,
+	iterators: Arena<ForOfIterator>,
 }
 
 /// Holds RootedGuards which have been converted to [Local]s
@@ -52,6 +55,7 @@ struct LocalArena<'a> {
 	property_keys: Arena<RootedGuard<'a, PropertyKey>>,
 	functions: Arena<RootedGuard<'a, *mut JSFunction>>,
 	symbols: Arena<RootedGuard<'a, *mut Symbol>>,
+	iterators: Arena<ForOfIteratorGuard<'a>>,
 }
 
 thread_local!(static HEAP_OBJECTS: RefCell<Vec<Heap<*mut JSObject>>> = RefCell::new(Vec::new()));
@@ -102,19 +106,28 @@ impl Context<'_> {
 		(root_symbol, *mut Symbol, symbols, Symbol),
 	}
 
-	pub unsafe fn root_persistent_object(object: *mut JSObject) -> Local<'static, *mut JSObject> {
+	#[allow(clippy::mut_from_ref)]
+	pub(crate) fn root_iterator(&self, iterator: ForOfIterator) -> &mut ForOfIteratorGuard {
+		let rooted = self.rooted.iterators.alloc(iterator);
+		self.local.order.borrow_mut().push(GCType::Iterator);
+		unsafe { transmute(self.local.iterators.alloc(ForOfIteratorGuard::new(self, transmute(rooted)))) }
+	}
+
+	pub fn root_persistent_object(object: *mut JSObject) -> Local<'static, *mut JSObject> {
 		let heap = *Heap::boxed(object);
 		let handle = HEAP_OBJECTS.with(|persistent| {
 			let mut persistent = persistent.borrow_mut();
 			persistent.push(heap);
 			let ptr = &persistent[persistent.len() - 1];
-			RootedTraceableSet::add(ptr);
-			ptr.handle()
+			unsafe {
+				RootedTraceableSet::add(ptr);
+				ptr.handle()
+			}
 		});
-		Local::from_raw_handle(handle)
+		unsafe { Local::from_raw_handle(handle) }
 	}
 
-	pub unsafe fn unroot_persistent_object(object: *mut JSObject) {
+	pub fn unroot_persistent_object(object: *mut JSObject) {
 		HEAP_OBJECTS.with(|persistent| {
 			let mut persistent = persistent.borrow_mut();
 			let idx = match persistent.iter().rposition(|x| ptr::eq(x.get_unsafe() as *const _, object as *const _)) {
@@ -122,7 +135,9 @@ impl Context<'_> {
 				None => return,
 			};
 			let heap = persistent.remove(idx);
-			RootedTraceableSet::remove(&heap);
+			unsafe {
+				RootedTraceableSet::remove(&heap);
+			}
 		});
 	}
 }
@@ -136,7 +151,7 @@ impl Deref for Context<'_> {
 }
 
 macro_rules! impl_drop {
-	([$self:expr], $(($pointer:ty, $key:ident, $gc_type:ident)$(,)?)*) => {
+	([$self:expr], $(($key:ident, $gc_type:ident)$(,)?)*) => {
 		$(let $key = take(&mut $self.local.$key);)*
 
 		$(let mut $key = $key.into_vec().into_iter().rev();)*
@@ -158,13 +173,14 @@ impl Drop for Context<'_> {
 	fn drop(&mut self) {
 		impl_drop! {
 			[self],
-			(JSVal, values, Value),
-			(*mut JSObject, objects, Object),
-			(*mut JSString, strings, String),
-			(*mut JSScript, scripts, Script),
-			(PropertyKey, property_keys, PropertyKey),
-			(*mut JSFunction, functions, Function),
-			(*mut Symbol, symbols, Symbol),
+			(values, Value),
+			(objects, Object),
+			(strings, String),
+			(scripts, Script),
+			(property_keys, PropertyKey),
+			(functions, Function),
+			(symbols, Symbol),
+			(iterators, Iterator),
 		}
 	}
 }

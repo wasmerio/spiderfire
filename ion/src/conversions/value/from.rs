@@ -4,14 +4,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::iter::Iterator;
 use std::string::String as RustString;
 
 use mozjs::conversions::{ConversionResult, FromJSValConvertible};
 pub use mozjs::conversions::ConversionBehavior;
-use mozjs::jsapi::{
-	AssertSameCompartment, AssertSameCompartment1, ForOfIterator, ForOfIterator_NonIterableBehavior, JSFunction, JSObject, JSString, RootedObject,
-	RootedValue,
-};
+use mozjs::jsapi::{AssertSameCompartment, AssertSameCompartment1, JSFunction, JSObject, JSString};
 use mozjs::jsapi::Symbol as JSSymbol;
 use mozjs::jsval::JSVal;
 use mozjs::rust::{ToBoolean, ToNumber, ToString};
@@ -335,28 +333,6 @@ impl<'cx, T: FromValue<'cx>> FromValue<'cx> for Option<T> {
 	}
 }
 
-// Copied from [rust-mozjs](https://github.com/servo/rust-mozjs/blob/master/src/conversions.rs#L619-L642)
-struct ForOfIteratorGuard<'a> {
-	root: &'a mut ForOfIterator,
-}
-
-impl<'a> ForOfIteratorGuard<'a> {
-	fn new(cx: &Context, root: &'a mut ForOfIterator) -> Self {
-		unsafe {
-			root.iterator.add_to_root_stack(**cx);
-		}
-		ForOfIteratorGuard { root }
-	}
-}
-
-impl<'a> Drop for ForOfIteratorGuard<'a> {
-	fn drop(&mut self) {
-		unsafe {
-			self.root.iterator.remove_from_root_stack();
-		}
-	}
-}
-
 impl<'cx, T: FromValue<'cx>> FromValue<'cx> for Vec<T>
 where
 	T::Config: Clone,
@@ -376,37 +352,7 @@ where
 			return Err(Error::new("Expected Array", ErrorKind::Type));
 		}
 
-		let mut iterator = ForOfIterator {
-			cx_: **cx,
-			iterator: RootedObject::new_unrooted(),
-			nextMethod: RootedValue::new_unrooted(),
-			index: u32::MAX, // NOT_ARRAY
-		};
-		let iterator = ForOfIteratorGuard::new(cx, &mut iterator);
-		let iterator = &mut *iterator.root;
-
-		if !iterator.init(value.handle().into(), ForOfIterator_NonIterableBehavior::AllowNonIterable) {
-			return Err(Error::new("Failed to Initialise Iterator", ErrorKind::Type));
-		}
-
-		if iterator.iterator.ptr.is_null() {
-			return Err(Error::new("Expected Iterable", ErrorKind::Type));
-		}
-
-		let mut ret = vec![];
-
-		let mut value = Value::undefined(cx);
-		loop {
-			let mut done = false;
-			if !iterator.next(value.handle_mut().into(), &mut done) {
-				return Err(Error::new("Failed to Execute Next on Iterator", ErrorKind::Type));
-			}
-
-			if done {
-				break;
-			}
-			ret.push(T::from_value(cx, &value, strict, config.clone())?);
-		}
-		Ok(ret)
+		let iterator = crate::Iterator::from_object(cx, &object)?;
+		iterator.map(|value| T::from_value(cx, &value?, strict, config.clone())).collect()
 	}
 }
