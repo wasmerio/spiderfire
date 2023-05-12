@@ -4,20 +4,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::iter;
-
-use mozjs::jsapi::JS::{ForOfIterator, ForOfIterator_NonIterableBehavior, RootedObject, RootedValue};
+use mozjs::jsapi::JS::{ForOfIterator as FOIterator, ForOfIterator_NonIterableBehavior, RootedObject, RootedValue};
 use mozjs_sys::jsgc::{IntoHandle, IntoMutableHandle};
 
 use crate::{Context, Error, ErrorKind, Object, Result, Value};
 
 // Copied from [rust-mozjs](https://github.com/servo/rust-mozjs/blob/master/src/conversions.rs#L619-L642)
 pub(crate) struct ForOfIteratorGuard<'a> {
-	root: &'a mut ForOfIterator,
+	root: &'a mut FOIterator,
 }
 
 impl<'a> ForOfIteratorGuard<'a> {
-	pub(crate) fn new(cx: &Context, root: &'a mut ForOfIterator) -> Self {
+	pub(crate) fn new(cx: &Context, root: &'a mut FOIterator) -> Self {
 		unsafe {
 			root.iterator.add_to_root_stack(**cx);
 		}
@@ -33,15 +31,15 @@ impl<'a> Drop for ForOfIteratorGuard<'a> {
 	}
 }
 
-pub struct Iterator<'cx: 'c + 'i, 'c, 'i: 'g, 'g> {
+pub struct ForOfIterator<'cx: 'c + 'i, 'c, 'i: 'g, 'g> {
 	cx: &'cx Context<'c>,
 	iterator: &'i mut ForOfIteratorGuard<'g>,
 	done: bool,
 }
 
-impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> Iterator<'cx, 'c, 'i, 'g> {
-	pub fn from_object(cx: &'cx Context<'c>, object: &Object<'i>) -> Result<Iterator<'cx, 'c, 'i, 'g>> {
-		let iterator = ForOfIterator {
+impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> ForOfIterator<'cx, 'c, 'i, 'g> {
+	pub fn from_object(cx: &'cx Context<'c>, object: &Object<'i>) -> Result<ForOfIterator<'cx, 'c, 'i, 'g>> {
+		let iterator = FOIterator {
 			cx_: **cx,
 			iterator: RootedObject::new_unrooted(),
 			nextMethod: RootedValue::new_unrooted(),
@@ -63,7 +61,7 @@ impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> Iterator<'cx, 'c, 'i, 'g> {
 			}
 		}
 
-		Ok(Iterator { cx, iterator, done: false })
+		Ok(ForOfIterator { cx, iterator, done: false })
 	}
 
 	pub fn is_done(&self) -> bool {
@@ -71,7 +69,7 @@ impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> Iterator<'cx, 'c, 'i, 'g> {
 	}
 }
 
-impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> iter::Iterator for Iterator<'cx, 'c, 'i, 'g> {
+impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> Iterator for ForOfIterator<'cx, 'c, 'i, 'g> {
 	type Item = Result<Value<'cx>>;
 
 	fn next(&mut self) -> Option<Result<Value<'cx>>> {
@@ -85,6 +83,7 @@ impl<'cx: 'c + 'i, 'c, 'i: 'g, 'g> iter::Iterator for Iterator<'cx, 'c, 'i, 'g> 
 				return Some(Err(Error::new("Failed to Execute Next on Iterator", ErrorKind::Normal)));
 			}
 		}
-		Some(Ok(value))
+
+		(!self.done).then_some(Ok(value))
 	}
 }

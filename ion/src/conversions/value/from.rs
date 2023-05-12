@@ -14,7 +14,7 @@ use mozjs::jsapi::Symbol as JSSymbol;
 use mozjs::jsval::JSVal;
 use mozjs::rust::{ToBoolean, ToNumber, ToString};
 
-use crate::{Array, Context, Date, Error, ErrorKind, Function, Object, Promise, Result, String, Symbol, Value};
+use crate::{Array, Context, Date, Error, ErrorKind, ForOfIterator, Function, Object, Promise, Result, String, Symbol, Value};
 
 pub trait FromValue<'cx>: Sized {
 	type Config;
@@ -339,7 +339,6 @@ where
 {
 	type Config = T::Config;
 
-	// Adapted from [rust-mozjs](https://github.com/servo/rust-mozjs/blob/master/src/conversions.rs#L644-L707)
 	unsafe fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, strict: bool, config: T::Config) -> Result<Vec<T>>
 	where
 		'cx: 'v,
@@ -352,7 +351,7 @@ where
 			return Err(Error::new("Expected Array", ErrorKind::Type));
 		}
 
-		let iterator = crate::Iterator::from_object(cx, &object)?;
+		let iterator = ForOfIterator::from_object(cx, &object)?;
 		iterator.map(|value| T::from_value(cx, &value?, strict, config.clone())).collect()
 	}
 }
