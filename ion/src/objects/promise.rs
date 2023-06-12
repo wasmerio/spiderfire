@@ -17,7 +17,7 @@ use mozjs::jsapi::{
 use mozjs::jsval::JSVal;
 use mozjs::rust::{Handle, HandleObject, MutableHandle};
 
-use crate::{Arguments, Context, Function, Local, Object, Value};
+use crate::{Arguments, Context, Exception, Function, Local, Object, Value};
 use crate::conversions::ToValue;
 use crate::exception::ThrowException;
 use crate::flags::PropertyFlags;
@@ -151,7 +151,7 @@ impl<'p> Promise<'p> {
 	/// Returns the result of the [Promise].
 	///
 	/// ### Note
-	/// Currently leads to a sefault.
+	/// Currently leads to a segmentation fault.
 	pub fn result<'cx>(&self, cx: &'cx Context) -> Value<'cx> {
 		Value::from(cx.root_value(unsafe { GetPromiseResult(self.handle().into()) }))
 	}
@@ -161,7 +161,127 @@ impl<'p> Promise<'p> {
 	/// `on_resolved` is similar to calling `.then()` on a promise.
 	///
 	/// `on_rejected` is similar to calling `.catch()` on a promise.
-	pub fn add_reactions(&mut self, cx: &'_ Context, on_resolved: Option<Function<'_>>, on_rejected: Option<Function<'_>>) -> bool {
+	pub fn add_reactions<'cx, T, C>(&mut self, cx: &'cx Context, on_resolved: T, on_rejected: C) -> bool
+	where
+		T: for<'cx2> FnOnce(&'cx2 Context, &Value<'cx2>) -> Result<Value<'cx2>, Exception> + 'static,
+		C: for<'cx2> FnOnce(&'cx2 Context, &Value<'cx2>) -> Result<Value<'cx2>, Exception> + 'static,
+	{
+		let mut resolved = Object::null(cx);
+		let mut rejected = Object::null(cx);
+
+		let resolve = move |mut cx: *mut JSContext, argc: u32, vp: *mut JSVal| {
+			let cx = Context::new(&mut cx);
+			let mut args = Arguments::new(&cx, argc, vp);
+			let value = args.value(0).unwrap();
+			match on_resolved(&cx, value) {
+				Ok(value) => {
+					args.rval().handle_mut().set(**value);
+					true as u8
+				}
+				Err(exception) => {
+					exception.throw(&cx);
+					false as u8
+				}
+			}
+		};
+		let closure = Box::new(ClosureOnce3::new(resolve));
+		let fn_ptr = unsafe { transmute::<_, &unsafe extern "C" fn(*mut JSContext, u32, *mut JSVal) -> bool>(closure.code_ptr()) };
+		Box::into_raw(closure);
+		let resolve = Function::new(cx, "resolve", Some(*fn_ptr), 1, PropertyFlags::CONSTANT_ENUMERATED);
+		resolved.handle_mut().set(**resolve.to_object(cx));
+
+		let reject = move |mut cx: *mut JSContext, argc: u32, vp: *mut JSVal| {
+			let cx = Context::new(&mut cx);
+			let mut args = Arguments::new(&cx, argc, vp);
+			let value = args.value(0).unwrap();
+			match on_rejected(&cx, value) {
+				Ok(value) => {
+					args.rval().handle_mut().set(**value);
+					true as u8
+				}
+				Err(exception) => {
+					exception.throw(&cx);
+					false as u8
+				}
+			}
+		};
+		let closure = Box::new(ClosureOnce3::new(reject));
+		let fn_ptr = unsafe { transmute::<_, &unsafe extern "C" fn(*mut JSContext, u32, *mut JSVal) -> bool>(closure.code_ptr()) };
+		Box::into_raw(closure);
+		let reject = Function::new(cx, "reject", Some(*fn_ptr), 1, PropertyFlags::CONSTANT_ENUMERATED);
+		rejected.handle_mut().set(**reject.to_object(cx));
+
+		unsafe { AddPromiseReactions(**cx, self.handle().into(), resolved.handle().into(), rejected.handle().into()) }
+	}
+
+	pub fn then<'cx, F>(&mut self, cx: &'cx Context, on_resolved: F) -> bool
+	where
+		F: for<'cx2> FnOnce(&'cx2 Context, &Value<'cx2>) -> Result<Value<'cx2>, Exception> + 'static,
+	{
+		let mut resolved = Object::null(cx);
+		let rejected = Object::null(cx);
+
+		let resolve = move |mut cx: *mut JSContext, argc: u32, vp: *mut JSVal| {
+			let cx = Context::new(&mut cx);
+			let mut args = Arguments::new(&cx, argc, vp);
+			let value = args.value(0).unwrap();
+			match on_resolved(&cx, value) {
+				Ok(value) => {
+					args.rval().handle_mut().set(**value);
+					true as u8
+				}
+				Err(exception) => {
+					exception.throw(&cx);
+					false as u8
+				}
+			}
+		};
+		let closure = Box::new(ClosureOnce3::new(resolve));
+		let fn_ptr = unsafe { transmute::<_, &unsafe extern "C" fn(*mut JSContext, u32, *mut JSVal) -> bool>(closure.code_ptr()) };
+		Box::into_raw(closure);
+		let resolve = Function::new(cx, "resolve", Some(*fn_ptr), 1, PropertyFlags::CONSTANT_ENUMERATED);
+		resolved.handle_mut().set(**resolve.to_object(cx));
+
+		unsafe { AddPromiseReactions(**cx, self.handle().into(), resolved.handle().into(), rejected.handle().into()) }
+	}
+
+	pub fn catch<'cx, F>(&mut self, cx: &'cx Context, on_rejected: F) -> bool
+	where
+		F: for<'cx2> FnOnce(&'cx2 Context, &Value<'cx2>) -> Result<Value<'cx2>, Exception> + 'static,
+	{
+		let resolved = Object::null(cx);
+		let mut rejected = Object::null(cx);
+
+		let reject = move |mut cx: *mut JSContext, argc: u32, vp: *mut JSVal| {
+			let cx = Context::new(&mut cx);
+			let mut args = Arguments::new(&cx, argc, vp);
+			let value = args.value(0).unwrap();
+			match on_rejected(&cx, value) {
+				Ok(value) => {
+					args.rval().handle_mut().set(**value);
+					true as u8
+				}
+				Err(exception) => {
+					exception.throw(&cx);
+					false as u8
+				}
+			}
+		};
+		let closure = Box::new(ClosureOnce3::new(reject));
+		let fn_ptr = unsafe { transmute::<_, &unsafe extern "C" fn(*mut JSContext, u32, *mut JSVal) -> bool>(closure.code_ptr()) };
+		Box::into_raw(closure);
+		let reject = Function::new(cx, "reject", Some(*fn_ptr), 1, PropertyFlags::CONSTANT_ENUMERATED);
+		rejected.handle_mut().set(**reject.to_object(cx));
+
+		unsafe { AddPromiseReactions(**cx, self.handle().into(), resolved.handle().into(), rejected.handle().into()) }
+	}
+
+	/// Adds Reactions to the [Promise]
+	///
+	/// `on_resolved` is similar to calling `.then()` on a promise.
+	///
+	/// `on_rejected` is similar to calling `.catch()` on a promise.
+	pub fn add_reactions_native(&mut self, cx: &'_ Context, on_resolved: Option<Function<'_>>, on_rejected: Option<Function<'_>>) -> bool {
 		let mut resolved = Object::null(cx);
 		let mut rejected = Object::null(cx);
 		if let Some(on_resolved) = on_resolved {

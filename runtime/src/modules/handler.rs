@@ -24,5 +24,5 @@ static ON_REJECTED: JSFunctionSpec = function_spec!(on_rejected, "onRejected", 0
 
 pub fn add_handler_reactions<'cx>(cx: &'cx Context, promise: &mut Promise<'cx>) -> bool {
 	let on_rejected = Function::from_spec(cx, &ON_REJECTED);
-	promise.add_reactions(cx, None, Some(on_rejected))
+	promise.add_reactions_native(cx, None, Some(on_rejected))
 }

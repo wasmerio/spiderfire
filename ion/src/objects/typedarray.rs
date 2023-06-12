@@ -6,6 +6,12 @@
 
 use std::ops::{Deref, DerefMut};
 
+use mozjs::jsapi::{
+	Handle, JS_NewFloat32ArrayWithBuffer, JS_NewFloat64ArrayWithBuffer, JS_NewInt16ArrayWithBuffer, JS_NewInt32ArrayWithBuffer,
+	JS_NewInt8ArrayWithBuffer, JS_NewUint16ArrayWithBuffer, JS_NewUint32ArrayWithBuffer, JS_NewUint8ArrayWithBuffer,
+	JS_NewUint8ClampedArrayWithBuffer, JSContext, JSObject,
+};
+use mozjs::jsapi::Scalar::Type;
 use mozjs::typedarray::CreateWith;
 
 use crate::{Context, Error, Object, Value};
@@ -55,3 +61,35 @@ impl_typedarray_wrapper!(Float32Array, f32);
 impl_typedarray_wrapper!(Float64Array, f64);
 impl_typedarray_wrapper!(Uint8ClampedArray, u8);
 impl_typedarray_wrapper!(ArrayBuffer, u8);
+
+pub fn type_to_constructor(ty: Type) -> unsafe extern "C" fn(*mut JSContext, Handle<*mut JSObject>, usize, i64) -> *mut JSObject {
+	match ty {
+		Type::Int8 => JS_NewInt8ArrayWithBuffer,
+		Type::Uint8 => JS_NewUint8ArrayWithBuffer,
+		Type::Int16 => JS_NewInt16ArrayWithBuffer,
+		Type::Uint16 => JS_NewUint16ArrayWithBuffer,
+		Type::Int32 => JS_NewInt32ArrayWithBuffer,
+		Type::Uint32 => JS_NewUint32ArrayWithBuffer,
+		Type::Float32 => JS_NewFloat32ArrayWithBuffer,
+		Type::Float64 => JS_NewFloat64ArrayWithBuffer,
+		Type::Uint8Clamped => JS_NewUint8ClampedArrayWithBuffer,
+		_ => unreachable!(),
+	}
+}
+
+pub fn type_to_element_size(ty: Type) -> usize {
+	match ty {
+		Type::Int8 => 1,
+		Type::Uint8 => 1,
+		Type::Int16 => 2,
+		Type::Uint16 => 2,
+		Type::Int32 => 4,
+		Type::Uint32 => 4,
+		Type::Float32 => 4,
+		Type::Float64 => 8,
+		Type::Uint8Clamped => 1,
+		Type::BigInt64 => 1,
+		Type::BigUint64 => 1,
+		_ => unreachable!(),
+	}
+}
