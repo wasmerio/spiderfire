@@ -5,10 +5,11 @@
  */
 
 use mozjs::jsval::{JSVal, UndefinedValue};
+
+pub use byob::ByobReader;
 pub use default::DefaultReader;
 use ion::{Context, Object, Value};
 use ion::conversions::ToValue;
-pub use byob::ByobReader;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ReaderKind {
@@ -38,14 +39,17 @@ impl<'cx> ToValue<'cx> for ReadResult {
 
 #[js_class]
 mod default {
-	use mozjs::jsapi::{Heap, JSObject, JSTracer};
+	use std::collections::vec_deque::VecDeque;
+
 	use mozjs::gc::Traceable;
-	use ion::{ClassInitialiser, Context, Error, ErrorKind, ResultExc, Local, Object, Promise, Result, Value};
+	use mozjs::jsapi::{Heap, JSObject, JSTracer};
+
+	use ion::{ClassInitialiser, Context, Error, ErrorKind, Local, Object, Promise, Result, ResultExc, Value};
 	use ion::conversions::ToValue;
+
+	use crate::globals::streams::readable::reader::{ReaderKind, ReadResult};
 	use crate::globals::streams::readable::State;
 	use crate::globals::streams::readable::stream::ReadableStream;
-	use crate::globals::streams::readable::reader::{ReadResult, ReaderKind};
-	use std::collections::vec_deque::VecDeque;
 
 	#[ion(name = "ReadableStreamDefaultReader")]
 	pub struct DefaultReader {
@@ -108,7 +112,9 @@ mod default {
 				stream.cancel(cx, reason)
 			} else {
 				let promise = Promise::new(cx);
-				promise.reject(cx, &unsafe { Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx) });
+				promise.reject(cx, &unsafe {
+					Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx)
+				});
 				Ok(promise)
 			}
 		}
@@ -140,7 +146,9 @@ mod default {
 				Ok(promise)
 			} else {
 				let promise = Promise::new(cx);
-				promise.reject(cx, &unsafe { Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx) });
+				promise.reject(cx, &unsafe {
+					Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx)
+				});
 				Ok(promise)
 			}
 		}
@@ -152,7 +160,7 @@ mod default {
 
 				let mut closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
 				match stream.state {
-					State::Readable => {},
+					State::Readable => {}
 					_ => {
 						self.closed = Heap::boxed(**Promise::new(cx));
 						closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
@@ -166,7 +174,7 @@ mod default {
 				stream.controller.release();
 
 				while let Some(request) = self.requests.pop_front() {
-					let request = Promise::from(unsafe { Local::from_raw_handle(request.handle())} ).unwrap();
+					let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
 					request.reject(cx, &unsafe { Error::new("Reader has been released.", ErrorKind::Type).as_value(cx) });
 				}
 			} else {
@@ -193,23 +201,29 @@ mod default {
 
 #[js_class]
 mod byob {
-	use ion::{ClassInitialiser, Result, ResultExc, Object, Context, Error, ErrorKind, Promise, Value, Local};
+	use std::collections::vec_deque::VecDeque;
+	use std::mem::transmute;
+
+	use mozjs::gc::Traceable;
+	use mozjs::jsapi::{
+		Heap, IsDetachedArrayBufferObject, JS_GetArrayBufferViewBuffer, JS_GetArrayBufferViewByteOffset, JS_GetArrayBufferViewType,
+		JS_IsTypedArrayObject, JS_NewDataView, JSObject, JSTracer,
+	};
+	use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
+
+	use ion::{ClassInitialiser, Context, Error, ErrorKind, Local, Object, Promise, Result, ResultExc, Value};
+	use ion::conversions::ToValue;
 	use ion::typedarray::{type_to_constructor, type_to_element_size};
+
 	use crate::globals::streams::readable::{ReadableStream, State};
 	use crate::globals::streams::readable::controller::{Controller, PullIntoDescriptor, transfer_array_buffer};
 	use crate::globals::streams::readable::reader::{ReaderKind, ReadResult};
-	use mozjs::jsapi::{Heap, JSObject, JSTracer, JS_GetArrayBufferViewBuffer, IsDetachedArrayBufferObject, JS_GetArrayBufferViewByteOffset, JS_NewDataView, JS_IsTypedArrayObject, JS_GetArrayBufferViewType};
-	use mozjs::gc::Traceable;
-	use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
-	use std::collections::vec_deque::VecDeque;
-	use ion::conversions::ToValue;
-	use std::mem::transmute;
 
 	#[ion(name = "ReadableStreamBYOBReader")]
 	pub struct ByobReader {
 		stream: Option<Box<Heap<*mut JSObject>>>,
 		pub(crate) requests: VecDeque<Heap<*mut JSObject>>,
-		pub(crate) closed: Box<Heap<*mut JSObject>>
+		pub(crate) closed: Box<Heap<*mut JSObject>>,
 	}
 
 	impl ByobReader {
@@ -270,7 +284,9 @@ mod byob {
 				stream.cancel(cx, reason)
 			} else {
 				let promise = Promise::new(cx);
-				promise.reject(cx, &unsafe { Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx) });
+				promise.reject(cx, &unsafe {
+					Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx)
+				});
 				Ok(promise)
 			}
 		}
@@ -300,7 +316,8 @@ mod byob {
 				let stream = ReadableStream::get_private(&stream);
 				stream.disturbed = true;
 				if stream.state == State::Errored {
-					let error = stream.error
+					let error = stream
+						.error
 						.as_ref()
 						.map(|error| Value::from(unsafe { Local::from_raw_handle(error.handle()) }))
 						.unwrap_or_else(|| Value::undefined(cx));
@@ -310,7 +327,7 @@ mod byob {
 
 				let (constructor, element_size) = unsafe {
 					if JS_IsTypedArrayObject(*view_object) {
-						let ty = JS_GetArrayBufferViewType(*view_object) ;
+						let ty = JS_GetArrayBufferViewType(*view_object);
 						(type_to_constructor(ty), type_to_element_size(ty))
 					} else {
 						(transmute(JS_NewDataView as usize), 1)
@@ -334,7 +351,9 @@ mod byob {
 						if let Controller::ByteStream(controller) = &mut stream.controller {
 							if !controller.pending_descriptors.is_empty() {
 								controller.pending_descriptors.push_back(descriptor);
-								controller.pending_descriptors[controller.pending_descriptors.len() - 1].buffer.set(*object);
+								controller.pending_descriptors[controller.pending_descriptors.len() - 1]
+									.buffer
+									.set(*object);
 
 								if stream.state == State::Readable {
 									self.requests.push_back(Heap::default());
@@ -370,7 +389,9 @@ mod byob {
 							}
 
 							controller.pending_descriptors.push_back(descriptor);
-							controller.pending_descriptors[controller.pending_descriptors.len() - 1].buffer.set(*object);
+							controller.pending_descriptors[controller.pending_descriptors.len() - 1]
+								.buffer
+								.set(*object);
 
 							if stream.state == State::Readable {
 								self.requests.push_back(Heap::default());
@@ -379,7 +400,7 @@ mod byob {
 
 							controller.pull_if_needed(cx)?;
 						}
-					},
+					}
 					Err(error) => {
 						request.reject(cx, &unsafe { error.as_value(cx) });
 					}
@@ -388,7 +409,9 @@ mod byob {
 				Ok(request)
 			} else {
 				let promise = Promise::new(cx);
-				promise.reject(cx, &unsafe { Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx) });
+				promise.reject(cx, &unsafe {
+					Error::new("Reader has already been released.", ErrorKind::Type).as_value(cx)
+				});
 				Ok(promise)
 			}
 		}
@@ -400,7 +423,7 @@ mod byob {
 
 				let mut closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
 				match stream.state {
-					State::Readable => {},
+					State::Readable => {}
 					_ => {
 						self.closed = Heap::boxed(**Promise::new(cx));
 						closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
@@ -414,7 +437,7 @@ mod byob {
 				stream.controller.release();
 
 				while let Some(request) = self.requests.pop_front() {
-					let request = Promise::from(unsafe { Local::from_raw_handle(request.handle())} ).unwrap();
+					let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
 					request.reject(cx, &unsafe { Error::new("Reader has been released.", ErrorKind::Type).as_value(cx) });
 				}
 			} else {

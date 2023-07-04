@@ -4,12 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+pub use controller::{ByobRequest, ByteStreamController, DefaultController};
 use ion::conversions::ConversionBehavior;
 use ion::Function;
-
-pub use stream::ReadableStream;
-pub use controller::{DefaultController, ByteStreamController};
 pub use reader::{ByobReader, DefaultReader};
+pub use stream::ReadableStream;
 
 mod controller;
 mod reader;
@@ -45,16 +44,19 @@ pub enum State {
 
 #[js_class]
 mod stream {
-	use std::mem::transmute;
-	use mozjs::gc::Traceable;
-	use mozjs::jsapi::{Heap, JSObject, JSTracer, JS_SetReservedSlot};
-	use mozjs::jsval::{JSVal, PrivateValue};
 	use std::ffi::c_void;
-	use ion::{ClassInitialiser, Context, Error, ErrorKind, Local, Object, Promise, Value, Result, ResultExc};
+	use std::mem::transmute;
+
+	use mozjs::gc::Traceable;
+	use mozjs::jsapi::{Heap, JS_SetReservedSlot, JSObject, JSTracer};
+	use mozjs::jsval::{JSVal, PrivateValue};
+
+	use ion::{ClassInitialiser, Context, Error, ErrorKind, Local, Object, Promise, Result, ResultExc, Value};
 	use ion::conversions::{FromValue, ToValue};
-	use crate::globals::streams::readable::{QueueingStrategy, State, UnderlyingSource, ReaderOptions};
-	use crate::globals::streams::readable::controller::{Controller, ByteStreamController, DefaultController};
-	use crate::globals::streams::readable::reader::{Reader, ReaderKind, ReadResult, DefaultReader, ByobReader};
+
+	use crate::globals::streams::readable::{QueueingStrategy, ReaderOptions, State, UnderlyingSource};
+	use crate::globals::streams::readable::controller::{ByteStreamController, Controller, DefaultController};
+	use crate::globals::streams::readable::reader::{ByobReader, DefaultReader, Reader, ReaderKind, ReadResult};
 
 	pub struct ReadableStream {
 		pub(crate) controller: Controller,
@@ -138,7 +140,13 @@ mod stream {
 			});
 
 			let b = Box::new(Some(stream));
-			unsafe { JS_SetReservedSlot(***this, ReadableStream::PARENT_PROTOTYPE_CHAIN_LENGTH, &PrivateValue(Box::into_raw(b) as *mut c_void)) };
+			unsafe {
+				JS_SetReservedSlot(
+					***this,
+					ReadableStream::PARENT_PROTOTYPE_CHAIN_LENGTH,
+					&PrivateValue(Box::into_raw(b) as *mut c_void),
+				)
+			};
 			let stream = ReadableStream::get_private(this);
 			stream.controller.start(cx, &stream.controller_object);
 			Ok(())
@@ -153,7 +161,7 @@ mod stream {
 					State::Readable => {
 						self.close(cx)?;
 						self.controller.cancel(cx, reason, &self.controller_object)
-					},
+					}
 					State::Closed => {
 						let promise = Promise::new(cx);
 						promise.resolve(cx, &Value::undefined(cx));

@@ -5,15 +5,21 @@
  */
 
 use mozjs::gc::Traceable;
-use mozjs::jsapi::{Heap, Handle, JSContext, IsDetachedArrayBufferObject, JS_NewUint8ArrayWithBuffer, JSObject, JSTracer, NewArrayBufferWithContents, StealArrayBufferContents};
+use mozjs::jsapi::{
+	Handle, Heap, IsDetachedArrayBufferObject, JS_NewUint8ArrayWithBuffer, JSContext, JSObject, JSTracer, NewArrayBufferWithContents,
+	StealArrayBufferContents,
+};
 use mozjs::jsval::ObjectValue;
 pub use mozjs::rust::IntoHandle;
 use mozjs::typedarray::{ArrayBuffer, CreateWith};
+
+pub use byob_request::ByobRequest;
 pub use byte_stream::ByteStreamController;
 pub use default::DefaultController;
-use ion::{Context, Exception, Function, Local, Object, Promise, Value, Result, ClassInitialiser, Error, ErrorKind, ResultExc};
+use ion::{ClassInitialiser, Context, Error, ErrorKind, Exception, Function, Local, Object, Promise, Result, ResultExc, Value};
 use ion::conversions::{FromValue, ToValue};
-use crate::globals::streams::readable::reader::{Reader, ReadResult, ReaderKind, ByobReader};
+
+use crate::globals::streams::readable::reader::{ByobReader, Reader, ReaderKind, ReadResult};
 use crate::globals::streams::readable::State;
 use crate::globals::streams::readable::stream::ReadableStream;
 
@@ -23,7 +29,7 @@ pub(crate) struct PullIntoDescriptor {
 	pub(crate) length: usize,
 	pub(crate) filled: usize,
 	pub(crate) element: usize,
-	pub(crate) constructor: unsafe extern "C" fn (*mut JSContext, Handle<*mut JSObject>, usize, i64) -> *mut JSObject,
+	pub(crate) constructor: unsafe extern "C" fn(*mut JSContext, Handle<*mut JSObject>, usize, i64) -> *mut JSObject,
 	pub(crate) kind: ReaderKind,
 }
 
@@ -127,7 +133,8 @@ impl Controller {
 					Err(None) => unreachable!(),
 				}
 				Ok(())
-			}).unwrap();
+			})
+			.unwrap();
 			match self {
 				Controller::Default(_) => {
 					promise.add_reactions(
@@ -173,9 +180,7 @@ impl Controller {
 		}
 	}
 
-	pub fn cancel<'cx: 'v, 'v>(
-		&mut self, cx: &'cx Context, reason: Option<Value<'v>>, object: &Box<Heap<*mut JSObject>>,
-	) -> ResultExc<Promise<'cx>> {
+	pub fn cancel<'cx: 'v, 'v>(&mut self, cx: &'cx Context, reason: Option<Value<'v>>, object: &Box<Heap<*mut JSObject>>) -> ResultExc<Promise<'cx>> {
 		let cancel = match self {
 			Controller::Default(controller) => {
 				controller.queue.clear();
@@ -260,7 +265,9 @@ impl Controller {
 						controller.pull_if_needed(cx)?;
 					}
 
-					let value = cx.root_value(ObjectValue(unsafe { JS_NewUint8ArrayWithBuffer(**cx, buffer.handle(), offset, length as i64) }));
+					let value = cx.root_value(ObjectValue(unsafe {
+						JS_NewUint8ArrayWithBuffer(**cx, buffer.handle(), offset, length as i64)
+					}));
 					let result = ReadResult { value: Some(*value), done: false };
 					request.resolve(cx, unsafe { &result.as_value(cx) });
 				} else {
@@ -282,7 +289,9 @@ impl Controller {
 							kind: ReaderKind::Default,
 						};
 						controller.pending_descriptors.push_back(descriptor);
-						controller.pending_descriptors[controller.pending_descriptors.len() - 1].buffer.set(**object);
+						controller.pending_descriptors[controller.pending_descriptors.len() - 1]
+							.buffer
+							.set(**object);
 					}
 					match stream.get_reader() {
 						Some(Reader::Default(reader)) => {
@@ -316,17 +325,20 @@ impl Controller {
 
 #[js_class]
 mod default {
-	use mozjs::jsapi::{Heap, JSFunction, JSObject, JSTracer};
-	use mozjs::jsval::{DoubleValue, Int32Value, NullValue, JSVal};
-	use mozjs::gc::Traceable;
-	use ion::{ClassInitialiser, Context, Function, Object, Local, Promise, Error, ErrorKind, Result, Value, ResultExc};
-	use ion::conversions::{FromValue, ToValue};
-	use crate::globals::streams::readable::{QueueingStrategy, UnderlyingSource, State};
-	use crate::globals::streams::readable::stream::ReadableStream;
-	use crate::globals::streams::readable::reader::{Reader, ReadResult};
-	use std::mem::transmute;
 	use std::collections::vec_deque::VecDeque;
+	use std::mem::transmute;
+
 	use mozjs::conversions::ConversionBehavior;
+	use mozjs::gc::Traceable;
+	use mozjs::jsapi::{Heap, JSFunction, JSObject, JSTracer};
+	use mozjs::jsval::{DoubleValue, Int32Value, JSVal, NullValue};
+
+	use ion::{ClassInitialiser, Context, Error, ErrorKind, Function, Local, Object, Promise, Result, ResultExc, Value};
+	use ion::conversions::{FromValue, ToValue};
+
+	use crate::globals::streams::readable::{QueueingStrategy, State, UnderlyingSource};
+	use crate::globals::streams::readable::reader::{Reader, ReadResult};
+	use crate::globals::streams::readable::stream::ReadableStream;
 
 	#[ion(no_constructor, name = "ReadableStreamDefaultController")]
 	pub struct DefaultController {
@@ -436,7 +448,7 @@ mod default {
 
 				let mut promise = match unsafe { Promise::from_value(cx, &result, true, ()) } {
 					Ok(promise) => promise,
-					Err(_) => Promise::new(cx)
+					Err(_) => Promise::new(cx),
 				};
 				promise.add_reactions(
 					cx,
@@ -573,18 +585,24 @@ mod default {
 
 #[js_class]
 mod byte_stream {
-	use ion::{ClassInitialiser, Context, Error, ErrorKind, Local, Promise, Object, Result, Exception, Value, Function, ResultExc};
-	use ion::conversions::{FromValue, ToValue};
-	use mozjs::jsapi::{Heap, JSFunction, JSObject, JSTracer, JS_NewUint8ArrayWithBuffer, JS_GetArrayBufferViewByteOffset, IsDetachedArrayBufferObject, ArrayBufferClone, JS_GetArrayBufferViewBuffer, ArrayBufferCopyData};
-	use mozjs::jsval::{JSVal, DoubleValue, Int32Value, ObjectValue, NullValue};
-	use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
-	use mozjs::gc::Traceable;
-	use crate::globals::streams::readable::{State, UnderlyingSource};
-	use crate::globals::streams::readable::stream::ReadableStream;
-	use crate::globals::streams::readable::controller::{transfer_array_buffer, PullIntoDescriptor};
-	use crate::globals::streams::readable::reader::{Reader, ReadResult, ReaderKind};
-	use std::mem::transmute;
 	use std::collections::vec_deque::VecDeque;
+	use std::mem::transmute;
+
+	use mozjs::gc::Traceable;
+	use mozjs::jsapi::{
+		ArrayBufferClone, ArrayBufferCopyData, Heap, IsDetachedArrayBufferObject, JS_GetArrayBufferViewBuffer, JS_GetArrayBufferViewByteOffset,
+		JS_NewUint8ArrayWithBuffer, JSFunction, JSObject, JSTracer,
+	};
+	use mozjs::jsval::{DoubleValue, Int32Value, JSVal, NullValue, ObjectValue};
+	use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
+
+	use ion::{ClassInitialiser, Context, Error, ErrorKind, Exception, Function, Local, Object, Promise, Result, ResultExc, Value};
+	use ion::conversions::{FromValue, ToValue};
+
+	use crate::globals::streams::readable::{State, UnderlyingSource};
+	use crate::globals::streams::readable::controller::{ByobRequest, PullIntoDescriptor, transfer_array_buffer};
+	use crate::globals::streams::readable::reader::{Reader, ReaderKind, ReadResult};
+	use crate::globals::streams::readable::stream::ReadableStream;
 
 	#[ion(no_constructor, name = "ReadableByteStreamController")]
 	pub struct ByteStreamController {
@@ -602,6 +620,9 @@ mod byte_stream {
 		pub(crate) pulling: bool,
 		pub(crate) pull_again: bool,
 		pub(crate) close_requested: bool,
+
+		byob_request: Option<&'static mut ByobRequest>,
+		byob_request_object: Option<Box<Heap<*mut JSObject>>>,
 
 		pub(crate) pending_descriptors: VecDeque<PullIntoDescriptor>,
 		pub(crate) queue: VecDeque<(Heap<*mut JSObject>, usize, usize)>,
@@ -638,6 +659,9 @@ mod byte_stream {
 				pull_again: false,
 				close_requested: false,
 
+				byob_request: None,
+				byob_request_object: None,
+
 				pending_descriptors: VecDeque::new(),
 				queue: VecDeque::new(),
 				queue_size: 0,
@@ -653,6 +677,15 @@ mod byte_stream {
 			let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
 			let stream = ReadableStream::get_private(&stream);
 			stream.state
+		}
+
+		pub(crate) fn invalidate_byob_request(&mut self) {
+			if let Some(request) = self.byob_request.take() {
+				self.byob_request_object = None;
+				request.controller = None;
+				request.controller_object = None;
+				request.view = None;
+			}
 		}
 
 		pub(crate) fn can_close_or_enqueue(&self) -> bool {
@@ -676,7 +709,7 @@ mod byte_stream {
 						return true;
 					}
 				}
-				None => {},
+				None => {}
 			}
 			self.get_state() == State::Readable && self.high_water_mark > self.queue_size as f64
 		}
@@ -736,11 +769,7 @@ mod byte_stream {
 
 			let ready = max_aligned > aligned;
 
-			let mut remaining = if ready {
-				max_aligned - descriptor.filled
-			} else {
-				max_copy
-			};
+			let mut remaining = if ready { max_aligned - descriptor.filled } else { max_copy };
 
 			while remaining > 0 {
 				let mut copy = remaining;
@@ -804,6 +833,39 @@ mod byte_stream {
 				State::Readable => DoubleValue(self.high_water_mark - self.queue_size as f64),
 				State::Closed => Int32Value(0),
 				State::Errored => NullValue(),
+			}
+		}
+
+		#[ion(get)]
+		pub fn get_byob_request(&mut self, #[ion(this)] this: &Object, cx: &Context) -> *mut JSObject {
+			if self.byob_request_object.is_none() && !self.pending_descriptors.is_empty() {
+				let descriptor = self.pending_descriptors.get(0).unwrap();
+				let view = unsafe {
+					JS_NewUint8ArrayWithBuffer(
+						**cx,
+						descriptor.buffer.handle(),
+						descriptor.offset + descriptor.filled,
+						(descriptor.length - descriptor.filled) as i64,
+					)
+				};
+
+				let request = ByobRequest {
+					controller: Some(unsafe { transmute(ByteStreamController::get_private(this)) }),
+					controller_object: Some(Heap::boxed(***this)),
+
+					view: Some(Heap::boxed(view)),
+				};
+				let object = Object::from(cx.root_object(ByobRequest::new_object(cx, request)));
+				let request = unsafe { transmute(ByobRequest::get_private(&object)) };
+
+				self.byob_request = Some(request);
+				self.byob_request_object = Some(Heap::boxed(**object));
+			}
+
+			if let Some(request) = &self.byob_request_object {
+				request.get()
+			} else {
+				**Object::null(cx)
 			}
 		}
 
@@ -871,6 +933,7 @@ mod byte_stream {
 				}
 
 				if shift {
+					self.invalidate_byob_request();
 					self.pending_descriptors.pop_front();
 				}
 
@@ -883,7 +946,9 @@ mod byte_stream {
 						while let Some(request) = reader.requests.pop_front() {
 							if self.queue_size == 0 {
 								self.pending_descriptors.pop_front();
-								let value = cx.root_value(ObjectValue(unsafe { JS_NewUint8ArrayWithBuffer(**cx, object.handle().into(), offset, chunk.len() as i64) }));
+								let value = cx.root_value(ObjectValue(unsafe {
+									JS_NewUint8ArrayWithBuffer(**cx, object.handle().into(), offset, chunk.len() as i64)
+								}));
 								let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
 								let result = ReadResult { value: Some(*value), done: false };
 								request.resolve(cx, unsafe { &result.as_value(cx) });
@@ -900,7 +965,9 @@ mod byte_stream {
 								self.pull_if_needed(cx)?;
 							}
 
-							let value = cx.root_value(ObjectValue(unsafe { JS_NewUint8ArrayWithBuffer(**cx, buffer.handle(), offset, length as i64) }));
+							let value = cx.root_value(ObjectValue(unsafe {
+								JS_NewUint8ArrayWithBuffer(**cx, buffer.handle(), offset, length as i64)
+							}));
 							let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
 							let result = ReadResult { value: Some(*value), done: false };
 							request.resolve(cx, unsafe { &result.as_value(cx) });
@@ -960,10 +1027,271 @@ mod byte_stream {
 			self.cancel.trace(trc);
 			self.stream.trace(trc);
 
+			self.byob_request_object.trace(trc);
 			self.pending_descriptors.trace(trc);
 			for (chunk, _, _) in &self.queue {
 				chunk.trace(trc);
 			}
+		}
+	}
+}
+
+#[js_class]
+mod byob_request {
+	use mozjs::conversions::ConversionBehavior;
+	use mozjs::gc::Traceable;
+	use mozjs::jsapi::{
+		ArrayBufferClone, Heap, IsDetachedArrayBufferObject, JS_GetArrayBufferViewBuffer, JS_GetArrayBufferViewByteOffset, JSObject, JSTracer,
+	};
+	use mozjs::jsval::NullValue;
+	use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
+
+	use ion::{ClassInitialiser, Context, Error, ErrorKind, Exception, Local, Object, ResultExc};
+	use ion::conversions::ToValue;
+
+	use crate::globals::streams::readable::{ReadableStream, State};
+	use crate::globals::streams::readable::controller::{ByteStreamController, transfer_array_buffer};
+	use crate::globals::streams::readable::reader::{Reader, ReaderKind};
+
+	#[ion(no_constructor, name = "ReadableStreamBYOBRequest")]
+	pub struct ByobRequest {
+		pub(crate) controller: Option<&'static mut ByteStreamController>,
+		pub(crate) controller_object: Option<Box<Heap<*mut JSObject>>>,
+
+		pub(crate) view: Option<Box<Heap<*mut JSObject>>>,
+	}
+
+	impl ByobRequest {
+		pub(crate) fn respond_internal(&mut self, cx: &Context, written: usize) -> ResultExc<()> {
+			let controller = self.controller.take().unwrap();
+			let descriptor = controller.pending_descriptors.get(0).unwrap();
+			match controller.get_state() {
+				State::Readable => {
+					if written == 0 {
+						return Err(Error::new("Readable Stream must be written to.", ErrorKind::Type).into());
+					}
+					if descriptor.filled + written > descriptor.length {
+						return Err(Error::new("Buffer of BYOB Request View has been overwritten.", ErrorKind::Range).into());
+					}
+				}
+				State::Closed => {
+					if written != 0 {
+						return Err(Error::new("Closed Stream must not be written to.", ErrorKind::Type).into());
+					}
+				}
+				State::Errored => return Err(Error::new("Errored Stream cannot have BYOB Request", ErrorKind::Type).into()),
+			}
+
+			controller.invalidate_byob_request();
+
+			let (object, kind) = {
+				let descriptor = controller.pending_descriptors.get_mut(0).unwrap();
+				let buffer = ArrayBuffer::from(descriptor.buffer.get()).unwrap();
+
+				let (object, _) = transfer_array_buffer(cx, buffer, false)?;
+				descriptor.buffer.set(*object);
+
+				(object, descriptor.kind)
+			};
+
+			match controller.get_state() {
+				State::Readable => {
+					let mut descriptor = controller.pending_descriptors.pop_front().unwrap();
+					descriptor.filled += written;
+
+					let stream = Object::from(unsafe { Local::from_heap(&*controller.stream) });
+					let stream = ReadableStream::get_private(&stream);
+
+					match kind {
+						ReaderKind::None => {
+							if descriptor.filled > 0 {
+								let buffer = unsafe { ArrayBufferClone(**cx, object.handle().into(), descriptor.offset, descriptor.length) };
+								if let Some(exception) = Exception::new(cx) {
+									controller.error_internal(cx, &unsafe { exception.as_value(cx) })?;
+									return Err(exception);
+								}
+								controller.queue.push_back((Heap::default(), 0, descriptor.length));
+								controller.queue[controller.queue.len() - 1].0.set(buffer);
+								controller.queue_size += descriptor.length;
+							}
+							while !controller.pending_descriptors.is_empty() {
+								if controller.queue_size == 0 {
+									break;
+								}
+
+								let mut shift = false;
+
+								let descriptor = controller.pending_descriptors.get_mut(0).unwrap() as *mut _;
+
+								if controller.fill_pull_into_descriptor(cx, unsafe { &mut *descriptor })? {
+									shift = true;
+								}
+
+								if shift {
+									let mut descriptor = controller.pending_descriptors.pop_front().unwrap();
+									if let Some(Reader::Byob(reader)) = stream.get_reader() {
+										descriptor.commit(cx, reader, stream.state)?;
+									}
+								}
+							}
+						}
+						_ => {
+							if descriptor.filled < descriptor.element {
+								return Ok(());
+							}
+
+							let remainder = descriptor.filled % descriptor.element;
+
+							if remainder > 0 {
+								let buffer = unsafe {
+									ArrayBufferClone(**cx, object.handle().into(), descriptor.offset + descriptor.filled - remainder, remainder)
+								};
+								if let Some(exception) = Exception::new(cx) {
+									controller.error_internal(cx, &unsafe { exception.as_value(cx) })?;
+									return Err(exception);
+								}
+								controller.queue.push_back((Heap::default(), 0, descriptor.length));
+								controller.queue[controller.queue.len() - 1].0.set(buffer);
+								controller.queue_size += descriptor.length;
+
+								descriptor.filled -= remainder;
+							}
+
+							if let Some(Reader::Byob(reader)) = stream.get_reader() {
+								descriptor.commit(cx, reader, stream.state)?;
+
+								while !controller.pending_descriptors.is_empty() {
+									if controller.queue_size == 0 {
+										break;
+									}
+
+									let mut shift = false;
+
+									let descriptor = controller.pending_descriptors.get_mut(0).unwrap() as *mut _;
+
+									if controller.fill_pull_into_descriptor(cx, unsafe { &mut *descriptor })? {
+										shift = true;
+									}
+
+									if shift {
+										let mut descriptor = controller.pending_descriptors.pop_front().unwrap();
+										descriptor.commit(cx, reader, stream.state)?;
+									}
+								}
+							}
+						}
+					}
+				}
+				State::Closed => {
+					if kind == ReaderKind::None {
+						controller.pending_descriptors.pop_front();
+					}
+					let stream = Object::from(unsafe { Local::from_raw_handle(controller.stream.handle()) });
+					let stream = ReadableStream::get_private(&stream);
+
+					match stream.get_reader() {
+						Some(Reader::Byob(reader)) => {
+							while !reader.requests.is_empty() {
+								let mut descriptor = controller.pending_descriptors.pop_front().unwrap();
+								descriptor.commit(cx, reader, State::Closed)?;
+							}
+						}
+						_ => {}
+					}
+				}
+				State::Errored => unreachable!(),
+			}
+
+			controller.pull_if_needed(cx)
+		}
+
+		#[ion(get)]
+		pub fn get_view(&self) -> *mut JSObject {
+			if let Some(view) = &self.view {
+				view.get()
+			} else {
+				NullValue().to_object_or_null()
+			}
+		}
+
+		pub fn respond(&mut self, cx: &Context, #[ion(convert = ConversionBehavior::Clamp)] written: u64) -> ResultExc<()> {
+			if let Some(_) = self.controller {
+				let view_object = self.view.as_ref().unwrap();
+				let view = ArrayBufferView::from(view_object.get()).unwrap();
+				let mut shared = false;
+				let object = cx.root_object(unsafe { JS_GetArrayBufferViewBuffer(**cx, view_object.handle(), &mut shared) });
+				let buffer = ArrayBuffer::from(*object).unwrap();
+
+				if view.len() == 0 || buffer.len() == 0 {
+					return Err(Error::new("View and Buffer must have a non-zero length.", ErrorKind::Type).into());
+				}
+
+				if unsafe { IsDetachedArrayBufferObject(*object) } {
+					return Err(Error::new("View Buffer cannot be detached.", ErrorKind::Type).into());
+				}
+
+				self.respond_internal(cx, written as usize)
+			} else {
+				Err(Error::new("BYOB Request has already been invalidated.", ErrorKind::Type).into())
+			}
+		}
+
+		pub fn respond_with_new_view(&mut self, cx: &Context, view: ArrayBufferView) -> ResultExc<()> {
+			let len = view.len();
+
+			if let Some(controller) = &mut self.controller {
+				let mut shared = false;
+				let object = cx.root_object(unsafe { *view.underlying_object() });
+				let object = cx.root_object(unsafe { JS_GetArrayBufferViewBuffer(**cx, object.handle().into(), &mut shared) });
+				let buffer = ArrayBuffer::from(*object).unwrap();
+
+				if unsafe { IsDetachedArrayBufferObject(*object) } {
+					return Err(Error::new("View Buffer cannot be detached.", ErrorKind::Type).into());
+				}
+
+				let stream = Object::from(unsafe { Local::from_raw_handle(controller.stream.handle()) });
+				let stream = ReadableStream::get_private(&stream);
+
+				match stream.state {
+					State::Readable => {
+						if len == 0 {
+							return Err(Error::new("View must have a non-zero length", ErrorKind::Type).into());
+						}
+					}
+					State::Closed => {
+						if len != 0 {
+							return Err(Error::new("View for a Closed Readable Stream must have a zero length", ErrorKind::Type).into());
+						}
+					}
+					State::Errored => unreachable!(),
+				}
+
+				let offset = unsafe { JS_GetArrayBufferViewByteOffset(*view.underlying_object()) };
+				let descriptor = controller.pending_descriptors.get_mut(0).unwrap();
+
+				if descriptor.offset + descriptor.filled != offset {
+					return Err(Error::new("View Offset must be the same as descriptor.", ErrorKind::Range).into());
+				}
+				if descriptor.length != len {
+					return Err(Error::new("View Length must be the same as descriptor.", ErrorKind::Range).into());
+				}
+				if descriptor.filled + len > descriptor.length {
+					return Err(Error::new("View cannot overfill descriptor", ErrorKind::Range).into());
+				}
+
+				let (object, _) = transfer_array_buffer(cx, buffer, shared)?;
+				descriptor.buffer.set(*object);
+			} else {
+				return Err(Error::new("BYOB Request has already been invalidated.", ErrorKind::Type).into());
+			}
+			self.respond_internal(cx, len)
+		}
+	}
+
+	unsafe impl Traceable for ByobRequest {
+		unsafe fn trace(&self, trc: *mut JSTracer) {
+			self.controller_object.trace(trc);
+			self.view.trace(trc);
 		}
 	}
 }
