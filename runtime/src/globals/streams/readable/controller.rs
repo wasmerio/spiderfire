@@ -64,7 +64,7 @@ impl PullIntoDescriptor {
 		let result = unsafe { ReadResult { value: Some(**view), done }.as_value(cx) };
 
 		let request = reader.requests.pop_front().unwrap();
-		let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+		let request = Promise::from(unsafe { Local::from_heap(&request) }).unwrap();
 
 		if !done {
 			request.resolve(cx, &result);
@@ -102,15 +102,15 @@ pub enum Controller {
 }
 
 impl Controller {
-	pub fn start(&self, cx: &Context, object: &Box<Heap<*mut JSObject>>) {
+	pub fn start(&self, cx: &Context, object: &Heap<*mut JSObject>) {
 		let inner = match self {
 			Controller::Default(controller) => controller.start.as_ref().map(|start| (start, controller.underlying_source.as_ref())),
 			Controller::ByteStream(controller) => controller.start.as_ref().map(|start| (start, Some(&controller.underlying_source))),
 		};
 		if let Some((start, underlying_source)) = inner {
-			let start = Function::from(unsafe { Local::from_raw_handle(start.handle()) });
+			let start = Function::from(unsafe { Local::from_heap(start) });
 			let underlying_source = underlying_source
-				.map(|s| Object::from(unsafe { Local::from_raw_handle(s.handle()) }))
+				.map(|s| Object::from(unsafe { Local::from_heap(s) }))
 				.unwrap_or_else(|| Object::null(cx));
 			let mut value = Value::null(cx);
 			value.handle_mut().set(ObjectValue(object.get()));
@@ -180,7 +180,7 @@ impl Controller {
 		}
 	}
 
-	pub fn cancel<'cx: 'v, 'v>(&mut self, cx: &'cx Context, reason: Option<Value<'v>>, object: &Box<Heap<*mut JSObject>>) -> ResultExc<Promise<'cx>> {
+	pub fn cancel<'cx: 'v, 'v>(&mut self, cx: &'cx Context, reason: Option<Value<'v>>, object: &Heap<*mut JSObject>) -> ResultExc<Promise<'cx>> {
 		let cancel = match self {
 			Controller::Default(controller) => {
 				controller.queue.clear();
@@ -201,8 +201,8 @@ impl Controller {
 		};
 		let mut promise = Promise::new(cx);
 		if let Some(cancel) = &cancel {
-			let cancel = Function::from(unsafe { Local::from_raw_handle(cancel.handle()) });
-			let this = Object::from(unsafe { Local::from_raw_handle(object.handle()) });
+			let cancel = Function::from(unsafe { Local::from_heap(cancel) });
+			let this = Object::from(unsafe { Local::from_heap(object) });
 			let reason = reason.unwrap_or_else(|| Value::undefined(cx));
 			let value = cancel.call(cx, &this, &[reason]).map_err(|report| report.unwrap().exception)?;
 			if let Ok(mut result) = unsafe { Promise::from_value(cx, &value, true, ()) } {
@@ -218,7 +218,7 @@ impl Controller {
 	pub fn pull(&mut self, cx: &Context, request: &Promise) -> ResultExc<()> {
 		match self {
 			Controller::Default(controller) => {
-				let stream = Object::from(unsafe { Local::from_raw_handle(controller.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&controller.stream) });
 				let stream = ReadableStream::get_private(&stream);
 
 				if let Some((chunk, _)) = controller.queue.pop_front() {
@@ -249,7 +249,7 @@ impl Controller {
 				}
 			}
 			Controller::ByteStream(controller) => {
-				let stream = Object::from(unsafe { Local::from_raw_handle(controller.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&controller.stream) });
 				let stream = ReadableStream::get_private(&stream);
 
 				if stream.reader_kind != ReaderKind::Default {
@@ -293,12 +293,9 @@ impl Controller {
 							.buffer
 							.set(**object);
 					}
-					match stream.get_reader() {
-						Some(Reader::Default(reader)) => {
-							reader.requests.push_back(Heap::default());
-							reader.requests[reader.requests.len() - 1].set(***request);
-						}
-						_ => {}
+					if let Some(Reader::Default(reader)) = stream.get_reader() {
+						reader.requests.push_back(Heap::default());
+						reader.requests[reader.requests.len() - 1].set(***request);
 					}
 					controller.pull_if_needed(cx)?;
 				}
@@ -392,13 +389,13 @@ mod default {
 			};
 
 			let heap = Heap::boxed(DefaultController::new_object(cx, controller));
-			let object = Object::from(unsafe { Local::from_raw_handle(heap.handle()) });
+			let object = Object::from(unsafe { Local::from_heap(&heap) });
 			let controller = unsafe { transmute(DefaultController::get_private(&object)) };
 			(heap, controller)
 		}
 
 		pub(crate) fn get_state(&self) -> State {
-			let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+			let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 			let stream = ReadableStream::get_private(&stream);
 			stream.state
 		}
@@ -411,10 +408,10 @@ mod default {
 			if !self.can_close_or_enqueue() || !self.started {
 				return false;
 			}
-			let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+			let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 			let stream = ReadableStream::get_private(&stream);
 			if let Some(Reader::Default(reader)) = &mut stream.get_reader() {
-				if reader.requests.len() > 0 {
+				if !reader.requests.is_empty() {
 					return true;
 				}
 			}
@@ -431,15 +428,15 @@ mod default {
 			}
 
 			self.pulling = true;
-			let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+			let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 			let stream = ReadableStream::get_private(&stream);
 
 			if let Some(pull) = &self.pull {
-				let pull = Function::from(unsafe { Local::from_raw_handle(pull.handle()) });
+				let pull = Function::from(unsafe { Local::from_heap(pull) });
 				let this = self
 					.underlying_source
 					.as_ref()
-					.map(|s| Object::from(unsafe { Local::from_raw_handle(s.handle()) }))
+					.map(|s| Object::from(unsafe { Local::from_heap(s) }))
 					.unwrap_or_else(|| Object::null(cx));
 				let result = pull
 					.call(cx, &this, unsafe { &[stream.controller_object.get().as_value(cx)] })
@@ -482,7 +479,7 @@ mod default {
 				self.cancel = None;
 				self.size = None;
 
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.error(cx, error)
 			} else {
@@ -508,7 +505,7 @@ mod default {
 				self.cancel = None;
 				self.size = None;
 
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.close(cx)
 			} else {
@@ -518,11 +515,11 @@ mod default {
 
 		pub fn enqueue(&mut self, cx: &Context, chunk: Value) -> ResultExc<()> {
 			if self.can_close_or_enqueue() {
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 				if let Some(Reader::Default(reader)) = &mut stream.get_reader() {
 					if let Some(request) = reader.requests.pop_front() {
-						let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+						let request = Promise::from(unsafe { Local::from_heap(&request) }).unwrap();
 						let req = ReadResult { value: Some(**chunk), done: false };
 						request.resolve(cx, unsafe { &req.as_value(cx) });
 						return Ok(());
@@ -533,7 +530,7 @@ mod default {
 					.size
 					.as_ref()
 					.map(|size| {
-						let size = Function::from(unsafe { Local::from_raw_handle(size.handle()) });
+						let size = Function::from(unsafe { Local::from_heap(size) });
 						size.call(cx, &Object::null(cx), args)
 					})
 					.unwrap_or_else(|| Ok(Value::i32(cx, 1)));
@@ -668,13 +665,13 @@ mod byte_stream {
 			};
 
 			let heap = Heap::boxed(ByteStreamController::new_object(cx, controller));
-			let object = Object::from(unsafe { Local::from_raw_handle(heap.handle()) });
+			let object = Object::from(unsafe { Local::from_heap(&heap) });
 			let controller = unsafe { transmute(ByteStreamController::get_private(&object)) };
 			Ok((heap, controller))
 		}
 
 		pub(crate) fn get_state(&self) -> State {
-			let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+			let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 			let stream = ReadableStream::get_private(&stream);
 			stream.state
 		}
@@ -696,16 +693,16 @@ mod byte_stream {
 			if !self.can_close_or_enqueue() || !self.started {
 				return false;
 			}
-			let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+			let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 			let stream = ReadableStream::get_private(&stream);
 			match stream.get_reader() {
 				Some(Reader::Default(reader)) => {
-					if reader.requests.len() > 0 {
+					if !reader.requests.is_empty() {
 						return true;
 					}
 				}
 				Some(Reader::Byob(reader)) => {
-					if reader.requests.len() > 0 {
+					if !reader.requests.is_empty() {
 						return true;
 					}
 				}
@@ -722,12 +719,12 @@ mod byte_stream {
 				}
 
 				self.pulling = true;
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 
 				if let Some(pull) = &self.pull {
-					let pull = Function::from(unsafe { Local::from_raw_handle(pull.handle()) });
-					let this = Object::from(unsafe { Local::from_raw_handle(self.underlying_source.handle()) });
+					let pull = Function::from(unsafe { Local::from_heap(pull) });
+					let this = Object::from(unsafe { Local::from_heap(&self.underlying_source) });
 					let result = pull
 						.call(cx, &this, unsafe { &[stream.controller_object.get().as_value(cx)] })
 						.map_err(|report| report.unwrap().exception)?;
@@ -793,11 +790,9 @@ mod byte_stream {
 				}
 				if copy == len {
 					self.queue.pop_front();
-				} else {
-					if let Some((_, offset, length)) = self.queue.get_mut(0) {
-						*offset += copy;
-						*length -= copy;
-					}
+				} else if let Some((_, offset, length)) = self.queue.get_mut(0) {
+					*offset += copy;
+					*length -= copy;
 				}
 				self.queue_size -= copy;
 				descriptor.filled += copy;
@@ -819,7 +814,7 @@ mod byte_stream {
 				self.pull = None;
 				self.cancel = None;
 
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.error(cx, error)
 			} else {
@@ -884,7 +879,7 @@ mod byte_stream {
 
 				self.pull = None;
 				self.cancel = None;
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.close(cx)
 			} else {
@@ -937,7 +932,7 @@ mod byte_stream {
 					self.pending_descriptors.pop_front();
 				}
 
-				let stream = Object::from(unsafe { Local::from_raw_handle(self.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&self.stream) });
 				let stream = ReadableStream::get_private(&stream);
 
 				match stream.get_reader() {
@@ -949,7 +944,7 @@ mod byte_stream {
 								let value = cx.root_value(ObjectValue(unsafe {
 									JS_NewUint8ArrayWithBuffer(**cx, object.handle().into(), offset, chunk.len() as i64)
 								}));
-								let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+								let request = Promise::from(unsafe { Local::from_heap(&request) }).unwrap();
 								let result = ReadResult { value: Some(*value), done: false };
 								request.resolve(cx, unsafe { &result.as_value(cx) });
 
@@ -968,7 +963,7 @@ mod byte_stream {
 							let value = cx.root_value(ObjectValue(unsafe {
 								JS_NewUint8ArrayWithBuffer(**cx, buffer.handle(), offset, length as i64)
 							}));
-							let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+							let request = Promise::from(unsafe { Local::from_heap(&request) }).unwrap();
 							let result = ReadResult { value: Some(*value), done: false };
 							request.resolve(cx, unsafe { &result.as_value(cx) });
 						}
@@ -1186,17 +1181,14 @@ mod byob_request {
 					if kind == ReaderKind::None {
 						controller.pending_descriptors.pop_front();
 					}
-					let stream = Object::from(unsafe { Local::from_raw_handle(controller.stream.handle()) });
+					let stream = Object::from(unsafe { Local::from_heap(&controller.stream) });
 					let stream = ReadableStream::get_private(&stream);
 
-					match stream.get_reader() {
-						Some(Reader::Byob(reader)) => {
-							while !reader.requests.is_empty() {
-								let mut descriptor = controller.pending_descriptors.pop_front().unwrap();
-								descriptor.commit(cx, reader, State::Closed)?;
-							}
+					if let Some(Reader::Byob(reader)) = stream.get_reader() {
+						while !reader.requests.is_empty() {
+							let mut descriptor = controller.pending_descriptors.pop_front().unwrap();
+							descriptor.commit(cx, reader, State::Closed)?;
 						}
-						_ => {}
 					}
 				}
 				State::Errored => unreachable!(),
@@ -1215,7 +1207,7 @@ mod byob_request {
 		}
 
 		pub fn respond(&mut self, cx: &Context, #[ion(convert = ConversionBehavior::Clamp)] written: u64) -> ResultExc<()> {
-			if let Some(_) = self.controller {
+			if self.controller.is_some() {
 				let view_object = self.view.as_ref().unwrap();
 				let view = ArrayBufferView::from(view_object.get()).unwrap();
 				let mut shared = false;
@@ -1249,7 +1241,7 @@ mod byob_request {
 					return Err(Error::new("View Buffer cannot be detached.", ErrorKind::Type).into());
 				}
 
-				let stream = Object::from(unsafe { Local::from_raw_handle(controller.stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(&controller.stream) });
 				let stream = ReadableStream::get_private(&stream);
 
 				match stream.state {

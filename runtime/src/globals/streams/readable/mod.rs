@@ -100,7 +100,7 @@ mod stream {
 						}
 						let high_water_mark = strategy.high_water_mark.unwrap_or(0.0);
 
-						let (heap, controller) = ByteStreamController::initialise(cx, this, &underlying_source, source, high_water_mark)?;
+						let (heap, controller) = ByteStreamController::initialise(cx, this, underlying_source, source, high_water_mark)?;
 
 						Ok(Some(ReadableStream {
 							controller: Controller::ByteStream(controller),
@@ -226,11 +226,11 @@ mod stream {
 				None => return Ok(()),
 			};
 
-			let closed = Promise::from(unsafe { Local::from_raw_handle(closed.handle()) }).unwrap();
+			let closed = Promise::from(unsafe { Local::from_heap(closed) }).unwrap();
 			closed.resolve(cx, &Value::undefined(cx));
 
 			for request in &*requests {
-				let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+				let request = Promise::from(unsafe { Local::from_heap(request) }).unwrap();
 				let req = ReadResult { value: None, done: true };
 				request.resolve(cx, unsafe { &req.as_value(cx) });
 			}
@@ -251,11 +251,11 @@ mod stream {
 				None => return Ok(()),
 			};
 
-			let closed = Promise::from(unsafe { Local::from_raw_handle(closed.handle()) }).unwrap();
+			let closed = Promise::from(unsafe { Local::from_heap(closed) }).unwrap();
 			closed.reject(cx, error);
 			for request in &*requests {
-				let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
-				request.reject(cx, &error);
+				let request = Promise::from(unsafe { Local::from_heap(request) }).unwrap();
+				request.reject(cx, error);
 			}
 			requests.clear();
 
@@ -266,12 +266,12 @@ mod stream {
 			match self.reader_kind {
 				ReaderKind::None => None,
 				ReaderKind::Default => {
-					let reader = Object::from(unsafe { Local::from_raw_handle(self.reader_object.as_ref().unwrap().handle()) });
+					let reader = Object::from(unsafe { Local::from_heap(self.reader_object.as_ref().unwrap()) });
 					let reader = unsafe { transmute(DefaultReader::get_private(&reader)) };
 					Some(Reader::Default(reader))
 				}
 				ReaderKind::Byob => {
-					let reader = Object::from(unsafe { Local::from_raw_handle(self.reader_object.as_ref().unwrap().handle()) });
+					let reader = Object::from(unsafe { Local::from_heap(self.reader_object.as_ref().unwrap()) });
 					let reader = unsafe { transmute(ByobReader::get_private(&reader)) };
 					Some(Reader::Byob(reader))
 				}

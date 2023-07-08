@@ -31,7 +31,7 @@ pub struct ReadResult {
 impl<'cx> ToValue<'cx> for ReadResult {
 	unsafe fn to_value(&self, cx: &'cx Context, value: &mut Value) {
 		let mut object = Object::new(cx);
-		object.set(cx, "value", &Value::from(cx.root_value(self.value.unwrap_or_else(|| UndefinedValue()))));
+		object.set(cx, "value", &Value::from(cx.root_value(self.value.unwrap_or_else(UndefinedValue))));
 		object.set_as(cx, "done", &self.done);
 		object.to_value(cx, value);
 	}
@@ -75,7 +75,7 @@ mod default {
 				return Err(Error::new("Expected ReadableStream", ErrorKind::Type));
 			}
 
-			let stream = ReadableStream::get_private(&stream_object);
+			let stream = ReadableStream::get_private(stream_object);
 			if stream.get_locked() {
 				return Err(Error::new("Cannot create DefaultReader from locked stream.", ErrorKind::Type));
 			}
@@ -92,7 +92,7 @@ mod default {
 						&stream
 							.error
 							.as_ref()
-							.map(|error| Value::from(unsafe { Local::from_raw_handle(error.handle()) }))
+							.map(|error| Value::from(unsafe { Local::from_heap(error) }))
 							.unwrap_or_else(|| Value::undefined(cx)),
 					);
 				}
@@ -107,7 +107,7 @@ mod default {
 
 		pub fn cancel<'cx: 'v, 'v>(&self, cx: &'cx Context, reason: Option<Value<'v>>) -> ResultExc<Promise<'cx>> {
 			if let Some(stream) = &self.stream {
-				let stream = Object::from(unsafe { Local::from_raw_handle(stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.cancel(cx, reason)
 			} else {
@@ -121,7 +121,7 @@ mod default {
 
 		pub fn read<'cx>(&mut self, cx: &'cx Context) -> ResultExc<Promise<'cx>> {
 			if let Some(stream) = &self.stream {
-				let stream = Object::from(unsafe { Local::from_raw_handle(stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.disturbed = true;
 
@@ -138,7 +138,7 @@ mod default {
 							&stream
 								.error
 								.as_ref()
-								.map(|error| Value::from(unsafe { Local::from_raw_handle(error.handle()) }))
+								.map(|error| Value::from(unsafe { Local::from_heap(error) }))
 								.unwrap_or_else(|| Value::undefined(cx)),
 						);
 					}
@@ -155,15 +155,15 @@ mod default {
 
 		pub fn releaseLock(&mut self, cx: &Context) -> Result<()> {
 			if let Some(stream) = &self.stream {
-				let stream = Object::from(unsafe { Local::from_raw_handle(stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(stream) });
 				let stream = ReadableStream::get_private(&stream);
 
-				let mut closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
+				let mut closed = Promise::from(unsafe { Local::from_heap(&self.closed) }).unwrap();
 				match stream.state {
 					State::Readable => {}
 					_ => {
 						self.closed = Heap::boxed(**Promise::new(cx));
-						closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
+						closed = Promise::from(unsafe { Local::from_heap(&self.closed) }).unwrap();
 					}
 				}
 				closed.reject(cx, unsafe { &Error::new("Released Reader", ErrorKind::Type).as_value(cx) });
@@ -174,11 +174,11 @@ mod default {
 				stream.controller.release();
 
 				while let Some(request) = self.requests.pop_front() {
-					let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+					let request = Promise::from(unsafe { Local::from_heap(&request) }).unwrap();
 					request.reject(cx, &unsafe { Error::new("Reader has been released.", ErrorKind::Type).as_value(cx) });
 				}
 			} else {
-				return Err(Error::new("Reader has already been released.", ErrorKind::Type).into());
+				return Err(Error::new("Reader has already been released.", ErrorKind::Type));
 			}
 			self.stream = None;
 			Ok(())
@@ -243,7 +243,7 @@ mod byob {
 				return Err(Error::new("Expected ReadableStream", ErrorKind::Type));
 			}
 
-			let stream = ReadableStream::get_private(&stream_object);
+			let stream = ReadableStream::get_private(stream_object);
 			if stream.get_locked() {
 				return Err(Error::new("Cannot create BYOBReader from locked stream.", ErrorKind::Type));
 			}
@@ -264,7 +264,7 @@ mod byob {
 						&stream
 							.error
 							.as_ref()
-							.map(|error| Value::from(unsafe { Local::from_raw_handle(error.handle()) }))
+							.map(|error| Value::from(unsafe { Local::from_heap(error) }))
 							.unwrap_or_else(|| Value::undefined(cx)),
 					);
 				}
@@ -279,7 +279,7 @@ mod byob {
 
 		pub fn cancel<'cx: 'v, 'v>(&self, cx: &'cx Context, reason: Option<Value<'v>>) -> ResultExc<Promise<'cx>> {
 			if let Some(stream) = &self.stream {
-				let stream = Object::from(unsafe { Local::from_raw_handle(stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.cancel(cx, reason)
 			} else {
@@ -312,14 +312,14 @@ mod byob {
 
 				let request = Promise::new(cx);
 
-				let stream = Object::from(unsafe { Local::from_raw_handle(stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(stream) });
 				let stream = ReadableStream::get_private(&stream);
 				stream.disturbed = true;
 				if stream.state == State::Errored {
 					let error = stream
 						.error
 						.as_ref()
-						.map(|error| Value::from(unsafe { Local::from_raw_handle(error.handle()) }))
+						.map(|error| Value::from(unsafe { Local::from_heap(error) }))
 						.unwrap_or_else(|| Value::undefined(cx));
 					request.reject(cx, &error);
 					return Ok(request);
@@ -418,15 +418,15 @@ mod byob {
 
 		pub fn releaseLock(&mut self, cx: &Context) -> Result<()> {
 			if let Some(stream) = &self.stream {
-				let stream = Object::from(unsafe { Local::from_raw_handle(stream.handle()) });
+				let stream = Object::from(unsafe { Local::from_heap(stream) });
 				let stream = ReadableStream::get_private(&stream);
 
-				let mut closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
+				let mut closed = Promise::from(unsafe { Local::from_heap(&self.closed) }).unwrap();
 				match stream.state {
 					State::Readable => {}
 					_ => {
 						self.closed = Heap::boxed(**Promise::new(cx));
-						closed = Promise::from(unsafe { Local::from_raw_handle(self.closed.handle()) }).unwrap();
+						closed = Promise::from(unsafe { Local::from_heap(&self.closed) }).unwrap();
 					}
 				}
 				closed.reject(cx, unsafe { &Error::new("Released Reader", ErrorKind::Type).as_value(cx) });
@@ -437,11 +437,11 @@ mod byob {
 				stream.controller.release();
 
 				while let Some(request) = self.requests.pop_front() {
-					let request = Promise::from(unsafe { Local::from_raw_handle(request.handle()) }).unwrap();
+					let request = Promise::from(unsafe { Local::from_heap(&request) }).unwrap();
 					request.reject(cx, &unsafe { Error::new("Reader has been released.", ErrorKind::Type).as_value(cx) });
 				}
 			} else {
-				return Err(Error::new("Reader has already been released.", ErrorKind::Type).into());
+				return Err(Error::new("Reader has already been released.", ErrorKind::Type));
 			}
 			self.stream = None;
 			Ok(())
