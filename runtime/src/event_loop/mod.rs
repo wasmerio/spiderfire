@@ -17,17 +17,17 @@ use crate::event_loop::future::FutureQueue;
 use crate::event_loop::macrotasks::MacrotaskQueue;
 use crate::event_loop::microtasks::MicrotaskQueue;
 
-pub(crate) mod future;
-pub(crate) mod macrotasks;
-pub(crate) mod microtasks;
+pub mod future;
+pub mod macrotasks;
+pub mod microtasks;
 
-thread_local!(pub(crate) static EVENT_LOOP: RefCell<EventLoop> = RefCell::new(EventLoop::default()));
+thread_local!(pub static EVENT_LOOP: RefCell<EventLoop> = RefCell::new(EventLoop::default()));
 
 #[derive(Default)]
 pub struct EventLoop {
-	pub(crate) futures: Option<Rc<FutureQueue>>,
-	pub(crate) microtasks: Option<Rc<MicrotaskQueue>>,
-	pub(crate) macrotasks: Option<Rc<MacrotaskQueue>>,
+	pub futures: Option<Rc<FutureQueue>>,
+	pub microtasks: Option<Rc<MicrotaskQueue>>,
+	pub macrotasks: Option<Rc<MacrotaskQueue>>,
 }
 
 impl EventLoop {
