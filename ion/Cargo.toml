@@ -9,7 +9,6 @@ license = "MPL-2.0"
 bitflags = "2.4.0"
 byteorder = "1.4.3"
 bytemuck = "1.14.0"
-libffi = "3.2.0"
 typed-arena = "2.0.2"
 utf16string = "0.2.0"
 
@@ -31,6 +30,9 @@ optional = true
 [dependencies.sourcemap]
 workspace = true
 optional = true
+
+[target.'cfg(not(any(target_arch="wasm32", target_arch="wasm64")))'.dependencies]
+libffi = "3.2.0"
 
 [features]
 default = []

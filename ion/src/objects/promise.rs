@@ -9,7 +9,6 @@ use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
 
 use futures::executor::block_on;
-use libffi::high::ClosureOnce3;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
 	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSContext, JSObject, NewPromiseObject, PromiseState, RejectPromise,
@@ -39,6 +38,7 @@ impl<'p> Promise<'p> {
 		}
 	}
 
+	#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
 	/// Creates a new [Promise] with an executor.
 	/// The executor is a function that takes in two functions, `resolve` and `reject`.
 	/// `resolve` and `reject` can be called with a [Value] to resolve or reject the promise with the given value.
@@ -64,7 +64,7 @@ impl<'p> Promise<'p> {
 					}
 				}
 			};
-			let closure = ClosureOnce3::new(native);
+			let closure = libffi::high::ClosureOnce3::new(native);
 			let fn_ptr: &NativeFunction = transmute(closure.code_ptr());
 
 			let function = Function::new(cx, "executor", Some(*fn_ptr), 2, PropertyFlags::empty());
@@ -79,6 +79,7 @@ impl<'p> Promise<'p> {
 		}
 	}
 
+	#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
 	/// Creates a new [Promise] with a [Future].
 	/// The future is run to completion on the current thread and cannot interact with an asynchronous runtime.
 	///
