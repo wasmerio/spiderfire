@@ -4,24 +4,26 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+#[cfg(not(target_family = "wasm"))]
 use std::future::Future;
+#[cfg(not(target_family = "wasm"))]
 use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
 
+#[cfg(not(target_family = "wasm"))]
 use futures::executor::block_on;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
-	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSContext, JSObject, NewPromiseObject, PromiseState, RejectPromise,
-	ResolvePromise,
+	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject, NewPromiseObject, PromiseState, RejectPromise, ResolvePromise,
 };
-use mozjs::jsval::JSVal;
 use mozjs::rust::HandleObject;
 
-use crate::{Arguments, Context, Function, Local, Object, Value};
-use crate::conversions::ToValue;
-use crate::exception::ThrowException;
-use crate::flags::PropertyFlags;
-use crate::functions::NativeFunction;
+#[cfg(not(target_family = "wasm"))]
+use mozjs::{jsval::JSVal, jsapi::JSContext};
+
+use crate::{Context, Function, Local, Object, Value};
+#[cfg(not(target_family = "wasm"))]
+use crate::{Arguments, conversions::ToValue, exception::ThrowException, flags::PropertyFlags, functions::NativeFunction};
 
 /// Represents a [Promise] in the JavaScript Runtime.
 /// Refer to [MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) for more details.
@@ -38,7 +40,7 @@ impl<'p> Promise<'p> {
 		}
 	}
 
-	#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+	#[cfg(not(target_family = "wasm"))]
 	/// Creates a new [Promise] with an executor.
 	/// The executor is a function that takes in two functions, `resolve` and `reject`.
 	/// `resolve` and `reject` can be called with a [Value] to resolve or reject the promise with the given value.
@@ -79,7 +81,7 @@ impl<'p> Promise<'p> {
 		}
 	}
 
-	#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+	#[cfg(not(target_family = "wasm"))]
 	/// Creates a new [Promise] with a [Future].
 	/// The future is run to completion on the current thread and cannot interact with an asynchronous runtime.
 	///

@@ -291,9 +291,14 @@ async fn softLink(original_str: String, link_str: String) -> Result<bool> {
 	let link = Path::new(&link_str);
 
 	check_not_exists(link)?;
-	#[cfg(target_family = "unix")]
+	#[cfg(unix)]
 	{
 		Ok(tokio::fs::symlink(original, link).await.is_ok())
+	}
+	#[cfg(target_os = "wasi")]
+	{
+		// TODO: tokio::fs::symlink does not exist in wasix, so this happens synchronously
+		Ok(os::wasi::fs::symlink_path(original, link).is_ok())
 	}
 	#[cfg(target_family = "windows")]
 	{
@@ -313,9 +318,13 @@ fn softLinkSync(original_str: String, link_str: String) -> Result<bool> {
 	let link = Path::new(&link_str);
 
 	check_not_exists(link)?;
-	#[cfg(target_family = "unix")]
+	#[cfg(unix)]
 	{
 		Ok(os::unix::fs::symlink(original, link).is_ok())
+	}
+	#[cfg(target_os = "wasi")]
+	{
+		Ok(os::wasi::fs::symlink_path(original, link).is_ok())
 	}
 	#[cfg(target_family = "windows")]
 	{
