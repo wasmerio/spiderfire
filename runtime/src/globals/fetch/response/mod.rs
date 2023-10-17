@@ -104,6 +104,12 @@ pub mod class {
 			self.headers.get()
 		}
 
+		#[ion(skip)]
+		pub fn get_headers_object<'a>(&'a self, cx: &'a Context<'a>) -> &'a Headers {
+			let obj = ion::Object::from(cx.root_object(self.headers.get()));
+			unsafe { (<Headers as ClassDefinition>::get_private(&obj) as *mut Headers).as_mut().unwrap() }
+		}
+
 		#[ion(get)]
 		pub fn get_ok(&self) -> bool {
 			self.response.status().is_success()
@@ -137,11 +143,16 @@ pub mod class {
 			self.body_used
 		}
 
-		async fn read_to_bytes(&mut self) -> Result<Vec<u8>> {
+		#[ion(skip)]
+		pub async fn read_to_bytes(&mut self) -> Result<Vec<u8>> {
 			if self.body_used {
 				return Err(Error::new("Response body has already been used.", None));
 			}
 			self.body_used = true;
+
+			if let Some(ref body) = self.body {
+				return Ok(body.to_bytes().to_vec());
+			}
 
 			let body = self.response.body_mut();
 

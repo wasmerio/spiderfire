@@ -52,6 +52,12 @@ impl FetchBody {
 			FetchBodyInner::Bytes(bytes) => Body::from(bytes.clone()),
 		}
 	}
+
+	pub fn to_bytes(&self) -> &Bytes {
+		match &self.body {
+			FetchBodyInner::Bytes(bytes) => bytes,
+		}
+	}
 }
 
 impl Clone for FetchBody {
