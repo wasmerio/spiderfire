@@ -23,9 +23,9 @@ use crate::functions::NativeFunction;
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ClassInfo {
-	class: &'static JSClass,
-	constructor: *mut JSFunction,
-	prototype: *mut JSObject,
+	pub class: &'static JSClass,
+	pub constructor: *mut JSFunction,
+	pub prototype: *mut JSObject,
 }
 
 pub trait ClassDefinition {
@@ -118,6 +118,14 @@ pub trait ClassDefinition {
 			JS_SetReservedSlot(obj, Self::PARENT_PROTOTYPE_CHAIN_LENGTH, &PrivateValue(Box::into_raw(boxed).cast()));
 			obj
 		}
+	}
+
+	fn class_info<'cx>(cx: &'cx Context<'cx>) -> &'cx ClassInfo
+	where
+		Self: Sized + 'static,
+	{
+		let infos = unsafe { &mut (*cx.get_inner_data()).class_infos };
+		infos.get(&TypeId::of::<Self>()).expect("Uninitialised Class")
 	}
 
 	#[allow(clippy::mut_from_ref)]
