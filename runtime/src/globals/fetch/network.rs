@@ -7,7 +7,7 @@
 use std::str::FromStr;
 
 use futures::future::{Either, select};
-use http::{Method, StatusCode, Uri};
+use http::{Method, StatusCode, Uri, HeaderValue};
 use http::header::{CONTENT_ENCODING, CONTENT_LANGUAGE, CONTENT_LOCATION, CONTENT_TYPE, HOST, LOCATION};
 use hyper::{Body, Client};
 use hyper::client::HttpConnector;
@@ -29,14 +29,24 @@ pub async fn request_internal<'c>(cx: &Context<'c>, request: Request, client: Cl
 	}
 }
 
-pub(crate) async fn send_requests<'c>(cx: &Context<'c>, req: Request, client: Client<HttpsConnector<HttpConnector>>) -> ResultExc<Response> {
+pub(crate) async fn send_requests<'c>(cx: &Context<'c>, mut req: Request, client: Client<HttpsConnector<HttpConnector>>) -> ResultExc<Response> {
 	let mut redirections = 0;
+
+	let mut url = req.url.clone();
+
+	{
+		let headers = req.request.headers_mut();
+		if let Some(host_str) = url.host_str() {
+			if !headers.contains_key("host") {
+				headers.append("host", HeaderValue::from_str(host_str)?);
+			}
+		}
+	}
 
 	let mut request = req.clone(cx)?;
 	*request.request.body_mut() = request.body.to_http_body();
 
 	let mut response = client.request(req.request).await?;
-	let mut url = request.url.clone();
 
 	while response.status().is_redirection() {
 		if redirections >= 20 {
