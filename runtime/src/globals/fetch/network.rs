@@ -93,13 +93,13 @@ pub(crate) async fn send_requests<'c>(cx: &Context<'c>, mut req: Request, client
 					let request = { clone_request(&request.request) }?;
 					response = client.request(request).await?;
 				} else {
-					return Ok(Response::new(cx, response, url, redirections > 0));
+					return Ok(Response::new(response, url, redirections > 0));
 				}
 			}
 			RequestRedirect::Error => return Err(Error::new("Received Redirection", None).into()),
-			RequestRedirect::Manual => return Ok(Response::new(cx, response, url, redirections > 0)),
+			RequestRedirect::Manual => return Ok(Response::new(response, url, redirections > 0)),
 		}
 	}
 
-	Ok(Response::new(cx, response, url, redirections > 0))
+	Ok(Response::new(response, url, redirections > 0))
 }

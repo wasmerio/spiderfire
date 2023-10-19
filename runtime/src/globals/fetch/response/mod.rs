@@ -14,7 +14,7 @@ pub mod class {
 	use bytes::{Buf, BufMut};
 	use hyper::{Body, StatusCode};
 	use hyper::body::HttpBody;
-	use mozjs::jsapi::{Heap, JSObject};
+	use mozjs::jsapi::JSObject;
 	use url::Url;
 
 	use ion::{ClassDefinition, Context, Error, ErrorKind, Result};
@@ -28,7 +28,6 @@ pub mod class {
 	#[ion(into_value)]
 	pub struct Response {
 		pub(crate) response: hyper::Response<Body>,
-		pub(crate) headers: Box<Heap<*mut JSObject>>,
 		pub(crate) body: Option<FetchBody>,
 		pub(crate) body_used: bool,
 
@@ -40,20 +39,12 @@ pub mod class {
 	}
 
 	impl Response {
-		pub(crate) fn new(cx: &Context, mut response: hyper::Response<Body>, url: Url, redirected: bool) -> Response {
-			let headers = Headers::new_object(
-				cx,
-				Headers {
-					headers: HeadersInner::MutRef(response.headers_mut()),
-					kind: HeadersKind::Response,
-				},
-			);
+		pub(crate) fn new(response: hyper::Response<Body>, url: Url, redirected: bool) -> Response {
 			let status = response.status();
 			let status_text = String::from(status.canonical_reason().unwrap());
 
 			Response {
 				response,
-				headers: Heap::boxed(headers),
 				body: None,
 				body_used: false,
 
@@ -66,13 +57,12 @@ pub mod class {
 		}
 
 		#[ion(constructor)]
-		pub fn constructor(cx: &Context, body: Option<FetchBody>, init: Option<ResponseInit>) -> Result<Response> {
+		pub fn constructor(body: Option<FetchBody>, init: Option<ResponseInit>) -> Result<Response> {
 			let init = init.unwrap_or_default();
 
 			let response = hyper::Response::builder().status(init.status).body(Body::empty())?;
 			let mut response = Response {
 				response,
-				headers: Box::default(),
 				body: None,
 				body_used: false,
 
@@ -83,10 +73,8 @@ pub mod class {
 				status_text: Some(init.status_text),
 			};
 
-			let headers = init
-				.headers
+			init.headers
 				.into_headers(HeadersInner::MutRef(response.response.headers_mut()), HeadersKind::Response)?;
-			response.headers.set(Headers::new_object(cx, headers));
 
 			if let Some(body) = body {
 				if init.status == StatusCode::NO_CONTENT || init.status == StatusCode::RESET_CONTENT || init.status == StatusCode::NOT_MODIFIED {
@@ -100,14 +88,16 @@ pub mod class {
 		}
 
 		#[ion(get)]
-		pub fn get_headers(&self) -> *mut JSObject {
-			self.headers.get()
+		pub fn get_headers(&mut self, cx: &Context) -> *mut JSObject {
+			Headers::new_object(cx, self.get_headers_object())
 		}
 
 		#[ion(skip)]
-		pub fn get_headers_object<'a>(&'a self, cx: &'a Context<'a>) -> &'a Headers {
-			let obj = ion::Object::from(cx.root_object(self.headers.get()));
-			unsafe { (<Headers as ClassDefinition>::get_private(&obj) as *mut Headers).as_mut().unwrap() }
+		pub fn get_headers_object<'a>(&mut self) -> Headers {
+			Headers {
+				headers: HeadersInner::MutRef(self.response.headers_mut()),
+				kind: HeadersKind::Response,
+			}
 		}
 
 		#[ion(get)]
