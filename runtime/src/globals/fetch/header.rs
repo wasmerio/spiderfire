@@ -274,8 +274,8 @@ mod class {
 				.map(HeaderName::as_str)
 				.map(str::to_ascii_lowercase)
 				.collect();
-			keys.reserve(cookies.len() - 1);
-			for _ in 0..(cookies.len() - 1) {
+			keys.reserve(cookies.len());
+			for _ in 0..(cookies.len()) {
 				keys.push(String::from(SET_COOKIE.as_str()));
 			}
 			keys.sort();
