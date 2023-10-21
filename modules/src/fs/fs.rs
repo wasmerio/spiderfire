@@ -287,10 +287,12 @@ fn renameSync(from_str: String, to_str: String) -> Result<bool> {
 
 #[js_fn]
 async fn softLink(original_str: String, link_str: String) -> Result<bool> {
+	#[cfg(not(target_os = "wasi"))]
 	let original = Path::new(&original_str);
 	let link = Path::new(&link_str);
 
 	check_not_exists(link)?;
+
 	#[cfg(unix)]
 	{
 		Ok(tokio::fs::symlink(original, link).await.is_ok())
