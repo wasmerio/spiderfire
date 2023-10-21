@@ -13,7 +13,6 @@ encoding_rs = "0.8.33"
 form_urlencoded = "1.2.0"
 indexmap = "2.0.2"
 os_str_bytes = "6.5.1"
-paste = "1.0.14"
 sha3 = "0.10.8"
 term-table = "1.3.2"
 
@@ -23,11 +22,12 @@ dunce.workspace = true
 futures.workspace = true
 indent.workspace = true
 mozjs.workspace = true
+paste.workspace = true
 sourcemap.workspace = true
 url.workspace = true
 
 [dependencies.bytes]
-version = "1.5.0"
+workspace = true
 optional = true
 
 [dependencies.http]

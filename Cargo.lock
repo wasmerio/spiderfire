@@ -1149,12 +1149,14 @@ dependencies = [
 name = "modules"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "futures",
  "hyper",
  "hyper-rustls",
  "idna",
  "ion",
  "mozjs",
+ "paste",
  "runtime",
  "tokio",
  "tokio-stream",

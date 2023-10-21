@@ -88,9 +88,10 @@ unsafe impl Traceable for FetchBody {
 	}
 }
 
+#[macro_export]
 macro_rules! typedarray_to_bytes {
 	($body:expr) => {
-		Err(Error::new("Expected TypedArray or ArrayBuffer", ErrorKind::Type))
+		Err(::ion::Error::new("Expected TypedArray or ArrayBuffer", ::ion::ErrorKind::Type))
 	};
 	($body:expr, [$arr:ident, true]$(, $($rest:tt)*)?) => {
 		paste::paste! {
@@ -99,7 +100,7 @@ macro_rules! typedarray_to_bytes {
 			} else if let Ok(arr) = <::mozjs::typedarray::[<Heap $arr>]>::from($body) {
 				Ok(Bytes::copy_from_slice(unsafe { arr.as_slice() }))
 			} else {
-				typedarray_to_bytes!($body$(, $($rest)*)?)
+				$crate::typedarray_to_bytes!($body$(, $($rest)*)?)
 			}
 		}
 	};
@@ -112,7 +113,7 @@ macro_rules! typedarray_to_bytes {
 				let bytes: &[u8] = cast_slice(arr.as_slice());
 				Ok(Bytes::copy_from_slice(bytes))
 			} else {
-				typedarray_to_bytes!($body$(, $($rest)*)?)
+				$crate::typedarray_to_bytes!($body$(, $($rest)*)?)
 			}
 		}
 	};

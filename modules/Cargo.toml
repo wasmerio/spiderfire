@@ -8,8 +8,10 @@ license = "MPL-2.0"
 [dependencies]
 idna = "0.4.0"
 
+bytes.workspace = true
 futures.workspace = true
 mozjs.workspace = true
+paste.workspace = true
 url.workspace = true
 
 [dependencies.hyper]

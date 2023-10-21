@@ -17,8 +17,10 @@ futures = "0.3.28"
 indent = "0.1.1"
 mozjs = { package = "mozjs", git = "https://github.com/wasmerio/mozjs", branch = "wasi" }
 mozjs_sys = { package = "mozjs_sys", git = "https://github.com/wasmerio/mozjs", branch = "wasi" }
+paste = "1.0.14"
 sourcemap = "6.4.1"
 url = "2.4.1"
+bytes = "1.5.0"
 
 [workspace.dependencies.http]
 version = "0.2.9"
