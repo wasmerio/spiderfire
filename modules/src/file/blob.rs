@@ -66,6 +66,20 @@ mod class {
 	}
 
 	impl Blob {
+		// TODO: remove after the File implementation in FormData is fixed
+		#[ion(skip)]
+		pub fn new(bytes: Bytes) -> Blob {
+			let size = bytes.len();
+			let parts = vec![BlobPart { bytes }];
+			Blob {
+				parts,
+				start: 0,
+				end: size,
+				parent: None,
+				options: Default::default(),
+			}
+		}
+
 		#[ion(constructor)]
 		pub fn constructor<'cx>(cx: &'cx Context<'cx>, blob_parts: Array<'cx>, options: Option<BlobPropertyBag>) -> Result<Blob> {
 			let mut parts = vec![];
