@@ -18,7 +18,7 @@ mod class {
 
 	use crate::globals::url::Url;
 
-	#[ion(name = "URLSearchParams", no_constructor, into_value)]
+	#[ion(name = "URLSearchParams", into_value)]
 	pub struct UrlSearchParams {
 		pairs: Vec<(String, String)>,
 		url: Option<Box<Heap<*mut JSObject>>>,
@@ -26,15 +26,27 @@ mod class {
 
 	// TODO: Implement Constructor for URLSearchParams
 	impl UrlSearchParams {
-		pub(crate) fn new(cx: &Context, pairs: Vec<(String, String)>, url_object: &Object) -> Result<UrlSearchParams> {
-			if !Url::instance_of(cx, url_object, None) {
-				return Err(Error::new("Expected URL", ErrorKind::Type));
+		pub(crate) fn new(cx: &Context, pairs: Vec<(String, String)>, url_object: Option<&Object>) -> Result<UrlSearchParams> {
+			if let Some(url_object) = url_object {
+				if !Url::instance_of(cx, url_object, None) {
+					return Err(Error::new("Expected URL", ErrorKind::Type));
+				}
 			}
 
 			Ok(UrlSearchParams {
 				pairs,
-				url: Some(Heap::boxed(url_object.handle().get())),
+				url: url_object.map(|url_object| Heap::boxed(url_object.handle().get())),
 			})
+		}
+
+		#[ion(constructor)]
+		pub fn constructor() -> UrlSearchParams {
+			UrlSearchParams { pairs: vec![], url: None }
+		}
+
+		#[ion(skip)]
+		pub fn all_pairs(&self) -> impl Iterator<Item = &(String, String)> {
+			self.pairs.iter()
 		}
 
 		#[ion(get)]

@@ -25,6 +25,7 @@ mozjs.workspace = true
 paste.workspace = true
 sourcemap.workspace = true
 url.workspace = true
+hyper-multipart-rfc7578 = "0.8.0"
 
 [dependencies.bytes]
 workspace = true

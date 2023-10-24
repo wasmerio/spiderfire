@@ -67,6 +67,11 @@ pub mod class {
 			FormData { kv_pairs: vec![] }
 		}
 
+		#[ion(skip)]
+		pub fn all_pairs(&self) -> impl Iterator<Item = &KvPair> {
+			self.kv_pairs.iter()
+		}
+
 		pub fn append<'cx>(&mut self, cx: &'cx Context, name: String, value: ion::Value<'cx>, file_name: Option<String>) -> Result<()> {
 			let value = FormDataEntryValue::from_value(cx, &value, file_name)?;
 			self.kv_pairs.push(KvPair { key: name, value });

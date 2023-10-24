@@ -46,7 +46,7 @@ mod class {
 			options.base_url(base.as_ref());
 			let url = options.parse(&input).map_err(|error| Error::new(&error.to_string(), None))?;
 
-			let search_params = UrlSearchParams::new(cx, url.query_pairs().into_owned().collect(), this)?;
+			let search_params = UrlSearchParams::new(cx, url.query_pairs().into_owned().collect(), Some(this))?;
 			let search_params = Heap::boxed(UrlSearchParams::new_object(cx, search_params));
 
 			Ok(Url { url, search_params })
@@ -90,7 +90,7 @@ mod class {
 		pub fn set_href(&mut self, #[ion(this)] this: &Object, cx: &Context, input: String) -> Result<()> {
 			match url::Url::parse(&input) {
 				Ok(url) => {
-					let search_params = UrlSearchParams::new(cx, url.query_pairs().into_owned().collect(), this)?;
+					let search_params = UrlSearchParams::new(cx, url.query_pairs().into_owned().collect(), Some(this))?;
 					self.search_params = Heap::boxed(UrlSearchParams::new_object(cx, search_params));
 					self.url = url;
 					Ok(())

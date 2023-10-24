@@ -25,7 +25,7 @@ pub enum RequestInfo {
 pub mod class {
 	use std::str::FromStr;
 
-	use http::header::CONTENT_TYPE;
+	use http::header::{CONTENT_TYPE, HOST};
 	use http::HeaderValue;
 	use hyper::{Body, Method, Uri};
 	use mozjs::gc::Traceable;
@@ -226,8 +226,15 @@ pub mod class {
 			if let Some(body) = body {
 				if let Some(kind) = &body.kind {
 					let headers = request.request.headers_mut();
-					if headers.contains_key(CONTENT_TYPE) {
+					if !headers.contains_key(CONTENT_TYPE) {
 						headers.append(CONTENT_TYPE, HeaderValue::from_str(&kind.to_string())?);
+					}
+				}
+
+				if let Some(host_str) = request.url.host_str() {
+					let headers = request.request.headers_mut();
+					if !headers.contains_key(HOST) {
+						headers.append(HOST, HeaderValue::from_str(host_str)?);
 					}
 				}
 

@@ -8,27 +8,36 @@ use std::fmt::{Display, Formatter};
 
 use bytes::Bytes;
 use hyper::Body;
+use multipart::client::multipart;
 use mozjs::gc::Traceable;
 use mozjs::jsapi::{ESClass, Heap, JSTracer};
 use mozjs::jsval::JSVal;
 
-use ion::{Context, Error, ErrorKind, Result, Value};
+use ion::{Context, Error, ErrorKind, Result, Value, ClassDefinition};
 use ion::conversions::FromValue;
+
+use crate::globals::file::blob::Blob;
+use crate::globals::form_data::{FormData, FormDataEntryValue};
+use crate::globals::url::UrlSearchParams;
 
 #[derive(Debug, Clone)]
 enum FetchBodyInner {
 	Bytes(Bytes),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum FetchBodyKind {
 	String,
+	FormData(String), // The boundary changes, so it has to be stored
+	FormUrlEncoded,
 }
 
 impl Display for FetchBodyKind {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		match self {
 			FetchBodyKind::String => f.write_str("text/plain;charset=UTF-8"),
+			FetchBodyKind::FormData(str) => f.write_str(str.as_str()),
+			FetchBodyKind::FormUrlEncoded => f.write_str("application/x-www-form-urlencoded"),
 		}
 	}
 }
@@ -65,7 +74,7 @@ impl Clone for FetchBody {
 		FetchBody {
 			body: self.body.clone(),
 			source: self.source.as_ref().map(|s| Heap::boxed(s.get())),
-			kind: self.kind,
+			kind: self.kind.clone(),
 		}
 	}
 }
@@ -141,6 +150,52 @@ impl<'cx> FromValue<'cx> for FetchBody {
 					body: FetchBodyInner::Bytes(Bytes::from(String::from_value(cx, &string, true, ()).unwrap())),
 					source: Some(Heap::boxed(value.handle().get())),
 					kind: Some(FetchBodyKind::String),
+				})
+			} else if Blob::instance_of(cx, &object, None) {
+				let blob = Blob::get_private(&object);
+				Ok(FetchBody {
+					body: FetchBodyInner::Bytes(blob.get_bytes()),
+					source: Some(Heap::boxed(value.handle().get())),
+					kind: None,
+				})
+			} else if FormData::instance_of(cx, &object, None) {
+				let form_data = FormData::get_private(&object);
+
+				let mut form = multipart::Form::default();
+				for kv in form_data.all_pairs() {
+					match &kv.value {
+						FormDataEntryValue::String(str) => form.add_text(kv.key.as_str(), str),
+						FormDataEntryValue::File(bytes, name) => {
+							// TODO: remove to_vec call
+							form.add_reader_file(kv.key.as_str(), std::io::Cursor::new(bytes.to_vec()), name.as_str())
+						}
+					}
+				}
+				let content_type = form.content_type();
+
+				// TODO: store the form directly
+				let builder = hyper::Request::builder();
+				let req = form.set_body::<multipart::Body>(builder).unwrap();
+				let bytes = futures::executor::block_on(hyper::body::to_bytes(req.into_body())).unwrap();
+
+				Ok(FetchBody {
+					body: FetchBodyInner::Bytes(bytes),
+					source: Some(Heap::boxed(value.handle().get())),
+					kind: Some(FetchBodyKind::FormData(content_type)),
+				})
+			} else if UrlSearchParams::instance_of(cx, &object, None) {
+				let search_params = UrlSearchParams::get_private(&object);
+
+				let mut serializer = form_urlencoded::Serializer::new(String::new());
+				for (key, value) in search_params.all_pairs() {
+					serializer.append_pair(key.as_str(), value.as_str());
+				}
+				let body = serializer.finish();
+
+				Ok(FetchBody {
+					body: FetchBodyInner::Bytes(body.into_bytes().into()),
+					source: Some(Heap::boxed(value.handle().get())),
+					kind: Some(FetchBodyKind::FormUrlEncoded),
 				})
 			} else {
 				let bytes = typedarray_to_bytes!(object.handle().get(), [ArrayBuffer, true], [ArrayBufferView, true])?;
