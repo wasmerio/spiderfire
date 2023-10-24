@@ -24,9 +24,6 @@ mod fs;
 mod path;
 mod url;
 
-pub mod file;
-pub mod form_data;
-
 pub struct Modules;
 
 impl StandardModules for Modules {

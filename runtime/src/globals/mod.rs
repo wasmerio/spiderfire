@@ -11,12 +11,20 @@ pub mod console;
 pub mod encoding;
 #[cfg(feature = "fetch")]
 pub mod fetch;
+pub mod file;
+pub mod form_data;
 pub mod microtasks;
 pub mod timers;
 pub mod url;
 
 pub fn init_globals<'cx: 'o, 'o>(cx: &'cx Context, global: &mut Object<'o>) -> bool {
-	let result = console::define(cx, global) && encoding::define(cx, global) && url::define(cx, global) && Iterator::init_class(cx, global).0;
+	let result = console::define(cx, global)
+		&& encoding::define(cx, global)
+		&& url::define(cx, global)
+		&& Iterator::init_class(cx, global).0
+		&& self::form_data::define(cx, global)
+		&& self::file::define(cx, global);
+
 	#[cfg(feature = "fetch")]
 	{
 		result && fetch::define(cx, global)

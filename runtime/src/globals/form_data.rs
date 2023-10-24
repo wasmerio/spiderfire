@@ -6,7 +6,7 @@ use ion::{
 	ClassDefinition, Result, Error, ErrorKind, JSIterator,
 };
 
-use crate::file::blob::Blob;
+use super::file::blob::Blob;
 
 // TODO: maintain the same File instance instead of Bytes
 #[derive(Clone)]
@@ -49,6 +49,7 @@ pub struct KvPair {
 }
 
 #[js_class]
+#[ion(runtime = crate)]
 pub mod class {
 	use ion::{Context, Object, Result, symbol::WellKnownSymbolCode, conversions::ToValue};
 

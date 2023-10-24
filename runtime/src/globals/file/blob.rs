@@ -40,7 +40,7 @@ impl<'cx> FromValue<'cx> for BlobPart {
 			Ok(Self { bytes: str.into_bytes().into() })
 		} else if value.get().is_object() {
 			let obj = (*value.to_object(cx)).get();
-			let bytes = runtime::typedarray_to_bytes!(obj, [ArrayBuffer, true], [ArrayBufferView, true], [Uint8Array, true])?;
+			let bytes = crate::typedarray_to_bytes!(obj, [ArrayBuffer, true], [ArrayBufferView, true], [Uint8Array, true])?;
 			Ok(Self { bytes })
 		} else {
 			Err(ion::Error::new("Invalid blob part type", ion::ErrorKind::Type))
@@ -49,6 +49,7 @@ impl<'cx> FromValue<'cx> for BlobPart {
 }
 
 #[js_class]
+#[ion(runtime = crate)]
 mod class {
 	use bytes::Bytes;
 	use ion::{Array, Context, Result, conversions::FromValue};
