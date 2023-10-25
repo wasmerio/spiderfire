@@ -6,11 +6,12 @@
 
 use std::rc::Rc;
 
-use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm};
+use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm, OnNewGlobalHookOption};
 
 use ion::{Context, ErrorReport, Object};
 use ion::module::{init_module_loader, ModuleLoader};
-use ion::objects::default_new_global;
+use ion::objects::new_global;
+use mozjs::rust::{RealmOptions, SIMPLE_GLOBAL_CLASS};
 
 use crate::event_loop::{EVENT_LOOP, EventLoop};
 use crate::event_loop::future::FutureQueue;
@@ -75,12 +76,13 @@ impl Drop for Runtime<'_, '_> {
 	}
 }
 
-#[derive(Copy, Clone, Debug)]
 pub struct RuntimeBuilder<ML: ModuleLoader + 'static = (), Std: StandardModules = ()> {
 	microtask_queue: bool,
 	macrotask_queue: bool,
 	modules: Option<ML>,
 	standard_modules: Option<Std>,
+	hook_option: Option<OnNewGlobalHookOption>,
+	realm_options: Option<RealmOptions>,
 }
 
 impl<ML: ModuleLoader + 'static, Std: StandardModules> RuntimeBuilder<ML, Std> {
@@ -108,8 +110,24 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules> RuntimeBuilder<ML, Std> {
 		self
 	}
 
+	pub fn hook_option(mut self, hook_option: OnNewGlobalHookOption) -> RuntimeBuilder<ML, Std> {
+		self.hook_option = Some(hook_option);
+		self
+	}
+
+	pub fn realm_options(mut self, realm_options: RealmOptions) -> RuntimeBuilder<ML, Std> {
+		self.realm_options = Some(realm_options);
+		self
+	}
+
 	pub fn build<'c, 'cx>(self, cx: &'cx Context<'c>) -> Runtime<'c, 'cx> {
-		let mut global = default_new_global(cx);
+		let mut global = new_global(
+			cx,
+			&SIMPLE_GLOBAL_CLASS,
+			None,
+			self.hook_option.unwrap_or(OnNewGlobalHookOption::FireOnNewGlobalHook),
+			self.realm_options,
+		);
 		let realm = JSAutoRealm::new(cx.as_ptr(), global.handle().get());
 
 		let global_obj = global.handle().get();
@@ -168,6 +186,8 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules> Default for RuntimeBuilde
 			macrotask_queue: false,
 			modules: None,
 			standard_modules: None,
+			hook_option: None,
+			realm_options: None,
 		}
 	}
 }

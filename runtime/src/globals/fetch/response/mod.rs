@@ -128,6 +128,14 @@ pub mod class {
 			self.url.as_ref().map(Url::to_string).unwrap_or_default()
 		}
 
+		// TODO: get_body must be a sync call
+		#[ion(get)]
+		pub async fn get_body(&mut self, cx: &Context<'_>) -> Result<*mut JSObject> {
+			let bytes = self.read_to_bytes().await?;
+			let stream = crate::globals::readable_stream::new_memory_backed(cx, bytes.into());
+			Ok((*stream).get())
+		}
+
 		#[ion(get)]
 		pub fn get_body_used(&self) -> bool {
 			self.body_used

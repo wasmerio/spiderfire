@@ -14,6 +14,7 @@ pub mod fetch;
 pub mod file;
 pub mod form_data;
 pub mod microtasks;
+pub mod readable_stream;
 pub mod timers;
 pub mod url;
 
