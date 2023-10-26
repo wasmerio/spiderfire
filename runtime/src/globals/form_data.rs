@@ -72,6 +72,14 @@ pub mod class {
 			self.kv_pairs.iter()
 		}
 
+		#[ion(skip)]
+		pub fn append_native_string(&mut self, key: String, value: String) {
+			self.kv_pairs.push(KvPair {
+				key,
+				value: FormDataEntryValue::String(value),
+			});
+		}
+
 		pub fn append<'cx>(&mut self, cx: &'cx Context, name: String, value: ion::Value<'cx>, file_name: Option<String>) -> Result<()> {
 			let value = FormDataEntryValue::from_value(cx, &value, file_name)?;
 			self.kv_pairs.push(KvPair { key: name, value });
