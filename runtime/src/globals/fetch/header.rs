@@ -262,6 +262,10 @@ mod class {
 			}
 		}
 
+		pub fn entries<'cx: 'o, 'o>(&self, cx: &'cx Context, #[ion(this)] this: &Object<'o>) -> ion::Iterator {
+			self.iterator(cx, this)
+		}
+
 		#[ion(name = WellKnownSymbolCode::Iterator)]
 		pub fn iterator<'cx: 'o, 'o>(&self, cx: &'cx Context, #[ion(this)] this: &Object<'o>) -> ion::Iterator {
 			let thisv = this.as_value(cx);
