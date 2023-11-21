@@ -25,10 +25,10 @@ pub use future::PromiseFuture;
 #[cfg(feature = "macros")]
 pub use ion_proc::*;
 pub use local::Local;
-pub use objects::{Array, Date, Iterator, JSIterator, Object, OwnedKey, Promise, PropertyKey};
+pub use objects::{Array, Date, Iterator, JSIterator, Object, OwnedKey, Promise, PropertyKey, RegExp};
 pub use objects::typedarray;
 pub use stack::{Stack, StackRecord};
-pub use string::String;
+pub use string::{String, StringRef};
 pub use symbol::Symbol;
 pub use value::Value;
 
@@ -48,7 +48,7 @@ pub mod objects;
 pub mod script;
 pub mod spec;
 pub mod stack;
-mod string;
+pub mod string;
 pub mod symbol;
 pub mod utils;
 mod value;

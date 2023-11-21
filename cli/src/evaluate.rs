@@ -23,10 +23,9 @@ use runtime::{Runtime, RuntimeBuilder};
 use runtime::cache::locate_in_cache;
 use runtime::cache::map::{save_sourcemap, transform_error_report_with_sourcemaps};
 use runtime::config::Config;
-use runtime::modules::handler::add_handler_reactions;
 use runtime::modules::Loader;
 
-pub(crate) async fn eval_inline(rt: &Runtime<'_, '_>, source: &str) {
+pub(crate) async fn eval_inline(rt: &Runtime<'_>, source: &str) {
 	let result = Script::compile_and_evaluate(rt.cx(), Path::new("inline.js"), source);
 
 	match result {
@@ -40,12 +39,12 @@ pub(crate) async fn eval_script(path: &Path) {
 	let engine = JSEngine::init().unwrap();
 	let rt = RustRuntime::new(engine.handle());
 
-	let cx = Context::from_runtime(&rt);
+	let cx = &mut Context::from_runtime(&rt);
 	let rt = RuntimeBuilder::<(), _>::new()
 		.microtask_queue()
 		.macrotask_queue()
 		.standard_modules(Modules)
-		.build(&cx);
+		.build(cx);
 
 	if let Some((script, _)) = read_script(path) {
 		let (script, sourcemap) = cache(path, script);
@@ -69,13 +68,13 @@ pub(crate) async fn eval_module(path: &Path) {
 	let engine = JSEngine::init().unwrap();
 	let rt = RustRuntime::new(engine.handle());
 
-	let cx = Context::from_runtime(&rt);
+	let cx = &mut Context::from_runtime(&rt);
 	let rt = RuntimeBuilder::new()
 		.microtask_queue()
 		.macrotask_queue()
 		.modules(Loader::default())
 		.standard_modules(Modules)
-		.build(&cx);
+		.build(cx);
 
 	if let Some((script, filename)) = read_script(path) {
 		let (script, sourcemap) = cache(path, script);
@@ -84,15 +83,9 @@ pub(crate) async fn eval_module(path: &Path) {
 		}
 		let result = Module::compile(rt.cx(), &filename, Some(path), &script);
 
-		match result {
-			Ok((_, Some(mut promise))) => {
-				add_handler_reactions(rt.cx(), &mut promise);
-			}
-			Err(mut error) => {
-				transform_error_report_with_sourcemaps(&mut error.report);
-				eprintln!("{}", error.format(rt.cx()));
-			}
-			_ => {}
+		if let Err(mut error) = result {
+			transform_error_report_with_sourcemaps(&mut error.report);
+			eprintln!("{}", error.format(rt.cx()));
 		}
 		run_event_loop(&rt).await;
 	}
@@ -116,7 +109,7 @@ fn read_script(path: &Path) -> Option<(String, String)> {
 	}
 }
 
-async fn run_event_loop(rt: &Runtime<'_, '_>) {
+async fn run_event_loop(rt: &Runtime<'_>) {
 	if let Err(err) = rt.run_event_loop().await {
 		if let Some(err) = err {
 			eprintln!("{}", err.format(rt.cx()));

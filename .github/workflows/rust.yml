@@ -1,13 +1,18 @@
 name: Rust
 
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 
 env:
-  CARGO_TERM_COLOR: always
   SHELL: /bin/bash
+  CARGO_TERM_COLOR: never
+  SCCACHE_GHA_ENABLED: "true"
+
+  CC: clang
+  CXX: clang++
+  CCACHE: sccache
 
 jobs:
-  Build:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -22,127 +27,97 @@ jobs:
           - os: ubuntu-latest
             id: linux
     env:
-      CCACHE: sccache
-      SCCACHE_CACHE_SIZE: 3G
-      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_CACHE_SIZE: 2G
 
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Dependencies on Windows
-        if: matrix.id == 'windows'
-        env:
-          MOZILLA_BUILD_LINK: https://ftp.mozilla.org/pub/mozilla/libraries/win32
-          MOZILLA_BUILD_VERSION: 3.4
-        run: |
-          curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
-          cd target/dependencies && unzip -qo moztools.zip -d .
-          echo 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Tools\LLVM\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Install Dependencies on OS X
-        if: matrix.id == 'macos'
-        run: brew install python autoconf@2.13 llvm sccache yasm
-
-      - name: Install Dependencies on Linux
-        if: matrix.id == 'linux'
-        run: sudo apt install clang llvm -y
+      - uses: actions/checkout@v4
 
       - name: Install Rust Toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
-          default: true
-      - name: Install Just
-        uses: extractions/setup-just@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.3
-
-      - name: Cache Cargo Cache and Git Database
-        uses: actions/cache@v2
+      - name: Setup Dependencies
+        uses: ./.github/actions/setup
         with:
-          path: |
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: cargo-${{ matrix.id }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-${{ matrix.id }}-
-
-      - name: Build POSIX
-        if: matrix.id == 'macos' || matrix.id == 'linux'
-        env:
-          CC: clang
-          CXX: clang++
-          RUSTC_WRAPPER: sccache
-        run: |
-          just build-release -vv --color=never
-          just test-release -vv --color=never
-          mv ./target/release/cli ./target/release/spiderfire
-          strip ./target/release/spiderfire
+          os: ${{ matrix.id }}
+          cache-id: ${{ matrix.id }}
 
       - name: Build Windows
         if: matrix.id == 'windows'
         env:
-          MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-4.0"
-          CC: clang-cl.exe
-          CXX: clang-cl.exe
-          LINKER: lld-link.exe
+          MOZTOOLS_PATH: ${{ github.workspace }}\\target\\dependencies\\moztools-4.0
+          CC: clang-cl
+          CXX: clang-cl
+          AR: llvm-lib
+          LINKER: lld-link
         run: |
-          just build-release -vv --color=never
-          just test-release -vv --color=never
+          just build-release -v
+          just test-release -v
           Rename-Item -Path .\target\release\cli.exe -NewName spiderfire.exe
 
+      - name: Build POSIX
+        if: matrix.id == 'macos' || matrix.id == 'linux'
+        env:
+          RUSTC_WRAPPER: sccache
+        run: |
+          just build-release -v
+          just test-release -v
+          mv ./target/release/cli ./target/release/spiderfire
+          strip ./target/release/spiderfire
+
       - name: Upload Executables as Artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         if: matrix.rust == 'stable'
         with:
           name: spiderfire-${{ github.sha }}-${{ matrix.id }}
           path: target/release/spiderfire${{ matrix.id == 'windows' && '.exe' || '' }}
           if-no-files-found: error
 
-  Lint:
+  lint:
     runs-on: ubuntu-latest
     env:
-      CCACHE: sccache
       SCCACHE_CACHE_SIZE: 1G
-      SCCACHE_GHA_ENABLED: "true"
 
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Dependencies on Linux
-        run: sudo apt install clang llvm -y
+      - uses: actions/checkout@v4
 
       - name: Install Rust Toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          default: true
-      - name: Install Just
-        uses: extractions/setup-just@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          components: clippy, rustfmt
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.3
-
-      - name: Cache Cargo Cache and Git Database
-        uses: actions/cache@v2
+      - name: Setup Dependencies
+        uses: ./.github/actions/setup
         with:
-          path: |
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: cargo-lint-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-lint-
+          cache-id: lint
 
       - name: Lint
         env:
-          CC: clang
-          CXX: clang++
           RUSTC_WRAPPER: sccache
         run: just lint
+
+
+  unused-dependencies:
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_CACHE_SIZE: 1G
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Setup Dependencies
+        uses: ./.github/actions/setup
+        with:
+          cache-id: udeps
+
+      - name: Install cargo-udeps
+        uses: taiki-e/install-action@cargo-udeps
+
+      - name: Check for Unused Dependencies
+        env:
+          RUSTC_WRAPPER: sccache
+        run: cargo udeps --all-targets --locked

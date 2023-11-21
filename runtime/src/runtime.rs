@@ -4,48 +4,47 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::rc::Rc;
+use std::ptr;
+use std::ptr::NonNull;
 
-use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm, OnNewGlobalHookOption};
+use mozjs::glue::CreateJobQueue;
+use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm, SetJobQueue, SetPromiseRejectionTrackerCallback, OnNewGlobalHookOption};
 
 use ion::{Context, ErrorReport, Object};
 use ion::module::{init_module_loader, ModuleLoader};
 use ion::objects::new_global;
 use mozjs::rust::{RealmOptions, SIMPLE_GLOBAL_CLASS};
 
-use crate::event_loop::{EVENT_LOOP, EventLoop};
+use crate::event_loop::{EventLoop, promise_rejection_tracker_callback};
 use crate::event_loop::future::FutureQueue;
 use crate::event_loop::macrotasks::MacrotaskQueue;
-use crate::event_loop::microtasks::init_microtask_queue;
+use crate::event_loop::microtasks::{JOB_QUEUE_TRAPS, MicrotaskQueue};
 use crate::globals::{init_globals, init_microtasks, init_timers};
 use crate::modules::StandardModules;
 
 #[derive(Default)]
-pub struct ContextPrivate {}
-
-pub trait ContextExt {
-	#[allow(clippy::mut_from_ref)]
-	fn get_private(&self) -> &mut ContextPrivate;
+pub struct ContextPrivate {
+	pub(crate) event_loop: EventLoop,
 }
 
-impl ContextExt for Context<'_> {
-	fn get_private(&self) -> &mut ContextPrivate {
-		unsafe {
-			let private = self.get_raw_private() as *mut ContextPrivate;
-			&mut *private
-		}
+pub trait ContextExt {
+	fn get_private(&self) -> NonNull<ContextPrivate>;
+}
+
+impl ContextExt for Context {
+	fn get_private(&self) -> NonNull<ContextPrivate> {
+		unsafe { NonNull::new_unchecked(self.get_raw_private() as *mut ContextPrivate) }
 	}
 }
 
-pub struct Runtime<'c, 'cx> {
+pub struct Runtime<'cx> {
 	global: Object<'cx>,
-	cx: &'cx Context<'c>,
-	event_loop: EventLoop,
+	cx: &'cx Context,
 	#[allow(dead_code)]
 	realm: JSAutoRealm,
 }
 
-impl<'cx> Runtime<'_, 'cx> {
+impl<'cx> Runtime<'cx> {
 	pub fn cx(&self) -> &Context {
 		self.cx
 	}
@@ -59,24 +58,21 @@ impl<'cx> Runtime<'_, 'cx> {
 	}
 
 	pub async fn run_event_loop(&self) -> Result<(), Option<ErrorReport>> {
-		self.event_loop.run_event_loop(self.cx).await
+		let event_loop = unsafe { &mut (*self.cx.get_private().as_ptr()).event_loop };
+		event_loop.run_event_loop(self.cx).await
 	}
 }
 
-impl Drop for Runtime<'_, '_> {
+impl Drop for Runtime<'_> {
 	fn drop(&mut self) {
-		let private = self.cx.get_raw_private() as *mut ContextPrivate;
-		if !private.is_null() {
-			let _ = unsafe { Box::from_raw(private) };
-		}
+		let private = self.cx.get_private();
+		let _ = unsafe { Box::from_raw(private.as_ptr()) };
 		let inner_private = self.cx.get_inner_data();
-		if !inner_private.is_null() {
-			let _ = unsafe { Box::from_raw(inner_private) };
-		}
+		let _ = unsafe { Box::from_raw(inner_private.as_ptr()) };
 	}
 }
 
-pub struct RuntimeBuilder<ML: ModuleLoader + 'static = (), Std: StandardModules = ()> {
+pub struct RuntimeBuilder<ML: ModuleLoader + 'static = (), Std: StandardModules + 'static = ()> {
 	microtask_queue: bool,
 	macrotask_queue: bool,
 	modules: Option<ML>,
@@ -85,7 +81,7 @@ pub struct RuntimeBuilder<ML: ModuleLoader + 'static = (), Std: StandardModules 
 	realm_options: Option<RealmOptions>,
 }
 
-impl<ML: ModuleLoader + 'static, Std: StandardModules> RuntimeBuilder<ML, Std> {
+impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<ML, Std> {
 	pub fn new() -> RuntimeBuilder<ML, Std> {
 		RuntimeBuilder::default()
 	}
@@ -120,7 +116,7 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules> RuntimeBuilder<ML, Std> {
 		self
 	}
 
-	pub fn build<'c, 'cx>(self, cx: &'cx Context<'c>) -> Runtime<'c, 'cx> {
+	pub fn build<'cx>(self, cx: &'cx mut Context) -> Runtime<'cx> {
 		let mut global = new_global(
 			cx,
 			&SIMPLE_GLOBAL_CLASS,
@@ -134,33 +130,29 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules> RuntimeBuilder<ML, Std> {
 		global.set_as(cx, "global", &global_obj);
 		init_globals(cx, &mut global);
 
-		let private = Box::<ContextPrivate>::default();
-		cx.set_raw_private(Box::into_raw(private).cast());
-
-		let mut event_loop = EventLoop {
-			futures: None,
-			microtasks: None,
-			macrotasks: None,
-		};
+		let mut private = Box::<ContextPrivate>::default();
 
 		if self.microtask_queue {
-			event_loop.microtasks = Some(init_microtask_queue(cx));
+			private.event_loop.microtasks = Some(MicrotaskQueue::default());
 			init_microtasks(cx, &mut global);
-			event_loop.futures = Some(Rc::new(FutureQueue::default()));
+			private.event_loop.futures = Some(FutureQueue::default());
+
+			unsafe {
+				SetJobQueue(
+					cx.as_ptr(),
+					CreateJobQueue(&JOB_QUEUE_TRAPS, private.event_loop.microtasks.as_ref().unwrap() as *const _ as *const _),
+				);
+				SetPromiseRejectionTrackerCallback(cx.as_ptr(), Some(promise_rejection_tracker_callback), ptr::null_mut());
+			}
 		}
 		if self.macrotask_queue {
-			event_loop.macrotasks = Some(Rc::new(MacrotaskQueue::default()));
+			private.event_loop.macrotasks = Some(MacrotaskQueue::default());
 			init_timers(cx, &mut global);
 		}
 
 		let _options = unsafe { &mut *ContextOptionsRef(cx.as_ptr()) };
 
-		EVENT_LOOP.with(|eloop| {
-			let mut eloop = eloop.borrow_mut();
-			eloop.microtasks = event_loop.microtasks.clone();
-			eloop.futures = event_loop.futures.clone();
-			eloop.macrotasks = event_loop.macrotasks.clone();
-		});
+		cx.set_private(private);
 
 		let has_loader = self.modules.is_some();
 		if let Some(loader) = self.modules {
@@ -175,11 +167,11 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules> RuntimeBuilder<ML, Std> {
 			}
 		}
 
-		Runtime { global, cx, event_loop, realm }
+		Runtime { global, cx, realm }
 	}
 }
 
-impl<ML: ModuleLoader + 'static, Std: StandardModules> Default for RuntimeBuilder<ML, Std> {
+impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> Default for RuntimeBuilder<ML, Std> {
 	fn default() -> RuntimeBuilder<ML, Std> {
 		RuntimeBuilder {
 			microtask_queue: false,

@@ -16,6 +16,7 @@ pub use iterator::{Iterator, JSIterator};
 pub use key::{OwnedKey, PropertyKey};
 pub use object::Object;
 pub use promise::Promise;
+pub use regexp::RegExp;
 
 use crate::Context;
 
@@ -26,6 +27,7 @@ mod iterator;
 mod key;
 mod object;
 mod promise;
+mod regexp;
 pub mod typedarray;
 
 /// Returns the bit-masked representation of reserved slots for a class.
@@ -49,6 +51,6 @@ pub fn new_global<'cx, P: Into<Option<*mut JSPrincipals>>, R: Into<Option<RealmO
 	Object::from(cx.root_object(global))
 }
 
-pub fn default_new_global<'cx>(cx: &'cx Context) -> Object<'cx> {
+pub fn default_new_global(cx: &Context) -> Object {
 	new_global(cx, &SIMPLE_GLOBAL_CLASS, None, OnNewGlobalHookOption::FireOnNewGlobalHook, None)
 }

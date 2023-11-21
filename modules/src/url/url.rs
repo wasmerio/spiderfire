@@ -8,7 +8,7 @@ use idna::{domain_to_ascii, domain_to_ascii_strict, domain_to_unicode};
 use mozjs::jsapi::JSFunctionSpec;
 
 use ion::{ClassDefinition, Context, Object, Result};
-use runtime::globals::url::{Url, UrlSearchParams};
+use runtime::globals::url::{URL, URLSearchParams};
 use runtime::modules::NativeModule;
 
 #[js_fn]
@@ -36,7 +36,7 @@ impl NativeModule for UrlM {
 	const NAME: &'static str = "url";
 	const SOURCE: &'static str = include_str!("url.js");
 
-	fn module<'cx>(cx: &'cx Context) -> Option<Object<'cx>> {
+	fn module(cx: &Context) -> Option<Object> {
 		let mut url = Object::new(cx);
 		let global = Object::global(cx);
 
@@ -44,13 +44,13 @@ impl NativeModule for UrlM {
 			if let Some(global_url) = global.get(cx, stringify!(URL)) {
 				url.set(cx, stringify!(URL), &global_url);
 			} else {
-				Url::init_class(cx, &mut url);
+				URL::init_class(cx, &mut url);
 			}
 
 			if let Some(url_search_params) = global.get(cx, stringify!(URLSearchParams)) {
 				url.set(cx, stringify!(URLSearchParams), &url_search_params);
 			} else {
-				UrlSearchParams::init_class(cx, &mut url);
+				URLSearchParams::init_class(cx, &mut url);
 			}
 
 			return Some(url);

@@ -11,10 +11,10 @@ use std::fs::{create_dir_all, metadata, read_dir, read_to_string, remove_dir_all
 use std::path::{Path, PathBuf};
 use std::str::{from_utf8, Utf8Error};
 
-use base64_url::encode;
+use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE;
 use dirs::home_dir;
 use dunce::canonicalize;
-use os_str_bytes::OsStrBytes;
 use sha3::{Digest, Sha3_512};
 use sourcemap::SourceMap;
 
@@ -52,7 +52,7 @@ impl Cache {
 		let folder = canonical.parent().ok_or(Error::Other)?;
 		let folder_name = folder.file_name().and_then(OsStr::to_str).ok_or(Error::Other)?;
 
-		let hash = hash(folder.to_raw_bytes(), Some(16));
+		let hash = hash(folder.as_os_str().to_str().unwrap().as_bytes(), Some(16));
 		let folder = self.dir.join(format!("{}-{}", folder_name, hash));
 		Ok(folder)
 	}
@@ -174,7 +174,7 @@ impl Display for Error {
 }
 
 fn hash<T: AsRef<[u8]>>(bytes: T, len: Option<usize>) -> String {
-	let hash = encode(&Sha3_512::new().chain_update(bytes).finalize());
+	let hash = BASE64_URL_SAFE.encode(Sha3_512::new().chain_update(bytes).finalize());
 	len.map_or(hash.clone(), |len| String::from(&hash[0..len]))
 }
 

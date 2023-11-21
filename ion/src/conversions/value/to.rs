@@ -4,11 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::string::String as RustString;
 
-use mozjs::jsapi::{JS_GetFunctionObject, JS_IdToValue, JS_WrapValue, JSFunction, JSObject, JSString};
+use mozjs::jsapi::{JS_GetFunctionObject, JS_IdToValue, JS_NewStringCopyN, JS_WrapValue, JSFunction, JSObject, JSString};
 use mozjs::jsapi::PropertyKey as JSPropertyKey;
 use mozjs::jsapi::Symbol as JSSymbol;
 use mozjs::jsval::{
@@ -16,7 +16,9 @@ use mozjs::jsval::{
 };
 use mozjs::rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, maybe_wrap_value};
 
-use crate::{Array, Context, Date, Function, Object, Promise, PropertyKey, String, Symbol, Value};
+use crate::{Array, Context, Date, Function, Object, Promise, PropertyKey, Symbol, Value};
+use crate::objects::RegExp;
+use crate::string::byte::{BytePredicate, ByteStr, ByteString};
 
 /// Represents types that can be converted to JavaScript [Values](Value).
 pub trait ToValue<'cx> {
@@ -92,7 +94,7 @@ impl ToValue<'_> for *mut JSString {
 	}
 }
 
-impl<'cx> ToValue<'cx> for String<'cx> {
+impl<'cx> ToValue<'cx> for crate::String<'cx> {
 	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
 		self.handle().to_value(cx, value);
 	}
@@ -100,7 +102,7 @@ impl<'cx> ToValue<'cx> for String<'cx> {
 
 impl ToValue<'_> for str {
 	fn to_value(&self, cx: &Context, value: &mut Value) {
-		let string = String::new(cx, self);
+		let string = crate::String::new(cx, self);
 		if let Some(string) = string {
 			string.to_value(cx, value);
 		} else {
@@ -109,9 +111,27 @@ impl ToValue<'_> for str {
 	}
 }
 
-impl<'cx> ToValue<'cx> for RustString {
+impl<'cx> ToValue<'cx> for String {
 	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
 		(**self).to_value(cx, value);
+	}
+}
+
+impl<'cx, T: ToOwned + ToValue<'cx>> ToValue<'cx> for Cow<'_, T> {
+	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
+		self.as_ref().to_value(cx, value)
+	}
+}
+
+impl<'cx, T: BytePredicate> ToValue<'cx> for ByteStr<T> {
+	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
+		unsafe { JS_NewStringCopyN(cx.as_ptr(), self.as_ptr() as *const _, self.len()).to_value(cx, value) }
+	}
+}
+
+impl<'cx, T: BytePredicate> ToValue<'cx> for ByteString<T> {
+	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
+		(**self).to_value(cx, value)
 	}
 }
 
@@ -152,6 +172,12 @@ impl<'cx> ToValue<'cx> for Date<'cx> {
 }
 
 impl<'cx> ToValue<'cx> for Promise<'cx> {
+	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
+		self.handle().to_value(cx, value);
+	}
+}
+
+impl<'cx> ToValue<'cx> for RegExp<'cx> {
 	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
 		self.handle().to_value(cx, value);
 	}

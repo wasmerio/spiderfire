@@ -1,0 +1,83 @@
+name: Rust Release Build
+
+on: workflow_dispatch
+
+env:
+  SHELL: /bin/bash
+  CARGO_TERM_COLOR: never
+  SCCACHE_GHA_ENABLED: "true"
+  CCACHE: sccache
+
+jobs:
+  Build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-13]
+        rust: [stable, beta]
+        include:
+          - os: windows-latest
+            id: windows
+            target: x86_64-pc-windows-msvc
+          - os: macos-13
+            id: macos
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            id: linux
+            target: x86_64-unknown-linux-gnu
+    env:
+      TARGET: ${{ matrix.target }}
+      SCCACHE_CACHE_SIZE: 3G
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Dependencies
+        uses: ./.github/actions/setup
+        with:
+          os: ${{ matrix.id }}
+          cache-id: ${{ matrix.id }}
+
+      - name: Build Windows
+        if: matrix.id == 'windows'
+        env:
+          MOZTOOLS_PATH: ${{ github.workspace }}\\target\\dependencies\\moztools-4.0
+          CC: clang-cl
+          CXX: clang-cl
+          AR: llvm-lib
+          LINKER: lld-link
+          RUSTFLAGS: -Clto=fat -Cembed-bitcode=true -Clinker=lld-link
+        run: |
+          just build-release -v --target $env:TARGET
+          Rename-Item -Path .\target\$env:TARGET\release\cli.exe -NewName spiderfire.exe
+
+      - name: Build MacOS
+        if: matrix.id == 'macos'
+        env:
+          CC: clang
+          CXX: clang++
+          RUSTC_WRAPPER: sccache
+          RUSTFLAGS: -Clto=fat -Cembed-bitcode=true
+        run: |
+          just build-release -v --target $TARGET
+          mv ./target/$TARGET/release/cli ./target/$TARGET/release/spiderfire
+
+      - name: Build Linux
+        if: matrix.id == 'linux'
+        env:
+          CC: clang
+          CXX: clang++
+          RUSTC_WRAPPER: sccache
+          RUSTFLAGS: -Clto=fat -Cembed-bitcode=true -Cstrip=symbols
+        run: |
+          just build-release -v --target $TARGET
+          mv ./target/$TARGET/release/cli ./target/$TARGET/release/spiderfire
+
+      - name: Upload Executables as Artifacts
+        uses: actions/upload-artifact@v3
+        if: matrix.rust == 'stable'
+        with:
+          name: spiderfire-${{ github.sha }}-${{ matrix.id }}
+          path: target/${{ matrix.target }}/release/spiderfire${{ matrix.id == 'windows' && '.exe' || '' }}
+          if-no-files-found: error

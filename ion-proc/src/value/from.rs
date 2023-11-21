@@ -10,15 +10,14 @@ use syn::{Block, Data, DeriveInput, Error, Field, Fields, GenericParam, Generics
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
-use crate::attribute::krate::Crates;
-use crate::utils::{add_trait_bounds, format_type, type_ends_with};
+use crate::attribute::krate::crate_from_attributes;
+use crate::utils::{add_trait_bounds, format_type, path_ends_with};
 use crate::value::attribute::{DataAttribute, DefaultValue, FieldAttribute, Tag, VariantAttribute};
 
 pub(crate) fn impl_from_value(mut input: DeriveInput) -> Result<ItemImpl> {
-	let crates = Crates::from_attributes(&mut input.attrs)?;
-	let ion = &crates.ion;
+	let ion = &crate_from_attributes(&input.attrs);
 
-	add_trait_bounds(&mut input.generics, &parse2(quote!(#ion::conversions::FromValue)).unwrap());
+	add_trait_bounds(&mut input.generics, &parse_quote!(#ion::conversions::FromValue));
 	let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 	let mut impl_generics: Generics = parse2(quote_spanned!(impl_generics.span() => #impl_generics))?;
 
@@ -80,7 +79,7 @@ pub(crate) fn impl_from_value(mut input: DeriveInput) -> Result<ItemImpl> {
 
 	let name = &input.ident;
 
-	let (body, requires_object) = impl_body(ion, &input.data, name, input.span(), tag, inherit, repr)?;
+	let (body, requires_object) = impl_body(ion, input.span(), &input.data, name, tag, inherit, repr)?;
 
 	let object = requires_object.then(|| quote_spanned!(input.span() => let __object = #ion::Object::from_value(cx, value, true, ())?;));
 
@@ -89,9 +88,7 @@ pub(crate) fn impl_from_value(mut input: DeriveInput) -> Result<ItemImpl> {
 		impl #impl_generics #ion::conversions::FromValue<'cx> for #name #ty_generics #where_clause {
 			type Config = ();
 
-			fn from_value<'v>(cx: &'cx #ion::Context, value: &#ion::Value<'v>, strict: bool, _: ())
-				-> #ion::Result<Self> where 'cx: 'v
-			{
+			fn from_value<'v>(cx: &'cx #ion::Context, value: &#ion::Value<'v>, strict: bool, _: ()) -> #ion::Result<Self> {
 				#object
 				#body
 			}
@@ -99,7 +96,7 @@ pub(crate) fn impl_from_value(mut input: DeriveInput) -> Result<ItemImpl> {
 	))
 }
 
-fn impl_body(ion: &TokenStream, data: &Data, ident: &Ident, span: Span, tag: Tag, inherit: bool, repr: Option<Ident>) -> Result<(Block, bool)> {
+fn impl_body(ion: &TokenStream, span: Span, data: &Data, ident: &Ident, tag: Tag, inherit: bool, repr: Option<Ident>) -> Result<(Block, bool)> {
 	match data {
 		Data::Struct(data) => match &data.fields {
 			Fields::Named(fields) => {
@@ -298,7 +295,7 @@ fn map_fields(
 
 			let mut optional = false;
 			if let Type::Path(ty) = ty {
-				if type_ends_with(ty, "Option") {
+				if path_ends_with(&ty.path, "Option") {
 					optional = true;
 				}
 			}
@@ -355,12 +352,12 @@ fn map_fields(
 			} else if let Some(parser) = &parser {
 				requires_object = true;
 				let error = format!("Expected Value at Key {}", key);
-				quote_spanned!(field.span() => let #ident: #ty = __object.get(cx, #key).ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)).and_then(#parser))
+				quote_spanned!(field.span() => let #ident: #ty = __object.get(cx, #key).map(#parser).transpose()?.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)))
 			} else {
 				requires_object = true;
 				let error = format!("Expected Value at key {} of Type {}", key, format_type(ty));
-				let ok_or_else = quote!(.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)));
-				quote_spanned!(field.span() => let #ident: #ty = __object.get_as(cx, #key, #strict || strict, #convert)#ok_or_else)
+				quote_spanned!(field.span() => let #ident: #ty = __object.get_as(cx, #key, #strict || strict, #convert)
+					.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)))
 			};
 
 			let stmt = if optional {

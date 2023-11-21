@@ -13,78 +13,18 @@ use mozjs::jsval::JSVal;
 use url::Url;
 
 use ion::{Context, Error, ErrorKind, Result, Value};
-use ion::conversions::{FromValue, ToValue};
+use ion::conversions::FromValue;
 
 use crate::globals::fetch::body::FetchBody;
 use crate::globals::fetch::header::HeadersInit;
 
-#[allow(dead_code)]
-#[derive(Copy, Clone, Debug, Default)]
-pub enum RequestDestination {
-	#[default]
-	None,
-	Audio,
-	AudioWorklet,
-	Document,
-	Embed,
-	Frame,
-	Font,
-	IFrame,
-	Image,
-	Manifest,
-	Object,
-	PaintWorklet,
-	Report,
-	Script,
-	SharedWorker,
-	Style,
-	Track,
-	Video,
-	Worker,
-	Xslt,
-}
-
-impl Display for RequestDestination {
-	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-		use RequestDestination as D;
-		f.write_str(match self {
-			D::None => "",
-			D::Audio => "audio",
-			D::AudioWorklet => "audioworklet",
-			D::Document => "document",
-			D::Embed => "embed",
-			D::Frame => "frame",
-			D::Font => "font",
-			D::IFrame => "iframe",
-			D::Image => "image",
-			D::Manifest => "manifest",
-			D::Object => "object",
-			D::PaintWorklet => "paintworklet",
-			D::Report => "report",
-			D::Script => "script",
-			D::SharedWorker => "sharedworker",
-			D::Style => "style",
-			D::Track => "track",
-			D::Video => "video",
-			D::Worker => "worker",
-			D::Xslt => "xslt",
-		})
-	}
-}
-
-impl<'cx> ToValue<'cx> for RequestDestination {
-	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
-		self.to_string().to_value(cx, value);
-	}
-}
-
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, Traceable)]
 pub enum Referrer {
 	#[allow(clippy::enum_variant_names)]
 	NoReferrer,
 	#[default]
 	Client,
-	Url(Url),
+	Url(#[ion(no_trace)] Url),
 }
 
 impl FromStr for Referrer {
@@ -118,16 +58,13 @@ impl Display for Referrer {
 impl<'cx> FromValue<'cx> for Referrer {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, strict: bool, _: ()) -> Result<Referrer>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _: ()) -> Result<Referrer> {
 		let referrer = String::from_value(cx, value, strict, ())?;
 		Referrer::from_str(&referrer)
 	}
 }
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Traceable)]
 pub enum ReferrerPolicy {
 	#[default]
 	None,
@@ -181,16 +118,13 @@ impl Display for ReferrerPolicy {
 impl<'cx> FromValue<'cx> for ReferrerPolicy {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<ReferrerPolicy>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<ReferrerPolicy> {
 		let policy = String::from_value(cx, value, true, ())?;
 		ReferrerPolicy::from_str(&policy)
 	}
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Traceable)]
 pub enum RequestMode {
 	SameOrigin,
 	Cors,
@@ -232,16 +166,13 @@ impl Display for RequestMode {
 impl<'cx> FromValue<'cx> for RequestMode {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<RequestMode>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<RequestMode> {
 		let mode = String::from_value(cx, value, true, ())?;
 		RequestMode::from_str(&mode)
 	}
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Traceable)]
 pub enum RequestCredentials {
 	Omit,
 	#[default]
@@ -277,16 +208,13 @@ impl Display for RequestCredentials {
 impl<'cx> FromValue<'cx> for RequestCredentials {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<RequestCredentials>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<RequestCredentials> {
 		let mode = String::from_value(cx, value, true, ())?;
 		RequestCredentials::from_str(&mode)
 	}
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Traceable)]
 pub enum RequestCache {
 	#[default]
 	Default,
@@ -331,16 +259,13 @@ impl Display for RequestCache {
 impl<'cx> FromValue<'cx> for RequestCache {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<RequestCache>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<RequestCache> {
 		let mode = String::from_value(cx, value, true, ())?;
 		RequestCache::from_str(&mode)
 	}
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Traceable)]
 pub enum RequestRedirect {
 	#[default]
 	Follow,
@@ -376,16 +301,13 @@ impl Display for RequestRedirect {
 impl<'cx> FromValue<'cx> for RequestRedirect {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<RequestRedirect>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<RequestRedirect> {
 		let redirect = String::from_value(cx, value, true, ())?;
 		RequestRedirect::from_str(&redirect)
 	}
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Traceable)]
 pub enum RequestDuplex {
 	#[default]
 	Half,
@@ -405,16 +327,13 @@ impl FromStr for RequestDuplex {
 impl<'cx> FromValue<'cx> for RequestDuplex {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<RequestDuplex>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<RequestDuplex> {
 		let redirect = String::from_value(cx, value, true, ())?;
 		RequestDuplex::from_str(&redirect)
 	}
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Traceable)]
 pub enum RequestPriority {
 	High,
 	Low,
@@ -439,10 +358,7 @@ impl FromStr for RequestPriority {
 impl<'cx> FromValue<'cx> for RequestPriority {
 	type Config = ();
 
-	fn from_value<'v>(cx: &'cx Context, value: &Value<'v>, _: bool, _: ()) -> Result<RequestPriority>
-	where
-		'cx: 'v,
-	{
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<RequestPriority> {
 		let redirect = String::from_value(cx, value, true, ())?;
 		RequestPriority::from_str(&redirect)
 	}
@@ -450,8 +366,9 @@ impl<'cx> FromValue<'cx> for RequestPriority {
 
 #[derive(Derivative, FromValue)]
 #[derivative(Default)]
-pub struct RequestInit {
-	pub(crate) headers: Option<HeadersInit>,
+pub struct RequestInit<'cx> {
+	pub(crate) method: Option<String>,
+	pub(crate) headers: Option<HeadersInit<'cx>>,
 	pub(crate) body: Option<FetchBody>,
 
 	pub(crate) referrer: Option<Referrer>,
@@ -463,28 +380,13 @@ pub struct RequestInit {
 	pub(crate) redirect: Option<RequestRedirect>,
 
 	pub(crate) integrity: Option<String>,
-
 	pub(crate) keepalive: Option<bool>,
 	pub(crate) signal: Option<*mut JSObject>,
 
 	#[allow(dead_code)]
 	pub(crate) duplex: Option<RequestDuplex>,
-	#[ion(default, name = "priority")]
-	_priority: Option<RequestPriority>,
+	#[allow(dead_code)]
+	#[ion(default)]
+	priority: Option<RequestPriority>,
 	pub(crate) window: Option<JSVal>,
-}
-
-#[derive(Default, FromValue)]
-pub struct RequestBuilderInit {
-	pub(crate) method: Option<String>,
-	#[ion(inherit)]
-	pub(crate) init: RequestInit,
-}
-
-impl RequestBuilderInit {
-	pub fn from_request_init<O: Into<Option<RequestInit>>, M: Into<Option<String>>>(init: O, method: M) -> RequestBuilderInit {
-		let init = init.into().unwrap_or_default();
-		let method = method.into();
-		RequestBuilderInit { method, init }
-	}
 }

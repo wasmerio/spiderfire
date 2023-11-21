@@ -6,6 +6,7 @@
 
 use std::{ptr, slice};
 use std::ops::{Deref, DerefMut, Range};
+use std::ptr::NonNull;
 use std::string::String as RustString;
 
 use bytemuck::cast_slice;
@@ -17,9 +18,40 @@ use mozjs::jsapi::{
 use utf16string::{WStr, WString};
 
 use crate::{Context, Local};
+use crate::string::byte::{ByteStr, Latin1};
 use crate::string::external::new_external_string;
 
+pub mod byte;
 mod external;
+
+#[derive(Copy, Clone, Debug)]
+pub enum StringRef<'s> {
+	Latin1(&'s ByteStr<Latin1>),
+	Utf16(&'s WStr<NativeEndian>),
+}
+
+impl StringRef<'_> {
+	pub fn is_empty(&self) -> bool {
+		match self {
+			StringRef::Latin1(b) => b.is_empty(),
+			StringRef::Utf16(wstr) => wstr.is_empty(),
+		}
+	}
+
+	pub fn len(&self) -> usize {
+		match self {
+			StringRef::Latin1(b) => b.len(),
+			StringRef::Utf16(wstr) => wstr.len(),
+		}
+	}
+
+	pub fn as_bytes(&self) -> &[u8] {
+		match self {
+			StringRef::Latin1(b) => b,
+			StringRef::Utf16(wstr) => wstr.as_bytes(),
+		}
+	}
+}
 
 /// Represents a primitive string in the JS Runtime.
 /// Strings in JS are immutable and are copied on modification, other than concatenating and slicing.
@@ -32,24 +64,19 @@ pub struct String<'s> {
 
 impl<'s> String<'s> {
 	/// Creates an empty [String].
-	pub fn empty<'cx>(cx: &'cx Context) -> String<'cx> {
+	pub fn empty(cx: &Context) -> String {
 		String::from(cx.root_string(unsafe { JS_GetEmptyString(cx.as_ptr()) }))
 	}
 
 	/// Creates a new [String] with a given string, by copying it to the JS Runtime.
 	pub fn new<'cx>(cx: &'cx Context, string: &str) -> Option<String<'cx>> {
-		let mut utf16: Vec<u16> = Vec::with_capacity(string.len());
-		utf16.extend(string.encode_utf16());
+		let utf16: Vec<u16> = string.encode_utf16().collect();
 		let jsstr = unsafe { JS_NewUCStringCopyN(cx.as_ptr(), utf16.as_ptr(), utf16.len()) };
-		if !jsstr.is_null() {
-			Some(String::from(cx.root_string(jsstr)))
-		} else {
-			None
-		}
+		NonNull::new(jsstr).map(|str| String::from(cx.root_string(str.as_ptr())))
 	}
 
 	/// Creates a new external string by moving ownership of the UTF-16 string to the JS Runtime.
-	pub fn new_external<'cx>(cx: &'cx Context, string: WString<NativeEndian>) -> Result<String<'cx>, WString<NativeEndian>> {
+	pub fn new_external(cx: &Context, string: WString<NativeEndian>) -> Result<String, WString<NativeEndian>> {
 		new_external_string(cx, string)
 	}
 
@@ -117,7 +144,20 @@ impl<'s> String<'s> {
 				let slice = slice::from_raw_parts(chars, length);
 				cast_slice(slice)
 			})
-			.and_then(|bytes| WStr::from_utf16(bytes).ok())
+			.map(|bytes| WStr::from_utf16(bytes).unwrap())
+	}
+
+	pub fn as_ref(&self, cx: &Context) -> StringRef<'s> {
+		let mut length = 0;
+		if self.is_latin1() {
+			let chars = unsafe { JS_GetLatin1StringCharsAndLength(cx.as_ptr(), ptr::null(), self.get(), &mut length) };
+			StringRef::Latin1(unsafe { ByteStr::from_unchecked(slice::from_raw_parts(chars, length)) })
+		} else {
+			let mut length = 0;
+			let chars = unsafe { JS_GetTwoByteStringCharsAndLength(cx.as_ptr(), ptr::null(), self.get(), &mut length) };
+			let slice = unsafe { slice::from_raw_parts(chars, length) };
+			StringRef::Utf16(WStr::from_utf16(cast_slice(slice)).unwrap())
+		}
 	}
 
 	/// Converts a [String] to an owned [String](RustString).

@@ -6,12 +6,12 @@ authors = ["Redfire <redfire75369@hotmail.com>"]
 license = "MPL-2.0"
 
 [dependencies]
-bitflags = "2.4.0"
-byteorder = "1.4.3"
+arrayvec = "0.7.4"
+bitflags = "2.4.1"
+byteorder = "1.5.0"
 bytemuck = "1.14.0"
 typed-arena = "2.0.2"
 utf16string = "0.2.0"
-
 colored.workspace = true
 chrono.workspace = true
 derivative.workspace = true
@@ -24,7 +24,7 @@ workspace = true
 features = ["executor"]
 
 [dependencies.ion-proc]
-path = "../ion-proc"
+workspace = true
 optional = true
 
 [dependencies.sourcemap]

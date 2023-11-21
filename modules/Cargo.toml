@@ -13,20 +13,12 @@ futures.workspace = true
 mozjs.workspace = true
 paste.workspace = true
 url.workspace = true
-
-[dependencies.hyper]
-workspace = true
-
-[dependencies.hyper-rustls]
-workspace = true
+runtime.workspace = true
 
 [dependencies.ion]
-path = "../ion"
+workspace = true
 features = ["macros"]
 
-[dependencies.runtime]
-path = "../runtime"
-features = ["fetch"]
 
 [dependencies.tokio]
 workspace = true
@@ -37,7 +29,7 @@ version = "0.1.14"
 features = ["fs"]
 
 [dev-dependencies.tokio]
-version = "1.32.0"
+version = "1.33.0"
 features = ["macros", "rt"]
 
 [features]

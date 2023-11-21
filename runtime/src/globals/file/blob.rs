@@ -1,192 +1,217 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+
+use std::str::FromStr;
+
 use bytes::Bytes;
+use encoding_rs::UTF_8;
+use mozjs::conversions::ConversionBehavior;
+use mozjs::jsapi::JSObject;
+use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
+
+use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, Value};
+use ion::class::Reflector;
 use ion::conversions::FromValue;
+use ion::format::NEWLINE;
 
-pub use class::Blob;
+use crate::promise::future_to_promise;
 
-#[derive(FromValue, Default, Clone)]
-pub struct BlobPropertyBag {
-	#[ion(name = "type")]
-	content_type: Option<String>,
-
-	#[allow(dead_code)]
-	// TODO: implement endings
-	endings: Option<String>,
-}
-
-#[allow(dead_code)]
-const ENDING_TRANSPARENT: &str = "transparent";
-#[allow(dead_code)]
-const ENDING_NATIVE: &str = "native";
-
-pub struct BlobPart {
-	bytes: Bytes,
-}
-
-impl BlobPart {
-	pub fn get_size(&self) -> usize {
-		self.bytes.len()
+pub fn buffer_source_to_bytes(object: &Object) -> Result<Bytes> {
+	let obj = object.handle().get();
+	if let Ok(arr) = ArrayBuffer::from(obj) {
+		Ok(Bytes::copy_from_slice(unsafe { arr.as_slice() }))
+	} else if let Ok(arr) = ArrayBufferView::from(obj) {
+		Ok(Bytes::copy_from_slice(unsafe { arr.as_slice() }))
+	} else {
+		Err(Error::new("Object is not a buffer source.", ErrorKind::Type))
 	}
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct BlobPart(Bytes);
+
 impl<'cx> FromValue<'cx> for BlobPart {
 	type Config = ();
-
-	fn from_value<'v>(cx: &'cx ion::Context, value: &ion::Value<'v>, strict: bool, _config: Self::Config) -> ion::Result<Self>
-	where
-		'cx: 'v,
-	{
-		if value.get().is_string() {
-			let str = String::from_value(cx, value, strict, ())?;
-			Ok(Self { bytes: str.into_bytes().into() })
-		} else if value.get().is_object() {
-			let obj = (*value.to_object(cx)).get();
-			let bytes = crate::typedarray_to_bytes!(obj, [ArrayBuffer, true], [ArrayBufferView, true], [Uint8Array, true])?;
-			Ok(Self { bytes })
-		} else {
-			Err(ion::Error::new("Invalid blob part type", ion::ErrorKind::Type))
+	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _: ()) -> Result<BlobPart> {
+		if value.handle().is_string() {
+			return Ok(BlobPart(Bytes::from(String::from_value(cx, value, true, ())?)));
+		} else if value.handle().is_object() {
+			if let Ok(bytes) = buffer_source_to_bytes(&value.to_object(cx)) {
+				return Ok(BlobPart(bytes));
+			} else if let Ok(blob) = <&Blob>::from_value(cx, value, strict, ()) {
+				return Ok(BlobPart(blob.bytes.clone()));
+			}
 		}
+		Err(Error::new("Expected BufferSource, Blob or String in Blob constructor.", ErrorKind::Type))
+	}
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum Endings {
+	#[default]
+	Transparent,
+	Native,
+}
+
+impl FromStr for Endings {
+	type Err = Error;
+
+	fn from_str(endings: &str) -> Result<Endings> {
+		match endings {
+			"transparent" => Ok(Endings::Transparent),
+			"native" => Ok(Endings::Native),
+			_ => Err(Error::new("Invalid ending type for Blob", ErrorKind::Type)),
+		}
+	}
+}
+
+impl<'cx> FromValue<'cx> for Endings {
+	type Config = ();
+
+	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _: ()) -> Result<Endings> {
+		let endings = String::from_value(cx, value, strict, ())?;
+		Endings::from_str(&endings)
+	}
+}
+
+#[derive(Debug, Default, FromValue)]
+pub struct BlobOptions {
+	#[ion(name = "type")]
+	kind: Option<String>,
+	#[ion(default)]
+	endings: Endings,
+}
+
+#[js_class]
+pub struct Blob {
+	reflector: Reflector,
+	#[ion(no_trace)]
+	bytes: Bytes,
+	kind: Option<String>,
+}
+
+impl Blob {
+	pub fn new(bytes: Bytes) -> Self {
+		Self {
+			reflector: Default::default(),
+			bytes,
+			kind: None,
+		}
+	}
+
+	pub fn as_bytes(&self) -> &Bytes {
+		&self.bytes
+	}
+
+	pub fn kind(&self) -> Option<String> {
+		self.kind.clone()
 	}
 }
 
 #[js_class]
-#[ion(runtime = crate)]
-mod class {
-	use bytes::Bytes;
-	use ion::{Array, Context, Result, conversions::FromValue};
-	use mozjs::conversions::ConversionBehavior;
+impl Blob {
+	#[ion(constructor)]
+	pub fn constructor(parts: Option<Vec<BlobPart>>, options: Option<BlobOptions>) -> Blob {
+		let options = options.unwrap_or_default();
 
-	use super::{BlobPropertyBag, BlobPart};
+		let mut bytes = Vec::new();
 
-	#[ion(into_value)]
-	pub struct Blob {
-		parent: Option<*const Blob>,
-		parts: Vec<BlobPart>,
-		options: BlobPropertyBag,
-		start: usize,
-		end: usize,
+		if let Some(parts) = parts {
+			let len = parts
+				.iter()
+				.map(|part| part.0.len() + part.0.iter().filter(|&&b| b == b'\r' || b == b'\n').count() * 2)
+				.sum();
+			bytes.reserve(len);
+
+			for part in parts {
+				match options.endings {
+					Endings::Transparent => bytes.extend(part.0),
+					Endings::Native => {
+						let mut i = 0;
+						while let Some(&b) = part.0.get(i) {
+							i += 1;
+							if b == b'\r' {
+								bytes.extend_from_slice(NEWLINE.as_bytes());
+								if part.0.get(i) == Some(&b'\n') {
+									i += 1;
+								}
+							} else if b == b'\n' {
+								bytes.extend_from_slice(NEWLINE.as_bytes());
+							} else {
+								bytes.push(b);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		Blob {
+			reflector: Reflector::default(),
+			bytes: Bytes::from(bytes),
+			kind: options.kind,
+		}
 	}
 
-	impl Blob {
-		// TODO: remove after the File implementation in FormData is fixed
-		#[ion(skip)]
-		pub fn new(bytes: Bytes) -> Blob {
-			let size = bytes.len();
-			let parts = vec![BlobPart { bytes }];
-			Blob {
-				parts,
-				start: 0,
-				end: size,
-				parent: None,
-				options: Default::default(),
+	#[ion(get)]
+	pub fn get_size(&self) -> u64 {
+		self.bytes.len() as u64
+	}
+
+	#[ion(get)]
+	pub fn get_type(&self) -> String {
+		self.kind.clone().unwrap_or_default()
+	}
+
+	pub fn slice(
+		&self, cx: &Context, #[ion(convert = ConversionBehavior::Clamp)] start: Option<i64>,
+		#[ion(convert = ConversionBehavior::Clamp)] end: Option<i64>, kind: Option<String>,
+	) -> *mut JSObject {
+		let size = self.bytes.len() as i64;
+
+		let mut start = start.unwrap_or(0);
+		if start < 0 {
+			start = 0.max(size + start);
+		}
+		let start = start.min(size) as usize;
+
+		let mut end = end.unwrap_or(size);
+		if end < 0 {
+			end = 0.max(size + end);
+		}
+		let end = end.min(size) as usize;
+
+		let kind = match kind {
+			Some(mut kind) if kind.as_bytes().iter().all(|&b| (0x20..=0x7E).contains(&b)) => {
+				kind.make_ascii_lowercase();
+				Some(kind)
 			}
-		}
+			_ => None,
+		};
 
-		#[ion(constructor)]
-		pub fn constructor<'cx>(cx: &'cx Context<'cx>, blob_parts: Array<'cx>, options: Option<BlobPropertyBag>) -> Result<Blob> {
-			let mut parts = vec![];
-			for (_, part) in blob_parts.iter(cx, None) {
-				parts.push(BlobPart::from_value(cx, &part, false, ())?);
-			}
-			let size = parts.iter().map(|p| p.get_size()).sum();
-			Ok(Blob {
-				parts,
-				options: options.unwrap_or_default(),
-				parent: None,
-				start: 0,
-				end: size,
-			})
-		}
+		let span = 0.max(end - start);
 
-		#[ion(get)]
-		pub fn get_size(&self) -> u64 {
-			(self.end - self.start) as u64
-		}
+		let bytes = self.bytes.slice(start..start + span);
 
-		#[ion(get)]
-		pub fn get_type(&self) -> String {
-			self.options.content_type.as_ref().map(|s| s.as_str()).unwrap_or("").to_string()
-		}
+		let blob = Blob {
+			reflector: Reflector::default(),
+			bytes,
+			kind,
+		};
+		Blob::new_object(cx, Box::new(blob))
+	}
 
-		pub fn slice(
-			&self, #[ion(convert = ConversionBehavior::EnforceRange)] start: Option<u64>,
-			#[ion(convert = ConversionBehavior::EnforceRange)] end: Option<u64>, content_type: Option<String>,
-		) -> Blob {
-			let start = match start {
-				None => self.start,
-				Some(start) => self.end.min(self.start.max(start as usize + self.start)),
-			};
-			let end = match end {
-				None => self.end,
-				Some(end) => start.max(self.end.min(self.start.max(end as usize + self.start))),
-			};
-			let mut options = self.options.clone();
-			if let Some(content_type) = content_type {
-				options.content_type = Some(content_type);
-			}
-			Blob {
-				parent: Some(self.parent.unwrap_or(self)),
-				start,
-				end,
-				parts: vec![],
-				options,
-			}
-		}
+	pub fn text<'cx>(&self, cx: &'cx Context) -> Option<Promise<'cx>> {
+		let bytes = self.bytes.clone();
+		future_to_promise(cx, async move { Ok::<_, ()>(UTF_8.decode(&bytes).0.into_owned()) })
+	}
 
-		#[ion(skip)]
-		pub fn get_bytes(&self) -> Bytes {
-			unsafe {
-				let mut buf = vec![0u8; self.get_size() as usize];
-				let mut slice = &mut buf[..];
-
-				let mut s = self as *const Blob;
-				while (*s).parent.is_some() {
-					s = (*s).parent.unwrap();
-				}
-
-				let mut position = 0;
-				let mut read = 0;
-				let my_size = self.get_size() as usize;
-				for part in (*s).parts.iter() {
-					let part_size = part.get_size();
-					if position < self.start {
-						if position + part_size <= self.start {
-							position += part_size;
-							continue;
-						} else {
-							let start = self.start - position;
-							let count = (my_size - read).min(part_size - start);
-							let (head, tail) = slice.split_at_mut(count);
-							head.copy_from_slice(&part.bytes.as_ref()[start..start + count]);
-							read += count;
-							position += part_size;
-							slice = tail;
-						}
-					} else {
-						let count = (my_size - read).min(part_size);
-						let (head, tail) = slice.split_at_mut(count);
-						head.copy_from_slice(&part.bytes.as_ref()[..count]);
-						read += count;
-						position += part_size;
-						slice = tail;
-					}
-
-					if read >= my_size {
-						break;
-					}
-				}
-
-				Bytes::from(buf)
-			}
-		}
-
-		pub async fn text(&self) -> Result<String> {
-			let bytes = self.get_bytes();
-			String::from_utf8(bytes.into()).map_err(|_| ion::Error::new("String contains invalid UTF-8 characters", ion::ErrorKind::Normal))
-		}
-
-		#[ion(name = "arrayBuffer")]
-		pub async fn array_buffer(&self) -> ion::typedarray::ArrayBuffer {
-			ion::typedarray::ArrayBuffer::from(Vec::from(self.get_bytes()))
-		}
+	#[ion(name = "arrayBuffer")]
+	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise<'cx>> {
+		let bytes = self.bytes.clone();
+		future_to_promise(cx, async move { Ok::<_, ()>(ion::typedarray::ArrayBuffer::from(bytes.to_vec())) })
 	}
 }

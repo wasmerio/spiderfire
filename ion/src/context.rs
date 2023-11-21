@@ -5,21 +5,19 @@
  */
 
 use std::any::TypeId;
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::marker::PhantomData;
-use std::mem::{take, transmute};
 use std::ptr;
 use std::ptr::NonNull;
 
-use mozjs::gc::RootedTraceableSet;
+use mozjs::gc::{GCMethods, RootedTraceableSet};
 use mozjs::jsapi::{
 	BigInt, Heap, JS_GetContextPrivate, JS_SetContextPrivate, JSContext, JSFunction, JSObject, JSScript, JSString, PropertyDescriptor, PropertyKey,
 	Rooted, Symbol,
 };
 use mozjs::jsval::JSVal;
-use mozjs::rust::{RootedGuard, Runtime};
+use mozjs::rust::Runtime;
 use typed_arena::Arena;
 
 use crate::class::ClassInfo;
@@ -27,7 +25,6 @@ use crate::Local;
 use crate::module::ModuleLoader;
 
 /// Represents Types that can be Rooted in SpiderMonkey
-#[allow(dead_code)]
 pub enum GCType {
 	Value,
 	Object,
@@ -52,21 +49,6 @@ struct RootedArena {
 	functions: Arena<Rooted<*mut JSFunction>>,
 	big_ints: Arena<Rooted<*mut BigInt>>,
 	symbols: Arena<Rooted<*mut Symbol>>,
-}
-
-/// Holds RootedGuards which have been converted to [Local]s
-#[derive(Default)]
-struct LocalArena<'a> {
-	order: RefCell<Vec<GCType>>,
-	values: Arena<RootedGuard<'a, JSVal>>,
-	objects: Arena<RootedGuard<'a, *mut JSObject>>,
-	strings: Arena<RootedGuard<'a, *mut JSString>>,
-	scripts: Arena<RootedGuard<'a, *mut JSScript>>,
-	property_keys: Arena<RootedGuard<'a, PropertyKey>>,
-	property_descriptors: Arena<RootedGuard<'a, PropertyDescriptor>>,
-	functions: Arena<RootedGuard<'a, *mut JSFunction>>,
-	big_ints: Arena<RootedGuard<'a, *mut BigInt>>,
-	symbols: Arena<RootedGuard<'a, *mut Symbol>>,
 }
 
 #[allow(clippy::vec_box)]
@@ -96,42 +78,40 @@ impl Default for ContextInner {
 /// Represents the thread-local state of the runtime.
 ///
 /// Wrapper around [JSContext] that provides lifetime information and convenient APIs.
-pub struct Context<'c> {
+pub struct Context {
 	context: NonNull<JSContext>,
 	rooted: RootedArena,
-	local: LocalArena<'static>,
-	private: OnceCell<*mut ContextInner>,
-	_lifetime: PhantomData<&'c ()>,
+	order: RefCell<Vec<GCType>>,
+	private: NonNull<ContextInner>,
 }
 
-impl<'c> Context<'c> {
-	pub fn from_runtime(rt: &Runtime) -> Context<'c> {
+impl Context {
+	pub fn from_runtime(rt: &Runtime) -> Context {
 		let cx = rt.cx();
 
-		if unsafe { JS_GetContextPrivate(cx).is_null() } {
-			let inner_private = Box::<ContextInner>::default();
-			let inner_private = Box::into_raw(inner_private);
+		let private = NonNull::new(unsafe { JS_GetContextPrivate(cx).cast() }).unwrap_or_else(|| {
+			let private = Box::<ContextInner>::default();
+			let private = Box::into_raw(private);
 			unsafe {
-				JS_SetContextPrivate(cx, inner_private.cast());
+				JS_SetContextPrivate(cx, private.cast());
 			}
-		}
+			unsafe { NonNull::new_unchecked(private) }
+		});
 
 		Context {
 			context: unsafe { NonNull::new_unchecked(cx) },
 			rooted: RootedArena::default(),
-			local: LocalArena::default(),
-			private: OnceCell::new(),
-			_lifetime: PhantomData,
+			order: RefCell::new(Vec::new()),
+			private,
 		}
 	}
 
-	pub unsafe fn new_unchecked(context: *mut JSContext) -> Context<'c> {
+	pub unsafe fn new_unchecked(cx: *mut JSContext) -> Context {
 		Context {
-			context: unsafe { NonNull::new_unchecked(context) },
+			context: unsafe { NonNull::new_unchecked(cx) },
 			rooted: RootedArena::default(),
-			local: LocalArena::default(),
-			private: OnceCell::new(),
-			_lifetime: PhantomData,
+			order: RefCell::new(Vec::new()),
+			private: unsafe { NonNull::new_unchecked(JS_GetContextPrivate(cx).cast()) },
 		}
 	}
 
@@ -139,25 +119,19 @@ impl<'c> Context<'c> {
 		self.context.as_ptr()
 	}
 
-	pub fn get_inner_data(&self) -> *mut ContextInner {
-		*self.private.get_or_init(|| unsafe { JS_GetContextPrivate(self.as_ptr()).cast() })
+	pub fn get_inner_data(&self) -> NonNull<ContextInner> {
+		self.private
 	}
 
 	pub fn get_raw_private(&self) -> *mut c_void {
 		let inner = self.get_inner_data();
-		if inner.is_null() {
-			ptr::null_mut()
-		} else {
-			unsafe { (*inner).private }
-		}
+		unsafe { (*inner.as_ptr()).private }
 	}
 
-	pub fn set_raw_private(&self, private: *mut c_void) {
+	pub fn set_private<T>(&self, private: Box<T>) {
 		let inner_private = self.get_inner_data();
-		if !inner_private.is_null() {
-			unsafe {
-				(*inner_private).private = private;
-			}
+		unsafe {
+			(*inner_private.as_ptr()).private = Box::into_raw(private).cast();
 		}
 	}
 }
@@ -167,24 +141,20 @@ macro_rules! impl_root_methods {
 		$(
 			#[doc = concat!("Roots a [", stringify!($pointer), "](", stringify!($pointer), ") as a ", stringify!($gc_type), " ands returns a [Local] to it.")]
 			pub fn $fn_name(&self, ptr: $pointer) -> Local<$pointer> {
-				let rooted = self.rooted.$key.alloc(Rooted::new_unrooted());
-				self.local.order.borrow_mut().push(GCType::$gc_type);
+				let root = self.rooted.$key.alloc(Rooted::new_unrooted());
+				self.order.borrow_mut().push(GCType::$gc_type);
 
-				Local::from_rooted(
-					unsafe {
-						transmute(self.local.$key.alloc(RootedGuard::new(self.as_ptr(), transmute(rooted), ptr)))
-					}
-				)
+				Local::new(self, root, ptr)
 			}
 		)*
 	};
-	(persistent $(($root_fn:ident, $unroot_fn:ident, $pointer:ty, $key:ident)$(,)?)*) => {
+	([persistent], $(($root_fn:ident, $unroot_fn:ident, $pointer:ty, $key:ident)$(,)?)*) => {
 		$(
 			pub fn $root_fn(&self, ptr: $pointer) -> Local<$pointer> {
 				let heap = Heap::boxed(ptr);
-				let persistent = unsafe { &mut (*self.get_inner_data()).persistent.$key };
+				let persistent = unsafe { &mut (*self.get_inner_data().as_ptr()).persistent.$key };
 				persistent.push(heap);
-				let ptr = &persistent[persistent.len() - 1];
+				let ptr = &*persistent[persistent.len() - 1];
 				unsafe {
 					RootedTraceableSet::add(ptr);
 					Local::from_heap(ptr)
@@ -192,13 +162,13 @@ macro_rules! impl_root_methods {
 			}
 
 			pub fn $unroot_fn(&self, ptr: $pointer) {
-				let persistent = unsafe { &mut (*self.get_inner_data()).persistent.$key };
+				let persistent = unsafe { &mut (*self.get_inner_data().as_ptr()).persistent.$key };
 				let idx = match persistent.iter().rposition(|x| x.get() == ptr) {
 					Some(idx) => idx,
 					None => return,
 				};
 				unsafe {
-					RootedTraceableSet::remove(&persistent[idx]);
+					RootedTraceableSet::remove(&*persistent[idx]);
 				}
 				persistent.swap_remove(idx);
 			}
@@ -206,7 +176,7 @@ macro_rules! impl_root_methods {
 	};
 }
 
-impl Context<'_> {
+impl Context {
 	impl_root_methods! {
 		(root_value, JSVal, values, Value),
 		(root_object, *mut JSObject, objects, Object),
@@ -220,22 +190,25 @@ impl Context<'_> {
 	}
 
 	impl_root_methods! {
-		persistent
+		[persistent],
 		(root_persistent_object, unroot_persistent_object, *mut JSObject, objects)
 	}
 }
 
 macro_rules! impl_drop {
-	([$self:expr], $(($pointer:ty, $key:ident, $gc_type:ident)$(,)?)*) => {
-		$(let $key = take(&mut $self.local.$key);)*
+	([$self:expr], $(($key:ident, $gc_type:ident)$(,)?)*) => {
+		$(let $key: Vec<_> = $self.rooted.$key.iter_mut().collect();)*
+		$(let mut $key = $key.into_iter().rev();)*
 
-		$(let mut $key = $key.into_vec().into_iter().rev();)*
-
-		for ty in $self.local.order.take().into_iter().rev() {
+		for ty in $self.order.take().into_iter().rev() {
 			match ty {
 				$(
 					GCType::$gc_type => {
-						let _ = $key.next();
+						let root = $key.next().unwrap();
+						root.ptr = unsafe { GCMethods::initial() };
+						unsafe {
+							root.remove_from_root_stack();
+						}
 					}
 				)*
 			}
@@ -243,20 +216,20 @@ macro_rules! impl_drop {
 	}
 }
 
-impl Drop for Context<'_> {
+impl Drop for Context {
 	/// Drops the rooted values in reverse-order to maintain LIFO destruction in the Linked List.
 	fn drop(&mut self) {
 		impl_drop! {
 			[self],
-			(JSVal, values, Value),
-			(*mut JSObject, objects, Object),
-			(*mut JSString, strings, String),
-			(*mut JSScript, scripts, Script),
-			(PropertyKey, property_keys, PropertyKey),
-			(PropertyDescriptor, property_descriptors, PropertyDescriptor),
-			(*mut JSFunction, functions, Function),
-			(*mut BigInt, big_ints, BigInt),
-			(*mut Symbol, symbols, Symbol),
+			(values, Value),
+			(objects, Object),
+			(strings, String),
+			(scripts, Script),
+			(property_keys, PropertyKey),
+			(property_descriptors, PropertyDescriptor),
+			(functions, Function),
+			(big_ints, BigInt),
+			(symbols, Symbol),
 		}
 	}
 }

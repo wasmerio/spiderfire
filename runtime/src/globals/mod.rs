@@ -7,6 +7,7 @@
 use ion::{ClassDefinition, Context, Iterator, Object};
 
 pub mod abort;
+pub mod base64;
 pub mod console;
 pub mod encoding;
 #[cfg(feature = "fetch")]
@@ -18,14 +19,14 @@ pub mod readable_stream;
 pub mod timers;
 pub mod url;
 
-pub fn init_globals<'cx: 'o, 'o>(cx: &'cx Context, global: &mut Object<'o>) -> bool {
-	let result = console::define(cx, global)
+pub fn init_globals(cx: &Context, global: &mut Object) -> bool {
+	let result = base64::define(cx, global)
+		&& console::define(cx, global)
 		&& encoding::define(cx, global)
+		&& file::define(cx, global)
+		&& form_data::define(cx, global)
 		&& url::define(cx, global)
-		&& Iterator::init_class(cx, global).0
-		&& self::form_data::define(cx, global)
-		&& self::file::define(cx, global);
-
+		&& Iterator::init_class(cx, global).0;
 	#[cfg(feature = "fetch")]
 	{
 		result && fetch::define(cx, global)
@@ -36,10 +37,10 @@ pub fn init_globals<'cx: 'o, 'o>(cx: &'cx Context, global: &mut Object<'o>) -> b
 	}
 }
 
-pub fn init_timers<'cx: 'o, 'o>(cx: &'cx Context, global: &mut Object<'o>) -> bool {
+pub fn init_timers(cx: &Context, global: &mut Object) -> bool {
 	timers::define(cx, global) && abort::define(cx, global)
 }
 
-pub fn init_microtasks<'cx: 'o, 'o>(cx: &'cx Context, global: &mut Object<'o>) -> bool {
+pub fn init_microtasks(cx: &Context, global: &mut Object) -> bool {
 	microtasks::define(cx, global)
 }

@@ -25,7 +25,7 @@ pub struct ModuleData {
 
 impl ModuleData {
 	/// Creates [ModuleData] based on the private data of a module
-	pub fn from_private<'cx: 'v, 'v>(cx: &'cx Context, private: &Value<'v>) -> Option<ModuleData> {
+	pub fn from_private(cx: &Context, private: &Value) -> Option<ModuleData> {
 		private.handle().is_object().then(|| {
 			let private = private.to_object(cx);
 			let path: Option<String> = private.get_as(cx, "path", true, ());
@@ -167,25 +167,25 @@ impl<'cx> Module<'cx> {
 pub trait ModuleLoader {
 	/// Given a request and private data of a module, resolves the request into a compiled module object.
 	/// Should return the same module object for a given request.
-	fn resolve<'cx: 'p + 'r, 'p, 'r>(&mut self, cx: &'cx Context, private: &Value<'p>, request: &ModuleRequest<'r>) -> *mut JSObject;
+	fn resolve(&mut self, cx: &Context, private: &Value, request: &ModuleRequest) -> *mut JSObject;
 
 	/// Registers a new module in the module registry. Useful for native modules.
-	fn register<'cx: 'r, 'r>(&mut self, cx: &'cx Context, module: *mut JSObject, request: &ModuleRequest<'r>) -> *mut JSObject;
+	fn register(&mut self, cx: &Context, module: *mut JSObject, request: &ModuleRequest) -> *mut JSObject;
 
 	/// Returns metadata of a module, used to populate `import.meta`.
-	fn metadata<'cx: 'p + 'm, 'p, 'm>(&self, cx: &'cx Context, private: &Value<'p>, meta: &mut Object<'m>) -> bool;
+	fn metadata(&self, cx: &Context, private: &Value, meta: &mut Object) -> bool;
 }
 
 impl ModuleLoader for () {
-	fn resolve<'cx: 'p + 'r, 'p, 'r>(&mut self, _: &'cx Context, _: &Value<'p>, _: &ModuleRequest<'r>) -> *mut JSObject {
+	fn resolve(&mut self, _: &Context, _: &Value, _: &ModuleRequest) -> *mut JSObject {
 		ptr::null_mut()
 	}
 
-	fn register<'cx: 'r, 'r>(&mut self, _: &'cx Context, _: *mut JSObject, _: &ModuleRequest<'r>) -> *mut JSObject {
+	fn register(&mut self, _: &Context, _: *mut JSObject, _: &ModuleRequest) -> *mut JSObject {
 		ptr::null_mut()
 	}
 
-	fn metadata<'cx: 'p + 'm, 'p, 'm>(&self, _: &'cx Context, _: &Value<'p>, _: &mut Object<'m>) -> bool {
+	fn metadata(&self, _: &Context, _: &Value, _: &mut Object) -> bool {
 		true
 	}
 }
@@ -195,7 +195,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 	unsafe extern "C" fn resolve(cx: *mut JSContext, private: Handle<JSVal>, request: Handle<*mut JSObject>) -> *mut JSObject {
 		let cx = unsafe { Context::new_unchecked(cx) };
 
-		let loader = unsafe { &mut (*cx.get_inner_data()).module_loader };
+		let loader = unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader };
 		loader
 			.as_mut()
 			.map(|loader| {
@@ -209,7 +209,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 	unsafe extern "C" fn metadata(cx: *mut JSContext, private_data: Handle<JSVal>, metadata: Handle<*mut JSObject>) -> bool {
 		let cx = unsafe { Context::new_unchecked(cx) };
 
-		let loader = unsafe { &mut (*cx.get_inner_data()).module_loader };
+		let loader = unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader };
 		loader
 			.as_mut()
 			.map(|loader| {
@@ -221,7 +221,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 	}
 
 	unsafe {
-		(*cx.get_inner_data()).module_loader = Some(Box::new(loader));
+		(*cx.get_inner_data().as_ptr()).module_loader = Some(Box::new(loader));
 
 		let rt = JS_GetRuntime(cx.as_ptr());
 		SetModuleResolveHook(rt, Some(resolve));

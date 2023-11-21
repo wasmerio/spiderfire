@@ -11,7 +11,7 @@ use colored::Colorize;
 use mozjs::conversions::jsstr_to_string;
 use mozjs::jsapi::{ESClass, JS_ValueToSource};
 
-use crate::{Array, Context, Date, Exception, Function, Object, Promise};
+use crate::{Array, Context, Date, Exception, Function, Object, Promise, RegExp};
 use crate::conversions::ToValue;
 use crate::format::{format_value, INDENT, NEWLINE};
 use crate::format::array::format_array;
@@ -22,10 +22,11 @@ use crate::format::date::format_date;
 use crate::format::function::format_function;
 use crate::format::key::format_key;
 use crate::format::promise::format_promise;
+use crate::format::regexp::format_regexp;
 
 /// Formats a [JavaScript Object](Object), depending on its class, as a string using the given [configuration](Config).
 /// The object is passed to more specific formatting functions, such as [format_array] and [format_date].
-pub fn format_object<'cx: 'o, 'o>(cx: &'cx Context, cfg: Config, object: Object<'o>) -> String {
+pub fn format_object(cx: &Context, cfg: Config, object: Object) -> String {
 	unsafe {
 		use ESClass as ESC;
 		let class = object.get_builtin_class(cx);
@@ -37,6 +38,7 @@ pub fn format_object<'cx: 'o, 'o>(cx: &'cx Context, cfg: Config, object: Object<
 			ESC::Object => format_plain_object(cx, cfg, &Object::from(object.into_local())),
 			ESC::Date => format_date(cx, cfg, &Date::from(cx, object.into_local()).unwrap()),
 			ESC::Promise => format_promise(cx, cfg, &Promise::from(object.into_local()).unwrap()),
+			ESC::RegExp => format_regexp(cx, cfg, &RegExp::from(cx, object.into_local()).unwrap()),
 			ESC::Function => format_function(cx, cfg, &Function::from_object(cx, &object).unwrap()),
 			ESC::Other => format_class_object(cx, cfg, &object),
 			ESC::Error => {
@@ -57,7 +59,7 @@ pub fn format_object<'cx: 'o, 'o>(cx: &'cx Context, cfg: Config, object: Object<
 /// Formats a [JavaScript Object](Object) as a string using the given [configuration](Config).
 /// Disregards the class of the object.
 #[allow(clippy::unnecessary_to_owned)]
-pub fn format_plain_object<'cx: 'o, 'o>(cx: &'cx Context, cfg: Config, object: &Object<'o>) -> String {
+pub fn format_plain_object(cx: &Context, cfg: Config, object: &Object) -> String {
 	let color = cfg.colours.object;
 	if cfg.depth < 4 {
 		let keys = object.keys(cx, Some(cfg.iteration));
