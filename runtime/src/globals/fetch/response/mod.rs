@@ -104,7 +104,7 @@ impl Response {
 		Headers::get_private(&obj)
 	}
 
-	async fn read_to_bytes(&mut self) -> Result<Vec<u8>> {
+	pub async fn read_to_bytes(&mut self) -> Result<Vec<u8>> {
 		if self.body_used {
 			return Err(Error::new("Response body has already been used.", None));
 		}
