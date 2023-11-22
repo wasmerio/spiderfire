@@ -173,6 +173,10 @@ impl Headers {
 			kind,
 		})
 	}
+
+	pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &HeaderValue)> {
+		self.headers.iter()
+	}
 }
 
 #[js_class]
