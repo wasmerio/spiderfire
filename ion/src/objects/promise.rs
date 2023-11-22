@@ -21,6 +21,7 @@ use mozjs::rust::HandleObject;
 #[cfg(not(target_family = "wasm"))]
 use mozjs::{jsval::JSVal, jsapi::JSContext};
 
+use crate::conversions::IntoValue;
 use crate::{Context, Function, Local, Object, Value};
 #[cfg(not(target_family = "wasm"))]
 use crate::{Arguments, conversions::ToValue, exception::ThrowException, flags::PropertyFlags, functions::NativeFunction};
@@ -38,6 +39,43 @@ impl<'p> Promise<'p> {
 		Promise {
 			promise: cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) }),
 		}
+	}
+
+	pub fn new_resolved(cx: &'p Context, value: impl IntoValue<'p>) -> Promise<'p> {
+		let mut val = Value::undefined(cx);
+		Box::new(value).into_value(cx, &mut val);
+
+		let p = Promise::new(cx);
+		p.resolve(cx, &val);
+		p
+	}
+
+	pub fn new_rejected(cx: &'p Context, value: impl IntoValue<'p>) -> Promise<'p> {
+		let mut val = Value::undefined(cx);
+		Box::new(value).into_value(cx, &mut val);
+
+		let p = Promise::new(cx);
+		p.reject(cx, &val);
+		p
+	}
+
+	pub fn new_from_result(cx: &'p Context, value: Result<impl IntoValue<'p>, impl IntoValue<'p>>) -> Promise<'p> {
+		let mut val = Value::undefined(cx);
+		let p = Promise::new(cx);
+
+		match value {
+			Ok(o) => {
+				Box::new(o).into_value(cx, &mut val);
+				p.resolve(cx, &val);
+			}
+
+			Err(e) => {
+				Box::new(e).into_value(cx, &mut val);
+				p.reject(cx, &val);
+			}
+		}
+
+		p
 	}
 
 	#[cfg(not(target_family = "wasm"))]
