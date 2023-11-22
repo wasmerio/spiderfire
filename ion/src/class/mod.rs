@@ -109,6 +109,12 @@ pub trait ClassDefinition: NativeObject {
 		}
 	}
 
+	fn constructor_fn(cx: &Context) -> *mut JSFunction {
+		let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
+		let info = infos.get(&TypeId::of::<Self>()).expect("Uninitialised Class");
+		info.constructor
+	}
+
 	fn new_raw_object(cx: &Context) -> *mut JSObject {
 		let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
 		let info = infos.get(&TypeId::of::<Self>()).expect("Uninitialised Class");
