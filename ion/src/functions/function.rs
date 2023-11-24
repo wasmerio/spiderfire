@@ -19,6 +19,8 @@ use crate::{Context, ErrorReport, Local, Object, Value};
 use crate::flags::PropertyFlags;
 use crate::functions::closure::{call_closure, Closure, create_closure_object};
 
+use super::closure::{ClosureOnce, create_closure_object_once};
+
 /// Native Function that can be used from JavaScript.
 pub type NativeFunction = unsafe extern "C" fn(*mut JSContext, u32, *mut JSVal) -> bool;
 
@@ -58,6 +60,25 @@ impl<'f> Function<'f> {
 				)),
 			};
 			let closure_object = create_closure_object(cx, closure);
+			SetFunctionNativeReserved(JS_GetFunctionObject(function.get()), 0, &ObjectValue(closure_object.handle().get()));
+			function
+		}
+	}
+
+	/// Creates a new [Function] with a [ClosureOnce]. The resulting function
+	/// can only be called once and will throw an exception if called again.
+	pub fn from_closure_once(cx: &'f Context, name: &str, closure: Box<ClosureOnce>, nargs: u32, flags: PropertyFlags) -> Function<'f> {
+		unsafe {
+			let function = Function {
+				function: cx.root_function(NewFunctionWithReserved(
+					cx.as_ptr(),
+					Some(call_closure),
+					nargs,
+					flags.bits() as u32,
+					name.as_ptr().cast(),
+				)),
+			};
+			let closure_object = create_closure_object_once(cx, closure);
 			SetFunctionNativeReserved(JS_GetFunctionObject(function.get()), 0, &ObjectValue(closure_object.handle().get()));
 			function
 		}

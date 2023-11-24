@@ -31,9 +31,6 @@ optional = true
 workspace = true
 optional = true
 
-[target.'cfg(not(any(target_arch="wasm32", target_arch="wasm64")))'.dependencies]
-libffi = "3.2.0"
-
 [features]
 default = []
 debugmozjs = ["mozjs/debugmozjs"]

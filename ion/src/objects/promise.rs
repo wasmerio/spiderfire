@@ -4,13 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-#[cfg(not(target_family = "wasm"))]
 use std::future::Future;
-#[cfg(not(target_family = "wasm"))]
-use std::mem::transmute;
 use std::ops::{Deref, DerefMut};
 
-#[cfg(not(target_family = "wasm"))]
 use futures::executor::block_on;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
@@ -18,13 +14,9 @@ use mozjs::jsapi::{
 };
 use mozjs::rust::HandleObject;
 
-#[cfg(not(target_family = "wasm"))]
-use mozjs::{jsval::JSVal, jsapi::JSContext};
-
 use crate::conversions::IntoValue;
 use crate::{Context, Function, Local, Object, Value};
-#[cfg(not(target_family = "wasm"))]
-use crate::{Arguments, conversions::ToValue, exception::ThrowException, flags::PropertyFlags, functions::NativeFunction};
+use crate::{conversions::ToValue, flags::PropertyFlags};
 
 /// Represents a [Promise] in the JavaScript Runtime.
 /// Refer to [MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) for more details.
@@ -78,7 +70,6 @@ impl<'p> Promise<'p> {
 		p
 	}
 
-	#[cfg(not(target_family = "wasm"))]
 	/// Creates a new [Promise] with an executor.
 	/// The executor is a function that takes in two functions, `resolve` and `reject`.
 	/// `resolve` and `reject` can be called with a [Value] to resolve or reject the promise with the given value.
@@ -86,28 +77,28 @@ impl<'p> Promise<'p> {
 	where
 		F: for<'cx> FnOnce(&'cx Context, Function<'cx>, Function<'cx>) -> crate::Result<()> + 'static,
 	{
+		use crate::Exception;
+
 		unsafe {
-			let native = move |cx: *mut JSContext, argc: u32, vp: *mut JSVal| {
-				let cx = Context::new_unchecked(cx);
-				let args = Arguments::new(&cx, argc, vp);
+			let function = Function::from_closure_once(
+				cx,
+				"executor",
+				Box::new(move |args| {
+					let cx = args.cx();
 
-				let resolve_obj = args.value(0).unwrap().to_object(&cx).into_local();
-				let reject_obj = args.value(1).unwrap().to_object(&cx).into_local();
-				let resolve = Function::from_object(&cx, &resolve_obj).unwrap();
-				let reject = Function::from_object(&cx, &reject_obj).unwrap();
+					let resolve_obj = args.value(0).unwrap().to_object(cx).into_local();
+					let reject_obj = args.value(1).unwrap().to_object(cx).into_local();
+					let resolve = Function::from_object(cx, &resolve_obj).unwrap();
+					let reject = Function::from_object(cx, &reject_obj).unwrap();
 
-				match executor(&cx, resolve, reject) {
-					Ok(()) => true as u8,
-					Err(error) => {
-						error.throw(&cx);
-						false as u8
+					match executor(cx, resolve, reject) {
+						Ok(()) => Ok(Value::undefined(args.cx())),
+						Err(error) => Err(Exception::Error(error)),
 					}
-				}
-			};
-			let closure = libffi::high::ClosureOnce3::new(native);
-			let fn_ptr: &NativeFunction = transmute(closure.code_ptr());
-
-			let function = Function::new(cx, "executor", Some(*fn_ptr), 2, PropertyFlags::empty());
+				}),
+				2,
+				PropertyFlags::empty(),
+			);
 			let executor = function.to_object(cx);
 			let promise = NewPromiseObject(cx.as_ptr(), executor.handle().into());
 
@@ -119,7 +110,6 @@ impl<'p> Promise<'p> {
 		}
 	}
 
-	#[cfg(not(target_family = "wasm"))]
 	/// Creates a new [Promise] with a [Future].
 	/// The future is run to completion on the current thread and cannot interact with an asynchronous runtime.
 	///
