@@ -7,7 +7,10 @@ use mozjs::{
 		JSContext, HandleObject, JS_GetArrayBufferViewData, AutoRequireNoGC, ReadableStreamUnderlyingSource, HandleValue,
 		ReadableStreamUpdateDataAvailableFromSource, NewReadableExternalSourceStreamObject, ReadableStreamClose,
 	},
-	glue::{DeleteReadableStreamUnderlyingSource, ReadableStreamUnderlyingSourceTraps, CreateReadableStreamUnderlyingSource},
+	glue::{
+		DeleteReadableStreamUnderlyingSource, ReadableStreamUnderlyingSourceTraps, CreateReadableStreamUnderlyingSource,
+		ReadableStreamUnderlyingSourceGetSource,
+	},
 	jsval::JSVal,
 };
 
@@ -85,9 +88,12 @@ unsafe extern "C" fn error(_source: *const c_void, _cx: *mut JSContext, _stream:
 
 #[allow(unsafe_code)]
 unsafe extern "C" fn finalize(source: *mut ReadableStreamUnderlyingSource) {
-	// TODO: delete the source using std::ptr::drop_in_place, but
-	// we need to store it somewhere so we can delete it here
-	unsafe { DeleteReadableStreamUnderlyingSource(source) };
+	unsafe {
+		let rust_source = ReadableStreamUnderlyingSourceGetSource(source);
+		drop(Box::from_raw(rust_source as *mut MemoryBackedReadableStream));
+
+		DeleteReadableStreamUnderlyingSource(source);
+	}
 }
 
 impl MemoryBackedReadableStream {
