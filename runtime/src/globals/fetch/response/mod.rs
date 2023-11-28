@@ -242,7 +242,7 @@ impl Response {
 				let response = Response::get_mut_private(&mut response);
 				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
 				cx.unroot_persistent_object(this.get());
-				let stream = crate::globals::readable_stream::new_memory_backed(&cx, bytes?.into());
+				let stream = ion::ReadableStream::from_bytes(&cx, bytes?.into());
 				Ok((*stream).get())
 			})
 		}

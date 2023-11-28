@@ -1,10 +1,10 @@
 use std::{ffi::c_void, cell::RefCell};
 
 use bytes::Bytes;
-use ion::{Object, Context};
+use crate::{Context, Local};
 use mozjs::{
 	jsapi::{
-		JSContext, HandleObject, JS_GetArrayBufferViewData, AutoRequireNoGC, ReadableStreamUnderlyingSource, HandleValue,
+		JSContext, JSObject, HandleObject, JS_GetArrayBufferViewData, AutoRequireNoGC, ReadableStreamUnderlyingSource, HandleValue,
 		ReadableStreamUpdateDataAvailableFromSource, NewReadableExternalSourceStreamObject, ReadableStreamClose,
 	},
 	glue::{
@@ -23,7 +23,7 @@ static UNDERLYING_SOURCE_TRAPS: ReadableStreamUnderlyingSourceTraps = ReadableSt
 	finalize: Some(finalize),
 };
 
-pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> Object<'cx> {
+pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> Local<'cx, *mut JSObject> {
 	let available = bytes.len();
 
 	let source = Box::into_raw(Box::new(MemoryBackedReadableStream { bytes: RefCell::new(bytes) }));
@@ -47,10 +47,10 @@ pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> Object<'cx> {
 
 	unsafe { ReadableStreamClose(cx.as_ptr(), js_stream.handle().into()) };
 
-	js_stream.into()
+	js_stream
 }
 
-pub struct MemoryBackedReadableStream {
+struct MemoryBackedReadableStream {
 	bytes: RefCell<Bytes>,
 }
 
@@ -108,33 +108,6 @@ impl MemoryBackedReadableStream {
 }
 
 /* FOR READING FROM A STREAM NATIVELY
-   /// Acquires a reader and locks the stream,
-   /// must be done before `read_a_chunk`.
-   #[allow(unsafe_code)]
-   pub fn start_reading(&self) -> Result<(), ()> {
-	   if self.is_locked() || self.is_disturbed() {
-		   return Err(());
-	   }
-
-	   let global = self.global();
-	   let _ar = enter_realm(&*global);
-	   let cx = GlobalScope::get_cx();
-
-	   unsafe {
-		   rooted!(in(*cx) let reader = ReadableStreamGetReader(
-			   *cx,
-			   self.js_stream.handle(),
-			   ReadableStreamReaderMode::Default,
-		   ));
-
-		   // Note: the stream is locked to the reader.
-		   self.js_reader.set(reader.get());
-	   }
-
-	   self.has_reader.set(true);
-	   Ok(())
-   }
-
    /// Read a chunk from the stream,
    /// must be called after `start_reading`,
    /// and before `stop_reading`.
@@ -157,58 +130,6 @@ impl MemoryBackedReadableStream {
 		   ));
 		   Promise::new_with_js_promise(promise_obj.handle(), cx)
 	   }
-   }
-
-   /// Releases the lock on the reader,
-   /// must be done after `start_reading`.
-   #[allow(unsafe_code)]
-   pub fn stop_reading(&self) {
-	   if !self.has_reader.get() {
-		   panic!("ReadableStream::stop_reading called on a readerless stream.");
-	   }
-
-	   self.has_reader.set(false);
-
-	   let global = self.global();
-	   let _ar = enter_realm(&*global);
-	   let cx = GlobalScope::get_cx();
-
-	   unsafe {
-		   ReadableStreamReaderReleaseLock(*cx, self.js_reader.handle());
-		   // Note: is this the way to nullify the Heap?
-		   self.js_reader.set(ptr::null_mut());
-	   }
-   }
-
-   #[allow(unsafe_code)]
-   pub fn is_locked(&self) -> bool {
-	   // If we natively took a reader, we're locked.
-	   if self.has_reader.get() {
-		   return true;
-	   }
-
-	   // Otherwise, still double-check that script didn't lock the stream.
-	   let cx = GlobalScope::get_cx();
-	   let mut locked_or_disturbed = false;
-
-	   unsafe {
-		   ReadableStreamIsLocked(*cx, self.js_stream.handle(), &mut locked_or_disturbed);
-	   }
-
-	   locked_or_disturbed
-   }
-
-   #[allow(unsafe_code)]
-   pub fn is_disturbed(&self) -> bool {
-	   // Check that script didn't disturb the stream.
-	   let cx = GlobalScope::get_cx();
-	   let mut locked_or_disturbed = false;
-
-	   unsafe {
-		   ReadableStreamIsDisturbed(*cx, self.js_stream.handle(), &mut locked_or_disturbed);
-	   }
-
-	   locked_or_disturbed
    }
 
 

@@ -26,7 +26,7 @@ pub use heap::{Heap, TracedHeap};
 #[cfg(feature = "macros")]
 pub use ion_proc::*;
 pub use local::Local;
-pub use objects::{Array, Date, Iterator, JSIterator, Object, OwnedKey, Promise, PropertyKey, RegExp};
+pub use objects::{Array, Date, Iterator, JSIterator, Object, OwnedKey, Promise, PropertyKey, RegExp, ReadableStream, ReadableStreamReader};
 pub use objects::typedarray;
 pub use stack::{Stack, StackRecord};
 pub use string::{String, StringRef};
