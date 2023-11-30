@@ -90,35 +90,39 @@ fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>
 	}
 
 	let request = cx.root_persistent_object(Request::new_object(cx, Box::new(request)));
-	let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 	let request = request.handle().into_handle();
-	future_to_promise(cx, async move {
-		let mut request = Object::from(unsafe { Local::from_raw_handle(request) });
-		let res = fetch_internal(&cx2, &mut request, GLOBAL_CLIENT.get().unwrap().clone()).await;
-		cx2.unroot_persistent_object(request.handle().get());
-		res
-	})
+	unsafe {
+		future_to_promise(cx, move |cx| async move {
+			let mut request = Object::from(Local::from_raw_handle(request));
+			let (cx, res) = cx
+				.await_native_cx(|cx| fetch_internal(cx, &mut request, GLOBAL_CLIENT.get().unwrap().clone()))
+				.await;
+			cx.unroot_persistent_object(request.handle().get());
+			res
+		})
+	}
 }
 
-async fn fetch_internal<'o>(cx: &Context, request: &mut Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
+async fn fetch_internal<'o>(cx: Context, request: &mut Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
 	let request = Request::get_mut_private(request);
 	let signal = Object::from(unsafe { Local::from_heap(&request.signal_object) });
 	let signal = AbortSignal::get_private(&signal).signal.clone().poll();
-	let send = Box::pin(main_fetch(cx, request, client, 0));
-	let response = match select(send, signal).await {
+	let request_url = request.url.clone();
+	let send = main_fetch(cx.duplicate(), request, client, 0);
+	let (cx, response) = cx.await_native(select(send, signal)).await;
+	let response = match response {
 		Either::Left((response, _)) => Ok(response),
 		Either::Right((exception, _)) => Err(Exception::Other(exception)),
-	};
-	response.and_then(|response| {
-		if response.kind == ResponseKind::Error {
-			Err(Exception::Error(Error::new(
-				&format!("Network Error: Failed to fetch from {}", &request.url),
-				ErrorKind::Type,
-			)))
-		} else {
-			Ok(Response::new_object(cx, Box::new(response)))
-		}
-	})
+	}?;
+
+	if response.kind == ResponseKind::Error {
+		Err(Exception::Error(Error::new(
+			&format!("Network Error: Failed to fetch from {}", request_url),
+			ErrorKind::Type,
+		)))
+	} else {
+		Ok(Response::new_object(&cx, Box::new(response)))
+	}
 }
 
 static BAD_PORTS: &[u16] = &[
@@ -207,7 +211,7 @@ static BAD_PORTS: &[u16] = &[
 static SCHEMES: [&str; 4] = ["about", "blob", "data", "file"];
 
 #[async_recursion(?Send)]
-async fn main_fetch(cx: &Context, request: &mut Request, client: Client, redirections: u8) -> Response {
+async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirections: u8) -> Response {
 	let scheme = request.url.scheme();
 
 	// TODO: Upgrade HTTP Schemes if the host is a domain and matches the Known HSTS Domain List
@@ -343,7 +347,7 @@ async fn main_fetch(cx: &Context, request: &mut Request, client: Client, redirec
 	response
 }
 
-async fn scheme_fetch(cx: &Context, scheme: &str, url: Url) -> Response {
+async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Response {
 	match scheme {
 		"about" if url.path() == "blank" => {
 			let response = Response::new_from_bytes(Bytes::default(), url);
@@ -352,7 +356,7 @@ async fn scheme_fetch(cx: &Context, scheme: &str, url: Url) -> Response {
 				headers: HeaderMap::from_iter(once((CONTENT_TYPE, HeaderValue::from_static("text/html;charset=UTF-8")))),
 				kind: HeadersKind::Immutable,
 			};
-			response.headers.set(Headers::new_object(cx, Box::new(headers)));
+			response.headers.set(Headers::new_object(&cx, Box::new(headers)));
 			response
 		}
 		// TODO: blob: URLs
@@ -375,16 +379,17 @@ async fn scheme_fetch(cx: &Context, scheme: &str, url: Url) -> Response {
 				headers: HeaderMap::from_iter(once((CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap()))),
 				kind: HeadersKind::Immutable,
 			};
-			response.headers.set(Headers::new_object(cx, Box::new(headers)));
+			response.headers.set(Headers::new_object(&cx, Box::new(headers)));
 			response
 		}
 		"file" => {
 			let path = url.to_file_path().unwrap();
-			match read(path).await {
+			let (cx, read) = cx.await_native(read(path)).await;
+			match read {
 				Ok(bytes) => {
 					let response = Response::new_from_bytes(Bytes::from(bytes), url);
 					let headers = Headers::new(HeadersKind::Immutable);
-					response.headers.set(Headers::new_object(cx, Box::new(headers)));
+					response.headers.set(Headers::new_object(&cx, Box::new(headers)));
 					response
 				}
 				Err(_) => network_error(),
@@ -394,8 +399,8 @@ async fn scheme_fetch(cx: &Context, scheme: &str, url: Url) -> Response {
 	}
 }
 
-async fn http_fetch(cx: &Context, request: &mut Request, client: Client, taint: ResponseTaint, redirections: u8) -> (Response, bool) {
-	let response = http_network_fetch(cx, request, client.clone(), false).await;
+async fn http_fetch(cx: Context, request: &mut Request, client: Client, taint: ResponseTaint, redirections: u8) -> (Response, bool) {
+	let (cx, response) = cx.await_native_cx(|cx| http_network_fetch(cx, request, client.clone(), false)).await;
 	match response.status {
 		Some(status) if status.is_redirection() => match request.redirect {
 			RequestRedirect::Follow => (http_redirect_fetch(cx, request, response, client, taint, redirections).await, false),
@@ -407,7 +412,7 @@ async fn http_fetch(cx: &Context, request: &mut Request, client: Client, taint: 
 }
 
 #[async_recursion(?Send)]
-async fn http_network_fetch(cx: &Context, req: &Request, client: Client, is_new: bool) -> Response {
+async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: bool) -> Response {
 	let mut request = req.clone();
 	let mut headers = Object::from(unsafe { Local::from_heap(&req.headers) });
 	let headers = Headers::get_mut_private(&mut headers);
@@ -479,7 +484,8 @@ async fn http_network_fetch(cx: &Context, req: &Request, client: Client, is_new:
 
 	let range_requested = headers.contains_key(RANGE);
 
-	let mut response = match client.request(request.request).await {
+	let (cx, response) = cx.await_native(client.request(request.request)).await;
+	let mut response = match response {
 		Ok(response) => {
 			let mut response = Response::new(response, req.url.clone());
 
@@ -488,7 +494,7 @@ async fn http_network_fetch(cx: &Context, req: &Request, client: Client, is_new:
 				headers: take(response.response.as_mut().unwrap().headers_mut()),
 				kind: HeadersKind::Immutable,
 			};
-			response.headers.set(Headers::new_object(cx, Box::new(headers)));
+			response.headers.set(Headers::new_object(&cx, Box::new(headers)));
 			response
 		}
 		Err(_) => return network_error(),
@@ -508,7 +514,7 @@ async fn http_network_fetch(cx: &Context, req: &Request, client: Client, is_new:
 }
 
 async fn http_redirect_fetch(
-	cx: &Context, request: &mut Request, response: Response, client: Client, taint: ResponseTaint, redirections: u8,
+	cx: Context, request: &mut Request, response: Response, client: Client, taint: ResponseTaint, redirections: u8,
 ) -> Response {
 	let headers = Object::from(unsafe { Local::from_heap(&response.headers) });
 	let headers = Headers::get_private(&headers);

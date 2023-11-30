@@ -95,17 +95,18 @@ impl FileReader {
 		let bytes = blob.as_bytes().clone();
 
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
 
-		future_to_promise(cx, async move {
-			let reader = Object::from(unsafe { Local::from_raw_handle(this) });
-			let reader = FileReader::get_private(&reader);
-			let array_buffer = ArrayBuffer::from(bytes.to_vec());
-			reader.result.set(array_buffer.as_value(&cx2).get());
-			cx2.unroot_persistent_object(this.get());
-			Ok::<_, ()>(())
-		});
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let reader = Object::from(Local::from_raw_handle(this));
+				let reader = FileReader::get_private(&reader);
+				let array_buffer = ArrayBuffer::from(bytes.to_vec());
+				reader.result.set(array_buffer.as_value(&cx).get());
+				cx.unroot_persistent_object(this.get());
+				Ok::<_, ()>(())
+			})
+		};
 		Ok(())
 	}
 
@@ -115,17 +116,18 @@ impl FileReader {
 		let bytes = blob.as_bytes().clone();
 
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
 
-		future_to_promise(cx, async move {
-			let reader = Object::from(unsafe { Local::from_raw_handle(this) });
-			let reader = FileReader::get_private(&reader);
-			let byte_string = unsafe { ByteString::<Latin1>::from_unchecked(bytes.to_vec()) };
-			reader.result.set(byte_string.as_value(&cx2).get());
-			cx2.unroot_persistent_object(this.get());
-			Ok::<_, ()>(())
-		});
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let reader = Object::from(Local::from_raw_handle(this));
+				let reader = FileReader::get_private(&reader);
+				let byte_string = ByteString::<Latin1>::from_unchecked(bytes.to_vec());
+				reader.result.set(byte_string.as_value(&cx).get());
+				cx.unroot_persistent_object(this.get());
+				Ok::<_, ()>(())
+			})
+		};
 		Ok(())
 	}
 
@@ -136,19 +138,20 @@ impl FileReader {
 		let mime = blob.kind();
 
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
 
-		future_to_promise(cx, async move {
-			let encoding = encoding_from_string_mime(encoding.as_deref(), mime.as_deref());
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let encoding = encoding_from_string_mime(encoding.as_deref(), mime.as_deref());
 
-			let reader = Object::from(unsafe { Local::from_raw_handle(this) });
-			let reader = FileReader::get_private(&reader);
-			let str = encoding.decode_without_bom_handling(&bytes).0;
-			reader.result.set(str.as_value(&cx2).get());
-			cx2.unroot_persistent_object(this.get());
-			Ok::<_, ()>(())
-		});
+				let reader = Object::from(Local::from_raw_handle(this));
+				let reader = FileReader::get_private(&reader);
+				let str = encoding.decode_without_bom_handling(&bytes).0;
+				reader.result.set(str.as_value(&cx).get());
+				cx.unroot_persistent_object(this.get());
+				Ok::<_, ()>(())
+			})
+		};
 		Ok(())
 	}
 
@@ -159,22 +162,23 @@ impl FileReader {
 		let mime = blob.kind();
 
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
 
-		future_to_promise(cx, async move {
-			let reader = Object::from(unsafe { Local::from_raw_handle(this) });
-			let reader = FileReader::get_private(&reader);
-			let base64 = BASE64_STANDARD.encode(&bytes);
-			let data_url = match mime {
-				Some(mime) => format!("data:{};base64,{}", mime, base64),
-				None => format!("data:base64,{}", base64),
-			};
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let reader = Object::from(Local::from_raw_handle(this));
+				let reader = FileReader::get_private(&reader);
+				let base64 = BASE64_STANDARD.encode(&bytes);
+				let data_url = match mime {
+					Some(mime) => format!("data:{};base64,{}", mime, base64),
+					None => format!("data:base64,{}", base64),
+				};
 
-			reader.result.set(data_url.as_value(&cx2).get());
-			cx2.unroot_persistent_object(this.get());
-			Ok::<_, ()>(())
-		});
+				reader.result.set(data_url.as_value(&cx).get());
+				cx.unroot_persistent_object(this.get());
+				Ok::<_, ()>(())
+			})
+		};
 		Ok(())
 	}
 }

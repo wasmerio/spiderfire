@@ -235,16 +235,17 @@ impl Response {
 	#[ion(get)]
 	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
-		future_to_promise::<_, _, Error>(cx, async move {
-			let mut response = Object::from(unsafe { Local::from_raw_handle(this) });
-			let response = Response::get_mut_private(&mut response);
-			let bytes = response.read_to_bytes().await;
-			cx2.unroot_persistent_object(this.get());
-			let stream = crate::globals::readable_stream::new_memory_backed(&cx2, bytes?.into());
-			Ok((*stream).get())
-		})
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let mut response = Object::from(Local::from_raw_handle(this));
+				let response = Response::get_mut_private(&mut response);
+				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
+				cx.unroot_persistent_object(this.get());
+				let stream = crate::globals::readable_stream::new_memory_backed(&cx, bytes?.into());
+				Ok((*stream).get())
+			})
+		}
 	}
 
 	#[ion(get)]
@@ -255,88 +256,92 @@ impl Response {
 	#[ion(name = "arrayBuffer")]
 	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
-		future_to_promise::<_, _, Error>(cx, async move {
-			let mut response = Object::from(unsafe { Local::from_raw_handle(this) });
-			let response = Response::get_mut_private(&mut response);
-			let bytes = response.read_to_bytes().await;
-			cx2.unroot_persistent_object(this.get());
-			Ok(ArrayBuffer::from(bytes?))
-		})
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let mut response = Object::from(Local::from_raw_handle(this));
+				let response = Response::get_mut_private(&mut response);
+				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
+				cx.unroot_persistent_object(this.get());
+				Ok(ArrayBuffer::from(bytes?))
+			})
+		}
 	}
 
 	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
-		future_to_promise::<_, _, Error>(cx, async move {
-			let mut response = Object::from(unsafe { Local::from_raw_handle(this) });
-			let response = Response::get_mut_private(&mut response);
-			let result = response.read_to_text().await;
-			cx2.unroot_persistent_object(this.get());
-			result
-		})
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let mut response = Object::from(Local::from_raw_handle(this));
+				let response = Response::get_mut_private(&mut response);
+				let result = response.read_to_text().await;
+				cx.unroot_persistent_object(this.get());
+				result
+			})
+		}
 	}
 
 	pub fn json<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
-		future_to_promise::<_, _, Error>(cx, async move {
-			let mut response = Object::from(unsafe { Local::from_raw_handle(this) });
-			let response = Response::get_mut_private(&mut response);
-			let text = response.read_to_text().await;
-			cx2.unroot_persistent_object(this.get());
-			let text = text?;
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let mut response = Object::from(Local::from_raw_handle(this));
+				let response = Response::get_mut_private(&mut response);
+				let (cx, text) = cx.await_native(response.read_to_text()).await;
+				cx.unroot_persistent_object(this.get());
+				let text = text?;
 
-			let Some(str) = ion::String::new(&cx2, text.as_str()) else {
-				return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
-			};
-			let mut result = ion::Value::undefined(&cx2);
-			if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx2.as_ptr(), str.handle().into(), result.handle_mut().into()) } {
-				return Err(ion::Error::new("Failed to deserialize JSON", ion::ErrorKind::Normal));
-			}
+				let Some(str) = ion::String::new(&cx, text.as_str()) else {
+					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
+				};
+				let mut result = ion::Value::undefined(&cx);
+				if !mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) {
+					return Err(ion::Error::new("Failed to deserialize JSON", ion::ErrorKind::Normal));
+				}
 
-			Ok((*result.to_object(&cx2)).get())
-		})
+				Ok((*result.to_object(&cx)).get())
+			})
+		}
 	}
 
 	#[ion(name = "formData")]
 	pub fn form_data<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
 		let this = cx.root_persistent_object(self.reflector().get());
-		let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 		let this = this.handle().into_handle();
-		future_to_promise::<_, _, Error>(cx, async move {
-			let mut response = Object::from(unsafe { Local::from_raw_handle(this) });
-			let response = Response::get_mut_private(&mut response);
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let mut response = Object::from(Local::from_raw_handle(this));
+				let response = Response::get_mut_private(&mut response);
 
-			let bytes = response.read_to_bytes().await;
-			cx2.unroot_persistent_object(this.get());
-			let bytes = bytes?;
+				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
+				cx.unroot_persistent_object(this.get());
+				let bytes = bytes?;
 
-			let headers = response.get_headers_object(&cx2);
-			let content_type_string = ByteString::<_>::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
-			let Some(content_type) = headers.get(content_type_string)? else {
-				return Err(Error::new("No content-type header, cannot decide form data format", ErrorKind::Type));
-			};
-			let content_type = content_type.to_string();
+				let headers = response.get_headers_object(&cx);
+				let content_type_string = ByteString::<_>::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
+				let Some(content_type) = headers.get(content_type_string)? else {
+					return Err(Error::new("No content-type header, cannot decide form data format", ErrorKind::Type));
+				};
+				let content_type = content_type.to_string();
 
-			if content_type.starts_with("application/x-www-form-urlencoded") {
-				let parsed = form_urlencoded::parse(bytes.as_ref());
-				let mut form_data = FormData::constructor();
+				if content_type.starts_with("application/x-www-form-urlencoded") {
+					let parsed = form_urlencoded::parse(bytes.as_ref());
+					let mut form_data = FormData::constructor();
 
-				for (key, val) in parsed {
-					form_data.append_native_string(key.into_owned(), val.into_owned());
+					for (key, val) in parsed {
+						form_data.append_native_string(key.into_owned(), val.into_owned());
+					}
+
+					Ok(FormData::new_object(&cx, Box::new(form_data)))
+				} else if content_type.starts_with("multipart/form-data") {
+					Err(Error::new("multipart/form-data deserialization is not supported yet", ErrorKind::Normal))
+				} else {
+					Err(Error::new("Invalid content-type, cannot decide form data format", ErrorKind::Type))
 				}
-
-				Ok(FormData::new_object(&cx2, Box::new(form_data)))
-			} else if content_type.starts_with("multipart/form-data") {
-				Err(Error::new("multipart/form-data deserialization is not supported yet", ErrorKind::Normal))
-			} else {
-				Err(Error::new("Invalid content-type, cannot decide form data format", ErrorKind::Type))
-			}
-		})
+			})
+		}
 	}
 }
 
