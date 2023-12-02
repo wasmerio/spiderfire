@@ -204,13 +204,13 @@ impl Blob {
 		Blob::new_object(cx, Box::new(blob))
 	}
 
-	pub fn text<'cx>(&self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn text<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
 		unsafe { future_to_promise(cx, |_| async move { Ok::<_, ()>(UTF_8.decode(&bytes).0.into_owned()) }) }
 	}
 
 	#[ion(name = "arrayBuffer")]
-	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
 		unsafe { future_to_promise(cx, |_| async move { Ok::<_, ()>(ion::typedarray::ArrayBuffer::from(bytes.to_vec())) }) }
 	}

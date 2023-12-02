@@ -38,7 +38,7 @@ use crate::ContextExt;
 /// To hold values across await points, use [ion::Heap] which keeps a pointer to the
 /// values on the heap. You can root the heap value in the new context using the
 /// [ion::Heap::root()] method.
-pub unsafe fn future_to_promise<'cx, F, Fut, O, E>(cx: &'cx Context, callback: F) -> Option<Promise<'cx>>
+pub unsafe fn future_to_promise<'cx, F, Fut, O, E>(cx: &'cx Context, callback: F) -> Option<Promise>
 where
 	F: (FnOnce(Context) -> Fut) + 'static,
 	Fut: Future<Output = Result<O, E>> + 'static,
@@ -46,7 +46,7 @@ where
 	E: for<'cx2> IntoValue<'cx2> + 'static,
 {
 	let promise = Promise::new(cx);
-	let object = promise.handle().get();
+	let object = promise.root(cx).handle().get();
 	let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 
 	let handle = spawn_local(async move {

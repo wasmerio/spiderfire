@@ -17,7 +17,7 @@ use crate::format::{Config, format_value, INDENT};
 /// ```
 #[allow(clippy::unnecessary_to_owned)]
 pub fn format_promise(cx: &Context, cfg: Config, promise: &Promise) -> String {
-	let state = promise.state();
+	let state = promise.state(cx);
 	let state_string = match state {
 		PromiseState::Pending => return "Promise { <pending> }".color(cfg.colours.promise).to_string(),
 		PromiseState::Fulfilled => "<fulfilled>",

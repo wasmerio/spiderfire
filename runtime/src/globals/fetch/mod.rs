@@ -53,7 +53,7 @@ mod response;
 const DEFAULT_USER_AGENT: &str = concatcp!("Spiderfire/", VERSION);
 
 #[js_fn]
-fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>) -> Option<Promise<'cx>> {
+fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>) -> Option<Promise> {
 	let promise = Promise::new(cx);
 
 	let request = match Request::constructor(cx, resource, init) {

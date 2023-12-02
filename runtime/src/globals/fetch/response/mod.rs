@@ -233,7 +233,7 @@ impl Response {
 
 	// TODO: get_body must be a sync call
 	#[ion(get)]
-	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = cx.root_persistent_object(self.reflector().get());
 		let this = this.handle().into_handle();
 		unsafe {
@@ -254,7 +254,7 @@ impl Response {
 	}
 
 	#[ion(name = "arrayBuffer")]
-	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = cx.root_persistent_object(self.reflector().get());
 		let this = this.handle().into_handle();
 		unsafe {
@@ -268,7 +268,7 @@ impl Response {
 		}
 	}
 
-	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = cx.root_persistent_object(self.reflector().get());
 		let this = this.handle().into_handle();
 		unsafe {
@@ -282,7 +282,7 @@ impl Response {
 		}
 	}
 
-	pub fn json<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn json<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = cx.root_persistent_object(self.reflector().get());
 		let this = this.handle().into_handle();
 		unsafe {
@@ -307,7 +307,7 @@ impl Response {
 	}
 
 	#[ion(name = "formData")]
-	pub fn form_data<'cx>(&mut self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn form_data<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = cx.root_persistent_object(self.reflector().get());
 		let this = this.handle().into_handle();
 		unsafe {

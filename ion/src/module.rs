@@ -106,7 +106,7 @@ impl<'cx> Module<'cx> {
 	/// On success, returns the compiled module object and a promise. The promise resolves with the return value of the module.
 	/// The promise is a byproduct of enabling top-level await.
 	#[allow(clippy::result_large_err)]
-	pub fn compile(cx: &'cx Context, filename: &str, path: Option<&Path>, script: &str) -> Result<(Module<'cx>, Option<Promise<'cx>>), ModuleError> {
+	pub fn compile(cx: &'cx Context, filename: &str, path: Option<&Path>, script: &str) -> Result<(Module<'cx>, Option<Promise>), ModuleError> {
 		let script: Vec<u16> = script.encode_utf16().collect();
 		let mut source = transform_u16_to_source_text(script.as_slice());
 		let filename = path.and_then(Path::to_str).unwrap_or(filename);

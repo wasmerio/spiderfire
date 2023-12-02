@@ -231,10 +231,10 @@ impl<'cx> FromValue<'cx> for Date<'cx> {
 	}
 }
 
-impl<'cx> FromValue<'cx> for Promise<'cx> {
+impl<'cx> FromValue<'cx> for Promise {
 	type Config = ();
 
-	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<Promise<'cx>> {
+	fn from_value(cx: &'cx Context, value: &Value, _: bool, _: ()) -> Result<Promise> {
 		if !value.handle().is_object() {
 			return Err(Error::new("Expected Promise", ErrorKind::Type));
 		}

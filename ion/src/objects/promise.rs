@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt::Debug;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
 
@@ -15,25 +16,30 @@ use mozjs::jsapi::{
 use mozjs::rust::HandleObject;
 
 use crate::conversions::IntoValue;
-use crate::{Context, Function, Local, Object, Value};
+use crate::{Context, Function, Local, Object, Value, TracedHeap};
 use crate::{conversions::ToValue, flags::PropertyFlags};
 
 /// Represents a [Promise] in the JavaScript Runtime.
 /// Refer to [MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) for more details.
-#[derive(Debug)]
-pub struct Promise<'p> {
-	promise: Local<'p, *mut JSObject>,
+pub struct Promise {
+	promise: TracedHeap<*mut JSObject>,
 }
 
-impl<'p> Promise<'p> {
+impl Debug for Promise {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Promise").finish()
+	}
+}
+
+impl Promise {
 	/// Creates a new [Promise] which never resolves.
-	pub fn new(cx: &'p Context) -> Promise<'p> {
+	pub fn new(cx: &Context) -> Promise {
 		Promise {
-			promise: cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) }),
+			promise: TracedHeap::from_local(cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) })),
 		}
 	}
 
-	pub fn new_resolved(cx: &'p Context, value: impl IntoValue<'p>) -> Promise<'p> {
+	pub fn new_resolved<'cx>(cx: &'cx Context, value: impl IntoValue<'cx>) -> Promise {
 		let mut val = Value::undefined(cx);
 		Box::new(value).into_value(cx, &mut val);
 
@@ -42,7 +48,7 @@ impl<'p> Promise<'p> {
 		p
 	}
 
-	pub fn new_rejected(cx: &'p Context, value: impl IntoValue<'p>) -> Promise<'p> {
+	pub fn new_rejected<'cx>(cx: &'cx Context, value: impl IntoValue<'cx>) -> Promise {
 		let mut val = Value::undefined(cx);
 		Box::new(value).into_value(cx, &mut val);
 
@@ -51,7 +57,7 @@ impl<'p> Promise<'p> {
 		p
 	}
 
-	pub fn new_from_result(cx: &'p Context, value: Result<impl IntoValue<'p>, impl IntoValue<'p>>) -> Promise<'p> {
+	pub fn new_from_result<'cx>(cx: &'cx Context, value: Result<impl IntoValue<'cx>, impl IntoValue<'cx>>) -> Promise {
 		let mut val = Value::undefined(cx);
 		let p = Promise::new(cx);
 
@@ -73,7 +79,7 @@ impl<'p> Promise<'p> {
 	/// Creates a new [Promise] with an executor.
 	/// The executor is a function that takes in two functions, `resolve` and `reject`.
 	/// `resolve` and `reject` can be called with a [Value] to resolve or reject the promise with the given value.
-	pub fn new_with_executor<F>(cx: &'p Context, executor: F) -> Option<Promise<'p>>
+	pub fn new_with_executor<F>(cx: &Context, executor: F) -> Option<Promise>
 	where
 		F: for<'cx> FnOnce(&'cx Context, Function<'cx>, Function<'cx>) -> crate::Result<()> + 'static,
 	{
@@ -103,7 +109,9 @@ impl<'p> Promise<'p> {
 			let promise = NewPromiseObject(cx.as_ptr(), executor.handle().into());
 
 			if !promise.is_null() {
-				Some(Promise { promise: cx.root_object(promise) })
+				Some(Promise {
+					promise: TracedHeap::from_local(cx.root_object(promise)),
+				})
 			} else {
 				None
 			}
@@ -114,7 +122,7 @@ impl<'p> Promise<'p> {
 	/// The future is run to completion on the current thread and cannot interact with an asynchronous runtime.
 	///
 	/// The [Result] of the future determines if the promise is resolved or rejected.
-	pub fn block_on_future<F, Output, Error>(cx: &'p Context, future: F) -> Option<Promise<'p>>
+	pub fn block_on_future<F, Output, Error>(cx: &Context, future: F) -> Option<Promise>
 	where
 		F: Future<Output = Result<Output, Error>> + 'static,
 		Output: for<'cx> ToValue<'cx> + 'static,
@@ -143,9 +151,9 @@ impl<'p> Promise<'p> {
 	}
 
 	/// Creates a [Promise] from an object.
-	pub fn from(object: Local<'p, *mut JSObject>) -> Option<Promise<'p>> {
+	pub fn from(object: Local<'_, *mut JSObject>) -> Option<Promise> {
 		if Promise::is_promise(&object) {
-			Some(Promise { promise: object })
+			Some(Promise { promise: TracedHeap::from_local(object) })
 		} else {
 			None
 		}
@@ -155,20 +163,20 @@ impl<'p> Promise<'p> {
 	///
 	/// ### Safety
 	/// Object must be a Promise.
-	pub unsafe fn from_unchecked(object: Local<'p, *mut JSObject>) -> Promise<'p> {
-		Promise { promise: object }
+	pub unsafe fn from_unchecked(object: Local<*mut JSObject>) -> Promise {
+		Promise { promise: TracedHeap::from_local(object) }
 	}
 
 	/// Returns the ID of the [Promise].
-	pub fn id(&self) -> u64 {
-		unsafe { GetPromiseID(self.handle().into()) }
+	pub fn id(&self, cx: &Context) -> u64 {
+		unsafe { GetPromiseID(self.root(cx).handle().into()) }
 	}
 
 	/// Returns the state of the [Promise].
 	///
 	/// The state can be `Pending`, `Fulfilled` and `Rejected`.
-	pub fn state(&self) -> PromiseState {
-		unsafe { GetPromiseState(self.handle().into()) }
+	pub fn state(&self, cx: &Context) -> PromiseState {
+		unsafe { GetPromiseState(self.root(cx).handle().into()) }
 	}
 
 	/// Returns the result of the [Promise].
@@ -177,7 +185,7 @@ impl<'p> Promise<'p> {
 	/// Currently leads to a sefault.
 	pub fn result<'cx>(&self, cx: &'cx Context) -> Value<'cx> {
 		let mut value = Value::undefined(cx);
-		unsafe { JS_GetPromiseResult(self.handle().into(), value.handle_mut().into()) }
+		unsafe { JS_GetPromiseResult(self.root(cx).handle().into(), value.handle_mut().into()) }
 		value
 	}
 
@@ -195,17 +203,24 @@ impl<'p> Promise<'p> {
 		if let Some(on_rejected) = on_rejected {
 			rejected.handle_mut().set(on_rejected.to_object(cx).handle().get());
 		}
-		unsafe { AddPromiseReactions(cx.as_ptr(), self.handle().into(), resolved.handle().into(), rejected.handle().into()) }
+		unsafe {
+			AddPromiseReactions(
+				cx.as_ptr(),
+				self.root(cx).handle().into(),
+				resolved.handle().into(),
+				rejected.handle().into(),
+			)
+		}
 	}
 
 	/// Resolves the [Promise] with the given [Value].
 	pub fn resolve(&self, cx: &Context, value: &Value) -> bool {
-		unsafe { ResolvePromise(cx.as_ptr(), self.handle().into(), value.handle().into()) }
+		unsafe { ResolvePromise(cx.as_ptr(), self.root(cx).handle().into(), value.handle().into()) }
 	}
 
 	/// Rejects the [Promise] with the given [Value].
 	pub fn reject(&self, cx: &Context, value: &Value) -> bool {
-		unsafe { RejectPromise(cx.as_ptr(), self.handle().into(), value.handle().into()) }
+		unsafe { RejectPromise(cx.as_ptr(), self.root(cx).handle().into(), value.handle().into()) }
 	}
 
 	/// Checks if a [*mut] [JSObject] is a promise.
@@ -220,15 +235,15 @@ impl<'p> Promise<'p> {
 	}
 }
 
-impl<'p> Deref for Promise<'p> {
-	type Target = Local<'p, *mut JSObject>;
+impl Deref for Promise {
+	type Target = TracedHeap<*mut JSObject>;
 
 	fn deref(&self) -> &Self::Target {
 		&self.promise
 	}
 }
 
-impl<'p> DerefMut for Promise<'p> {
+impl DerefMut for Promise {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.promise
 	}
