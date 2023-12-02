@@ -3,50 +3,53 @@ use std::ops::{Deref, DerefMut};
 use bytes::Bytes;
 use mozjs::jsapi::{
 	JSObject, ReadableStreamIsLocked, ReadableStreamIsDisturbed, ReadableStreamGetReader, ReadableStreamReaderMode, ReadableStreamReaderReleaseLock,
+	ReadableStreamDefaultReaderRead, AutoRequireNoGC,
 };
+use mozjs_sys::jsapi::{JS_IsArrayBufferViewObject, JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewData};
 
-use crate::{Local, Context, Error, ErrorKind, Object};
+use crate::{Context, Error, ErrorKind, Object, Promise, TracedHeap, PromiseFuture, ResultExc, Exception, conversions::FromValue};
 
 mod memory_backed_readable_stream;
 
-#[derive(Debug)]
-pub struct ReadableStream<'r> {
-	stream: Local<'r, *mut JSObject>,
+pub struct ReadableStream {
+	// Since streams are async by nature, they cannot be tied to the lifetime
+	// of one Context.
+	stream: TracedHeap<*mut JSObject>,
 }
 
-impl<'r> ReadableStream<'r> {
-	pub fn from_bytes(cx: &'r Context, bytes: Bytes) -> Self {
+impl ReadableStream {
+	pub fn from_bytes(cx: &Context, bytes: Bytes) -> Self {
 		Self {
 			stream: memory_backed_readable_stream::new_memory_backed(cx, bytes),
 		}
 	}
 
-	pub fn is_locked(&self, cx: &'r Context) -> bool {
+	pub fn is_locked(&self, cx: &Context) -> bool {
 		let mut locked = false;
 
 		unsafe {
-			ReadableStreamIsLocked(cx.as_ptr(), self.stream.handle().into(), &mut locked);
+			ReadableStreamIsLocked(cx.as_ptr(), self.stream.root(&cx).handle().into(), &mut locked);
 		}
 
 		locked
 	}
 
-	pub fn is_disturbed(&self, cx: &'r Context) -> bool {
+	pub fn is_disturbed(&self, cx: &Context) -> bool {
 		let mut disturbed = false;
 
 		unsafe {
-			ReadableStreamIsDisturbed(cx.as_ptr(), self.stream.handle().into(), &mut disturbed);
+			ReadableStreamIsDisturbed(cx.as_ptr(), self.stream.root(cx).handle().into(), &mut disturbed);
 		}
 
 		disturbed
 	}
 
-	pub fn to_object(&self, cx: &'r Context) -> Object<'r> {
-		Object::from(cx.root_object(self.stream.handle().get()))
+	pub fn to_object<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
+		Object::from(cx.root_object(self.stream.root(cx).handle().get()))
 	}
 
 	// Lock the stream and acquire a reader
-	pub fn into_reader(self, cx: &'r Context) -> crate::Result<ReadableStreamReader> {
+	pub fn into_reader(self, cx: &Context) -> crate::Result<ReadableStreamReader> {
 		if self.is_locked(cx) || self.is_disturbed(cx) {
 			return Err(Error::new("Stream is already locked or disturbed", ErrorKind::Normal));
 		}
@@ -54,41 +57,92 @@ impl<'r> ReadableStream<'r> {
 		let reader = unsafe {
 			cx.root_object(ReadableStreamGetReader(
 				cx.as_ptr(),
-				self.stream.handle().into(),
+				self.stream.root(cx).handle().into(),
 				ReadableStreamReaderMode::Default,
 			))
 		};
 
-		Ok(ReadableStreamReader { stream: self.stream, reader })
+		Ok(ReadableStreamReader {
+			stream: self.stream,
+			reader: TracedHeap::from_local(reader),
+		})
 	}
 }
 
-impl<'r> Deref for ReadableStream<'r> {
-	type Target = Local<'r, *mut JSObject>;
+impl Deref for ReadableStream {
+	type Target = TracedHeap<*mut JSObject>;
 
 	fn deref(&self) -> &Self::Target {
 		&self.stream
 	}
 }
 
-impl<'r> DerefMut for ReadableStream<'r> {
+impl DerefMut for ReadableStream {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.stream
 	}
 }
 
-pub struct ReadableStreamReader<'r> {
-	stream: Local<'r, *mut JSObject>,
-	reader: Local<'r, *mut JSObject>,
+pub struct ReadableStreamReader {
+	stream: TracedHeap<*mut JSObject>,
+	reader: TracedHeap<*mut JSObject>,
 }
 
-impl<'r> ReadableStreamReader<'r> {
+impl ReadableStreamReader {
 	// Release the stream lock and turn the reader back into a stream
-	pub fn into_stream(self, cx: &'r Context) -> ReadableStream {
+	pub fn into_stream(self, cx: &Context) -> ReadableStream {
 		unsafe {
-			ReadableStreamReaderReleaseLock(cx.as_ptr(), self.reader.handle().into());
+			ReadableStreamReaderReleaseLock(cx.as_ptr(), self.reader.root(cx).handle().into());
 		}
 
 		ReadableStream { stream: self.stream }
+	}
+
+	pub fn read_chunk<'cx>(&self, cx: &'cx Context) -> Promise {
+		unsafe {
+			let promise = cx.root_object(ReadableStreamDefaultReaderRead(cx.as_ptr(), self.reader.root(cx).handle().into()));
+			Promise::from(promise).expect("ReadableStreamDefaultReaderRead should return a Promise")
+		}
+	}
+
+	pub async fn read_to_end(&self, mut cx: Context) -> ResultExc<Vec<u8>> {
+		let mut result = vec![];
+
+		loop {
+			let chunk = self.read_chunk(&cx);
+			let chunk_val;
+			(cx, chunk_val) = PromiseFuture::new(cx, &chunk).await;
+			let chunk = match chunk_val {
+				Ok(v) => {
+					if !v.is_object() {
+						return Err(Exception::Error(Error::new(
+							"ReadableStreamDefaultReader.read() should return an object",
+							ErrorKind::Type,
+						)));
+					}
+					Object::from(cx.root_object(v.to_object()))
+				}
+				Err(v) => {
+					return Err(Exception::Other(v));
+				}
+			};
+
+			let done = bool::from_value(&cx, &chunk.get(&cx, "done").expect("Chunk must have a done property"), true, ())
+				.expect("chunk.done must be a boolean");
+
+			if done {
+				return Ok(result);
+			}
+
+			let obj = chunk.get(&cx, "value").expect("Chunk must have a done property").to_object(&cx);
+			let obj_ptr = (*obj).get();
+			unsafe {
+				assert!(JS_IsArrayBufferViewObject(obj_ptr));
+				let length = JS_GetArrayBufferViewByteLength(obj_ptr);
+				let mut is_shared_memory = false;
+				let data_ptr = JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+				result.extend_from_slice(std::slice::from_raw_parts(data_ptr as *const _, length));
+			}
+		}
 	}
 }

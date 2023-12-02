@@ -1,7 +1,7 @@
 use std::{ffi::c_void, cell::RefCell};
 
 use bytes::Bytes;
-use crate::{Context, Local};
+use crate::{Context, TracedHeap};
 use mozjs::{
 	jsapi::{
 		JSContext, JSObject, HandleObject, JS_GetArrayBufferViewData, AutoRequireNoGC, ReadableStreamUnderlyingSource, HandleValue,
@@ -23,7 +23,7 @@ static UNDERLYING_SOURCE_TRAPS: ReadableStreamUnderlyingSourceTraps = ReadableSt
 	finalize: Some(finalize),
 };
 
-pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> Local<'cx, *mut JSObject> {
+pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> TracedHeap<*mut JSObject> {
 	let available = bytes.len();
 
 	let source = Box::into_raw(Box::new(MemoryBackedReadableStream { bytes: RefCell::new(bytes) }));
@@ -47,7 +47,7 @@ pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> Local<'cx, *mut
 
 	unsafe { ReadableStreamClose(cx.as_ptr(), js_stream.handle().into()) };
 
-	js_stream
+	TracedHeap::from_local(js_stream)
 }
 
 struct MemoryBackedReadableStream {
