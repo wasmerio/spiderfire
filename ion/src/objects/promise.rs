@@ -12,6 +12,7 @@ use futures::executor::block_on;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
 	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject, NewPromiseObject, PromiseState, RejectPromise, ResolvePromise,
+	AddPromiseReactionsIgnoringUnhandledRejection,
 };
 use mozjs::rust::HandleObject;
 
@@ -205,6 +206,32 @@ impl Promise {
 		}
 		unsafe {
 			AddPromiseReactions(
+				cx.as_ptr(),
+				self.root(cx).handle().into(),
+				resolved.handle().into(),
+				rejected.handle().into(),
+			)
+		}
+	}
+
+	/// Adds Reactions to the [Promise] while ignoring unhandled rejections
+	///
+	/// `on_resolved` is similar to calling `.then()` on a promise.
+	///
+	/// `on_rejected` is similar to calling `.catch()` on a promise.
+	pub fn add_reactions_ignoring_unhandled_rejection(
+		&self, cx: &'_ Context, on_resolved: Option<Function<'_>>, on_rejected: Option<Function<'_>>,
+	) -> bool {
+		let mut resolved = Object::null(cx);
+		let mut rejected = Object::null(cx);
+		if let Some(on_resolved) = on_resolved {
+			resolved.handle_mut().set(on_resolved.to_object(cx).handle().get());
+		}
+		if let Some(on_rejected) = on_rejected {
+			rejected.handle_mut().set(on_rejected.to_object(cx).handle().get());
+		}
+		unsafe {
+			AddPromiseReactionsIgnoringUnhandledRejection(
 				cx.as_ptr(),
 				self.root(cx).handle().into(),
 				resolved.handle().into(),

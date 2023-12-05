@@ -15,6 +15,7 @@ pub mod fetch;
 pub mod file;
 pub mod form_data;
 pub mod microtasks;
+pub mod streams;
 pub mod timers;
 pub mod url;
 
@@ -25,6 +26,7 @@ pub fn init_globals(cx: &Context, global: &mut Object) -> bool {
 		&& file::define(cx, global)
 		&& form_data::define(cx, global)
 		&& url::define(cx, global)
+		&& streams::define(cx, global)
 		&& Iterator::init_class(cx, global).0;
 	#[cfg(feature = "fetch")]
 	{

@@ -173,6 +173,10 @@ impl<'f> Function<'f> {
 	pub unsafe fn is_function_raw(obj: *mut JSObject) -> bool {
 		unsafe { JS_ObjectIsFunction(obj) }
 	}
+
+	pub fn into_local(self) -> Local<'f, *mut JSFunction> {
+		self.function
+	}
 }
 
 impl<'f> From<Local<'f, *mut JSFunction>> for Function<'f> {
