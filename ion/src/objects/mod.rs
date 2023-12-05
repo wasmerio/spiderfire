@@ -17,7 +17,7 @@ pub use key::{OwnedKey, PropertyKey};
 pub use object::Object;
 pub use promise::Promise;
 pub use regexp::RegExp;
-pub use stream::{ReadableStream, ReadableStreamReader};
+pub use stream::{ReadableStream, ReadableStreamReader, WritableStream};
 
 use crate::Context;
 
