@@ -20,6 +20,8 @@ macro_rules! impl_heap_root {
 	};
 }
 
+/// Value stored on the heap. [Heap<T>] instances are **not**
+/// automatically traced, and must be traced in the usual way.
 pub struct Heap<T>
 where
 	T: GCMethods + Copy + 'static,
@@ -68,6 +70,19 @@ impl_heap_root! {
 	(root_symbol, *mut Symbol),
 }
 
+unsafe impl<T> Traceable for Heap<T>
+where
+	T: GCMethods + Copy + RootKind + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	unsafe fn trace(&self, trc: *mut mozjs_sys::jsapi::JSTracer) {
+		unsafe { self.heap.trace(trc) };
+	}
+}
+
+/// Value stored on the heap and traced automatically. There is
+/// no need to trace [TracedHeap<T>] instances, and thus there
+/// is no [Traceable] implementation for this type.
 pub struct TracedHeap<T>
 where
 	T: GCMethods + Copy + 'static,
