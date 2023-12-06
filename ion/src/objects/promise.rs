@@ -12,7 +12,7 @@ use futures::executor::block_on;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
 	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject, NewPromiseObject, PromiseState, RejectPromise, ResolvePromise,
-	AddPromiseReactionsIgnoringUnhandledRejection,
+	AddPromiseReactionsIgnoringUnhandledRejection, CallOriginalPromiseResolve, CallOriginalPromiseReject,
 };
 use mozjs::rust::HandleObject;
 
@@ -44,37 +44,26 @@ impl Promise {
 		let mut val = Value::undefined(cx);
 		Box::new(value).into_value(cx, &mut val);
 
-		let p = Promise::new(cx);
-		p.resolve(cx, &val);
-		p
+		Promise {
+			promise: TracedHeap::from_local(cx.root_object(unsafe { CallOriginalPromiseResolve(cx.as_ptr(), val.handle().into()) })),
+		}
 	}
 
 	pub fn new_rejected<'cx>(cx: &'cx Context, value: impl IntoValue<'cx>) -> Promise {
 		let mut val = Value::undefined(cx);
 		Box::new(value).into_value(cx, &mut val);
 
-		let p = Promise::new(cx);
-		p.reject(cx, &val);
-		p
+		Promise {
+			promise: TracedHeap::from_local(cx.root_object(unsafe { CallOriginalPromiseReject(cx.as_ptr(), val.handle().into()) })),
+		}
 	}
 
 	pub fn new_from_result<'cx>(cx: &'cx Context, value: Result<impl IntoValue<'cx>, impl IntoValue<'cx>>) -> Promise {
-		let mut val = Value::undefined(cx);
-		let p = Promise::new(cx);
-
 		match value {
-			Ok(o) => {
-				Box::new(o).into_value(cx, &mut val);
-				p.resolve(cx, &val);
-			}
+			Ok(o) => Self::new_resolved(cx, o),
 
-			Err(e) => {
-				Box::new(e).into_value(cx, &mut val);
-				p.reject(cx, &val);
-			}
+			Err(e) => Self::new_rejected(cx, e),
 		}
-
-		p
 	}
 
 	/// Creates a new [Promise] with an executor.
