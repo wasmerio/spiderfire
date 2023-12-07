@@ -15,6 +15,7 @@ use mozjs::jsapi::{
 	AddPromiseReactionsIgnoringUnhandledRejection, CallOriginalPromiseResolve, CallOriginalPromiseReject,
 };
 use mozjs::rust::HandleObject;
+use mozjs_sys::jsapi::JS_GetPendingException;
 
 use crate::conversions::IntoValue;
 use crate::{Context, Function, Local, Object, Value, TracedHeap};
@@ -36,7 +37,7 @@ impl Promise {
 	/// Creates a new [Promise] which never resolves.
 	pub fn new(cx: &Context) -> Promise {
 		Promise {
-			promise: TracedHeap::from_local(cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) })),
+			promise: TracedHeap::from_local(&cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) })),
 		}
 	}
 
@@ -45,7 +46,7 @@ impl Promise {
 		Box::new(value).into_value(cx, &mut val);
 
 		Promise {
-			promise: TracedHeap::from_local(cx.root_object(unsafe { CallOriginalPromiseResolve(cx.as_ptr(), val.handle().into()) })),
+			promise: TracedHeap::from_local(&cx.root_object(unsafe { CallOriginalPromiseResolve(cx.as_ptr(), val.handle().into()) })),
 		}
 	}
 
@@ -54,8 +55,15 @@ impl Promise {
 		Box::new(value).into_value(cx, &mut val);
 
 		Promise {
-			promise: TracedHeap::from_local(cx.root_object(unsafe { CallOriginalPromiseReject(cx.as_ptr(), val.handle().into()) })),
+			promise: TracedHeap::from_local(&cx.root_object(unsafe { CallOriginalPromiseReject(cx.as_ptr(), val.handle().into()) })),
 		}
+	}
+
+	pub fn new_rejected_with_pending_exception(cx: &Context) -> Promise {
+		let mut val = Value::undefined(cx);
+		unsafe { JS_GetPendingException(cx.as_ptr(), val.handle_mut().into()) };
+
+		Self::new_rejected(cx, val)
 	}
 
 	pub fn new_from_result<'cx>(cx: &'cx Context, value: Result<impl IntoValue<'cx>, impl IntoValue<'cx>>) -> Promise {
@@ -100,7 +108,7 @@ impl Promise {
 
 			if !promise.is_null() {
 				Some(Promise {
-					promise: TracedHeap::from_local(cx.root_object(promise)),
+					promise: TracedHeap::from_local(&cx.root_object(promise)),
 				})
 			} else {
 				None
@@ -143,7 +151,7 @@ impl Promise {
 	/// Creates a [Promise] from an object.
 	pub fn from(object: Local<'_, *mut JSObject>) -> Option<Promise> {
 		if Promise::is_promise(&object) {
-			Some(Promise { promise: TracedHeap::from_local(object) })
+			Some(Promise { promise: TracedHeap::from_local(&object) })
 		} else {
 			None
 		}
@@ -154,7 +162,7 @@ impl Promise {
 	/// ### Safety
 	/// Object must be a Promise.
 	pub unsafe fn from_unchecked(object: Local<*mut JSObject>) -> Promise {
-		Promise { promise: TracedHeap::from_local(object) }
+		Promise { promise: TracedHeap::from_local(&object) }
 	}
 
 	/// Returns the ID of the [Promise].

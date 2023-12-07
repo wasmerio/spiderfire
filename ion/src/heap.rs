@@ -27,7 +27,7 @@ where
 	T: GCMethods + Copy + 'static,
 	JSHeap<T>: Traceable,
 {
-	heap: Box<mozjs::jsapi::Heap<T>>,
+	heap: Box<JSHeap<T>>,
 }
 
 impl<T> Heap<T>
@@ -53,7 +53,7 @@ where
 	T: GCMethods + Copy + RootKind + 'static,
 	JSHeap<T>: Traceable + Default,
 {
-	pub fn from_local(local: Local<'_, T>) -> Self {
+	pub fn from_local(local: &Local<'_, T>) -> Self {
 		Self::new(local.get())
 	}
 }
@@ -70,9 +70,19 @@ impl_heap_root! {
 	(root_symbol, *mut Symbol),
 }
 
+impl<T> Clone for Heap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn clone(&self) -> Self {
+		Self::new(self.heap.get())
+	}
+}
+
 unsafe impl<T> Traceable for Heap<T>
 where
-	T: GCMethods + Copy + RootKind + 'static,
+	T: GCMethods + Copy + 'static,
 	JSHeap<T>: Traceable + Default,
 {
 	unsafe fn trace(&self, trc: *mut mozjs_sys::jsapi::JSTracer) {
@@ -116,7 +126,7 @@ where
 	T: GCMethods + Copy + RootKind + 'static,
 	JSHeap<T>: Traceable + Default,
 {
-	pub fn from_local(local: Local<'_, T>) -> Self {
+	pub fn from_local(local: &Local<'_, T>) -> Self {
 		Self::new(local.get())
 	}
 }
@@ -141,4 +151,14 @@ impl_heap_root! {
 	(root_function, *mut JSFunction),
 	(root_bigint, *mut BigInt),
 	(root_symbol, *mut Symbol),
+}
+
+impl<T> Clone for TracedHeap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn clone(&self) -> Self {
+		Self::new(self.heap.get())
+	}
 }

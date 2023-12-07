@@ -18,7 +18,7 @@ pub struct ReadableStream {
 impl ReadableStream {
 	pub fn from_local(local: Local<'_, *mut JSObject>) -> Option<Self> {
 		if Self::is_readable_stream(&local) {
-			Some(Self { stream: TracedHeap::from_local(local) })
+			Some(Self { stream: TracedHeap::from_local(&local) })
 		} else {
 			None
 		}
@@ -84,7 +84,7 @@ impl ReadableStream {
 
 		Ok(ReadableStreamReader {
 			stream: self.stream,
-			reader: TracedHeap::from_local(reader),
+			reader: TracedHeap::from_local(&reader),
 		})
 	}
 }

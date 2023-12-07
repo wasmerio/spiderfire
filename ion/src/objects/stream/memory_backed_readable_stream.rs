@@ -47,7 +47,7 @@ pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> TracedHeap<*mut
 
 	unsafe { ReadableStreamClose(cx.as_ptr(), js_stream.handle().into()) };
 
-	TracedHeap::from_local(js_stream)
+	TracedHeap::from_local(&js_stream)
 }
 
 struct MemoryBackedReadableStream {

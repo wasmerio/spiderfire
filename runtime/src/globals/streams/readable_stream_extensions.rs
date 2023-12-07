@@ -101,7 +101,7 @@ pub(super) fn define(cx: &Context, global: &mut Object) -> bool {
 		return false;
 	};
 
-	STREAM_PIPE_TO.with(move |l| l.replace(Some(TracedHeap::from_local(pipe_to_fn.into_local()))));
+	STREAM_PIPE_TO.with(move |l| l.replace(Some(TracedHeap::from_local(&pipe_to_fn))));
 
 	readable_stream_prototype.define_method(cx, "pipeThrough", pipe_through, 1, PropertyFlags::ENUMERATE);
 

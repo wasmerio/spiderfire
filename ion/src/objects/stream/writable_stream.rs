@@ -11,7 +11,7 @@ pub struct WritableStream {
 impl WritableStream {
 	pub fn from_local(local: Local<'_, *mut JSObject>) -> Option<Self> {
 		if Self::is_writable_stream(&local) {
-			Some(Self { stream: TracedHeap::from_local(local) })
+			Some(Self { stream: TracedHeap::from_local(&local) })
 		} else {
 			None
 		}
