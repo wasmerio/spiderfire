@@ -475,6 +475,8 @@ impl TransformStream {
 	}
 }
 
+const NULL_FUNCTION: *mut JSFunction = 0 as *mut JSFunction;
+
 #[js_class]
 impl TransformStream {
 	#[ion(constructor)]
@@ -514,7 +516,7 @@ impl TransformStream {
 			cx.root_object(NewWritableDefaultStreamObject(
 				cx.as_ptr(),
 				sink_obj.handle().into(),
-				HandleFunction::from_marked_location(std::ptr::null_mut()),
+				HandleFunction::from_marked_location(&NULL_FUNCTION),
 				1.0,
 				HandleObject::null(),
 			))
@@ -534,7 +536,7 @@ impl TransformStream {
 			cx.root_object(NewReadableDefaultStreamObject(
 				cx.as_ptr(),
 				source_obj.handle().into(),
-				HandleFunction::from_marked_location(std::ptr::null_mut()),
+				HandleFunction::from_marked_location(&NULL_FUNCTION),
 				1.0,
 				HandleObject::null(),
 			))
@@ -550,5 +552,15 @@ impl TransformStream {
 			readable: Heap::from_local(&readable),
 			writable: Heap::from_local(&writable),
 		})
+	}
+
+	#[ion(get)]
+	pub fn get_readable(&self) -> *mut JSObject {
+		self.readable.get()
+	}
+
+	#[ion(get)]
+	pub fn get_writable(&self) -> *mut JSObject {
+		self.writable.get()
 	}
 }

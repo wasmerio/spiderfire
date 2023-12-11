@@ -11,12 +11,14 @@ thread_local! {
 }
 
 #[js_fn]
-fn pipe_through<'cx>(cx: &'cx Context, #[ion::this] this: Object<'cx>, transformer: Object<'cx>, options: Value<'cx>) -> Result<Object<'cx>> {
-	if !ReadableStream::is_readable_stream(&this) {
+fn pipe_through<'cx>(
+	cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer: Object<'cx>, options: Option<Value<'cx>>,
+) -> Result<Object<'cx>> {
+	if !ReadableStream::is_readable_stream(this) {
 		return Err(Error::new("pipeThrough must be called on a ReadableStream", ErrorKind::Type));
 	}
 
-	if ReadableStream::static_is_locked(cx, &this) {
+	if ReadableStream::static_is_locked(cx, this) {
 		return Err(Error::new("pipeThrough called on a stream that's already locked", ErrorKind::Normal));
 	}
 
@@ -59,7 +61,7 @@ fn pipe_through<'cx>(cx: &'cx Context, #[ion::this] this: Object<'cx>, transform
 			.root(cx)
 	}));
 
-	let Ok(rval) = pipe_to_fn.call(cx, &this, &[writable_end.as_value(cx), options]) else {
+	let Ok(rval) = pipe_to_fn.call(cx, this, &[writable_end.as_value(cx), options.unwrap_or_else(|| Value::undefined(cx))]) else {
 		return Err(Error::none());
 	};
 
