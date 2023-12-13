@@ -24,6 +24,12 @@ pub struct TextDecodeOptions {
 	stream: bool,
 }
 
+impl TextDecodeOptions {
+	pub fn new(stream: bool) -> Self {
+		Self { stream }
+	}
+}
+
 #[js_class]
 pub struct TextDecoder {
 	reflector: Reflector,

@@ -12,11 +12,12 @@ use std::ptr;
 use mozjs::glue::JS_GetReservedSlot;
 use mozjs::jsapi::{
 	Handle, JS_GetConstructor, JS_InitClass, JS_InstanceOf, JS_NewObjectWithGivenProto, JS_SetReservedSlot, JSFunction, JSFunctionSpec, JSObject,
-	JSPropertySpec,
+	JSPropertySpec, Construct, Construct1, HandleValueArray,
 };
 use mozjs::jsval::{PrivateValue, UndefinedValue};
+use mozjs_sys::jsapi::JS_GetFunctionObject;
 
-use crate::{Arguments, Context, Function, Local, Object};
+use crate::{Arguments, Context, Function, Local, Object, Value, Exception};
 pub use crate::class::native::{MAX_PROTO_CHAIN_LENGTH, NativeClass, PrototypeChain, TypeIdWrapper};
 pub use crate::class::reflect::{Castable, DerivedFrom, NativeObject, Reflector};
 use crate::functions::NativeFunction;
@@ -31,6 +32,11 @@ pub struct ClassInfo {
 	class: &'static NativeClass,
 	constructor: *mut JSFunction,
 	prototype: *mut JSObject,
+}
+
+fn class_info<'cx>(cx: &'cx Context, type_id: &TypeId) -> &'cx ClassInfo {
+	let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
+	infos.get(type_id).expect("Uninitialised Class")
 }
 
 pub trait ClassDefinition: NativeObject {
@@ -109,10 +115,45 @@ pub trait ClassDefinition: NativeObject {
 		}
 	}
 
-	fn constructor_fn(cx: &Context) -> *mut JSFunction {
-		let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
-		let info = infos.get(&TypeId::of::<Self>()).expect("Uninitialised Class");
-		info.constructor
+	fn class_info(cx: &Context) -> &ClassInfo {
+		class_info(cx, &TypeId::of::<Self>())
+	}
+
+	fn construct<'cx>(cx: &'cx Context, args: &[Value]) -> crate::ResultExc<Object<'cx>> {
+		unsafe {
+			let info = Self::class_info(cx);
+			let ctor = info.constructor;
+			let ctor_object = crate::Value::object(cx, &cx.root_object(JS_GetFunctionObject(ctor)).into());
+
+			let new_target = info.class.prototype_chain[1].map(|c| {
+				let class = class_info(cx, &c.type_id());
+				Object::from(cx.root_object(JS_GetFunctionObject(class.constructor)))
+			});
+
+			let args: Vec<_> = args.iter().map(|a| a.get()).collect();
+
+			let mut res = Object::null(cx);
+			let construct_result = match new_target {
+				Some(t) => Construct(
+					cx.as_ptr(),
+					ctor_object.handle().into(),
+					t.handle().into(),
+					&HandleValueArray::from_rooted_slice(args.as_slice()),
+					res.handle_mut().into(),
+				),
+				None => Construct1(
+					cx.as_ptr(),
+					ctor_object.handle().into(),
+					&HandleValueArray::from_rooted_slice(args.as_slice()),
+					res.handle_mut().into(),
+				),
+			};
+			if construct_result {
+				Ok(res)
+			} else {
+				Err(Exception::new(cx).expect("There should be a pending exception after a failure"))
+			}
+		}
 	}
 
 	fn new_raw_object(cx: &Context) -> *mut JSObject {
