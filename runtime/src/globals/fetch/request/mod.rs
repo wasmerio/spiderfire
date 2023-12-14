@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use http::{HeaderMap, HeaderValue};
 use http::header::CONTENT_TYPE;
-use hyper::{Body, Method, Uri};
+use hyper::Method;
 use mozjs::jsapi::{Heap, JSObject};
 use url::Url;
 
@@ -36,7 +36,7 @@ pub struct Request {
 	reflector: Reflector,
 
 	#[ion(no_trace)]
-	pub(crate) request: hyper::Request<Body>,
+	pub(crate) method: Method,
 	pub(crate) headers: Box<Heap<*mut JSObject>>,
 	pub(crate) body: FetchBody,
 	pub(crate) body_used: bool,
@@ -73,19 +73,17 @@ impl Request {
 		let mut request = match info {
 			RequestInfo::Request(request) => request.clone(),
 			RequestInfo::String(url) => {
-				let uri = Uri::from_str(&url)?;
 				let url = Url::from_str(&url)?;
 				if url.username() != "" || url.password().is_some() {
 					return Err(Error::new("Received URL with embedded credentials", ErrorKind::Type));
 				}
-				let request = hyper::Request::builder().uri(uri).body(Body::empty())?;
 
 				fallback_cors = true;
 
 				Request {
 					reflector: Reflector::default(),
 
-					request,
+					method: Method::GET,
 					headers: Box::default(),
 					body: FetchBody::default(),
 					body_used: false,
@@ -169,7 +167,7 @@ impl Request {
 				if method == Method::CONNECT || method == Method::TRACE {
 					return Err(Error::new("Received invalid request method", ErrorKind::Type));
 				}
-				*request.request.method_mut() = method;
+				request.method = method;
 			}
 
 			headers = init.headers;
@@ -184,7 +182,7 @@ impl Request {
 		}
 
 		if request.mode == RequestMode::NoCors {
-			let method = request.request.method();
+			let method = &request.method;
 			if method != Method::GET && method != Method::HEAD && method != Method::POST {
 				return Err(Error::new("Invalid request method", ErrorKind::Type));
 			}
@@ -222,12 +220,12 @@ impl Request {
 
 	#[ion(get)]
 	pub fn get_method(&self) -> String {
-		self.request.method().to_string()
+		self.method.to_string()
 	}
 
 	#[ion(get)]
 	pub fn get_url(&self) -> String {
-		self.request.uri().to_string()
+		self.url.to_string()
 	}
 
 	#[ion(get)]
@@ -303,17 +301,14 @@ impl Request {
 
 impl Clone for Request {
 	fn clone(&self) -> Request {
-		let method = self.request.method().clone();
-		let uri = self.request.uri().clone();
+		let method = self.method.clone();
 
-		let request = hyper::Request::builder().method(method).uri(uri);
-		let request = request.body(Body::empty()).unwrap();
 		let url = self.locations.last().unwrap().clone();
 
 		Request {
 			reflector: Reflector::default(),
 
-			request,
+			method,
 			headers: Box::default(),
 			body: self.body.clone(),
 			body_used: self.body_used,

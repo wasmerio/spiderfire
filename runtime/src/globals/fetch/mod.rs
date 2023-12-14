@@ -21,14 +21,13 @@ use http::header::{
 	IF_RANGE, IF_UNMODIFIED_SINCE, LOCATION, PRAGMA, RANGE, REFERER, REFERRER_POLICY, USER_AGENT,
 };
 use mozjs::jsapi::JSObject;
-use mozjs::rust::IntoHandle;
 use sys_locale::get_locales;
 use tokio::fs::read;
 use url::Url;
 
 pub use client::{default_client, GLOBAL_CLIENT};
 pub use header::Headers;
-use ion::{ClassDefinition, Context, Error, ErrorKind, Exception, Local, Object, Promise, ResultExc};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Exception, Local, Object, Promise, ResultExc, TracedHeap};
 use ion::class::Reflector;
 use ion::conversions::ToValue;
 use ion::flags::PropertyFlags;
@@ -268,8 +267,8 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 	}
 
 	if !opaque_redirect
-		&& (request.request.method() == Method::HEAD
-		|| request.request.method() == Method::CONNECT
+		&& (request.method == Method::HEAD
+		|| request.method == Method::CONNECT
 		|| response.status == Some(StatusCode::SWITCHING_PROTOCOLS)
 		|| response.status.as_ref().map(StatusCode::as_u16) == Some(103) // Early Hints
 		|| response.status == Some(StatusCode::NO_CONTENT)
@@ -425,15 +424,18 @@ async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: 
 	let mut request = req.clone();
 	let mut headers = Object::from(unsafe { Local::from_heap(&req.headers) });
 	let headers = Headers::get_mut_private(&mut headers);
-	*request.request.headers_mut() = headers.headers.clone();
+
+	let mut request_builder = hyper::Request::builder().method(&request.method).uri(request.url.to_string());
+	let Some(request_headers) = request_builder.headers_mut() else {
+		return network_error();
+	};
+	*request_headers = headers.headers.clone();
+	let headers = request_headers;
 
 	let length = request.body.len().or_else(|| {
-		(request.body.is_none()
-			&& (request.request.method() == Method::POST || request.request.method() == Method::PUT))
-			.then_some(0)
+		(request.body.is_none() && (request.method == Method::POST || request.method == Method::PUT)).then_some(0)
 	});
 
-	let headers = request.request.headers_mut();
 	if let Some(length) = length {
 		headers.append(CONTENT_LENGTH, HeaderValue::from_str(&length.to_string()).unwrap());
 	}
@@ -494,7 +496,11 @@ async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: 
 
 	let range_requested = headers.contains_key(RANGE);
 
-	let (cx, response) = cx.await_native(client.request(request.request)).await;
+	let Ok(hyper_request) = request_builder.body(request.body.to_http_body()) else {
+		return network_error();
+	};
+
+	let (cx, response) = cx.await_native(client.request(hyper_request)).await;
 	let mut response = match response {
 		Ok(response) => {
 			let mut response = Response::new(response, req.url.clone());
@@ -566,11 +572,11 @@ async fn http_redirect_fetch(
 	}
 
 	if ((response.status == Some(StatusCode::MOVED_PERMANENTLY) || response.status == Some(StatusCode::FOUND))
-		&& request.request.method() == Method::POST)
+		&& request.method == Method::POST)
 		|| (response.status == Some(StatusCode::SEE_OTHER)
-			&& (request.request.method() != Method::GET || request.request.method() != Method::HEAD))
+			&& (request.method != Method::GET || request.method != Method::HEAD))
 	{
-		*request.request.method_mut() = Method::GET;
+		request.method = Method::GET;
 		request.body = FetchBody::default();
 		let mut headers = Object::from(unsafe { Local::from_heap(&request.headers) });
 		let headers = Headers::get_mut_private(&mut headers);
