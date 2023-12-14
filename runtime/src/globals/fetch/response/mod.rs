@@ -4,17 +4,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::Bytes;
 use http::{HeaderMap, HeaderValue};
 use http::header::CONTENT_TYPE;
 use hyper::{Body, StatusCode};
-use hyper::body::HttpBody;
 use hyper::ext::ReasonPhrase;
 use ion::string::byte::ByteString;
-use mozjs::jsapi::{Heap, JSObject};
+use mozjs::jsapi::JSObject;
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap};
 use ion::class::{NativeObject, Reflector};
 use ion::typedarray::ArrayBuffer;
 pub use options::*;
@@ -25,17 +24,16 @@ use crate::globals::fetch::Headers;
 use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
 
+use super::FetchBodyInner;
+
 mod options;
 
 #[js_class]
 pub struct Response {
 	reflector: Reflector,
 
-	#[ion(no_trace)]
-	pub(crate) response: Option<hyper::Response<Body>>,
-	pub(crate) headers: Box<Heap<*mut JSObject>>,
+	pub(crate) headers: Heap<*mut JSObject>,
 	pub(crate) body: Option<FetchBody>,
-	pub(crate) body_used: bool,
 
 	pub(crate) kind: ResponseKind,
 	#[ion(no_trace)]
@@ -50,7 +48,7 @@ pub struct Response {
 }
 
 impl Response {
-	pub fn new(response: hyper::Response<Body>, url: Url) -> Response {
+	pub async fn from_hyper_response(cx: &Context, mut response: hyper::Response<Body>, url: Url) -> Result<Response> {
 		let status = response.status();
 		let status_text = if let Some(reason) = response.extensions().get::<ReasonPhrase>() {
 			Some(String::from_utf8(reason.as_bytes().to_vec()).unwrap())
@@ -58,13 +56,24 @@ impl Response {
 			status.canonical_reason().map(String::from)
 		};
 
-		Response {
+		let headers = Headers {
+			reflector: Reflector::default(),
+			headers: std::mem::take(response.headers_mut()),
+			kind: HeadersKind::Immutable,
+		};
+
+		// TODO: support hyper's Body directly, useful for streaming
+		let body = response.into_body();
+		let bytes = hyper::body::to_bytes(body).await?;
+
+		Ok(Response {
 			reflector: Reflector::default(),
 
-			response: Some(response),
-			headers: Box::default(),
-			body: None,
-			body_used: false,
+			headers: Heap::new(Headers::new_object(&cx, Box::new(headers))),
+			body: Some(FetchBody {
+				body: FetchBodyInner::Bytes(bytes),
+				..Default::default()
+			}),
 
 			kind: ResponseKind::default(),
 			url: Some(url),
@@ -74,18 +83,18 @@ impl Response {
 			status_text,
 
 			range_requested: false,
-		}
+		})
 	}
 
 	pub fn new_from_bytes(bytes: Bytes, url: Url) -> Response {
-		let response = hyper::Response::builder().body(Body::from(bytes)).unwrap();
 		Response {
 			reflector: Reflector::default(),
 
-			response: Some(response),
-			headers: Box::default(),
-			body: None,
-			body_used: false,
+			headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
+			body: Some(FetchBody {
+				body: FetchBodyInner::Bytes(bytes),
+				..Default::default()
+			}),
 
 			kind: ResponseKind::Basic,
 			url: Some(url),
@@ -103,50 +112,18 @@ impl Response {
 		Headers::get_private(&obj)
 	}
 
-	pub async fn read_to_bytes(&mut self) -> Result<Vec<u8>> {
-		if self.body_used {
-			return Err(Error::new("Response body has already been used.", None));
-		}
-		self.body_used = true;
+	pub fn take_body_bytes(&mut self) -> Result<Bytes> {
+		let body = self.body.take();
 
-		if let Some(ref body) = self.body {
-			return Ok(body.to_bytes().map(|b| b.to_vec()).unwrap_or_default());
-		}
-
-		match &mut self.response {
-			None => Err(Error::new("Response is a network error and cannot be read.", None)),
-			Some(response) => {
-				let body = response.body_mut();
-
-				let first = if let Some(buf) = body.data().await {
-					buf?
-				} else {
-					return Ok(Vec::new());
-				};
-
-				let second = if let Some(buf) = body.data().await {
-					buf?
-				} else {
-					return Ok(first.to_vec());
-				};
-
-				let cap = first.remaining() + second.remaining() + body.size_hint().lower() as usize;
-				let mut vec = Vec::with_capacity(cap);
-				vec.put(first);
-				vec.put(second);
-
-				while let Some(buf) = body.data().await {
-					vec.put(buf?);
-				}
-
-				Ok(vec)
-			}
+		match body {
+			None => Err(Error::new("Response body has already been used.", None)),
+			Some(body) => Ok(body.into_bytes().unwrap_or_default()),
 		}
 	}
 
-	async fn read_to_text(&mut self) -> Result<String> {
-		let bytes = self.read_to_bytes().await?;
-		String::from_utf8(bytes).map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), None))
+	pub fn take_body_text(&mut self) -> Result<String> {
+		let bytes = self.take_body_bytes()?;
+		String::from_utf8(bytes.into()).map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), None))
 	}
 }
 
@@ -156,14 +133,14 @@ impl Response {
 	pub fn constructor(cx: &Context, body: Option<FetchBody>, init: Option<ResponseInit>) -> Result<Response> {
 		let init = init.unwrap_or_default();
 
-		let response = hyper::Response::builder().status(init.status).body(Body::empty())?;
 		let mut response = Response {
 			reflector: Reflector::default(),
 
-			response: Some(response),
-			headers: Box::default(),
-			body: None,
-			body_used: false,
+			headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
+			body: Some(FetchBody {
+				body: FetchBodyInner::None,
+				..Default::default()
+			}),
 
 			kind: ResponseKind::default(),
 			url: None,
@@ -236,37 +213,26 @@ impl Response {
 		self.headers.get()
 	}
 
-	// TODO: get_body must be a sync call
-	#[ion(get)]
-	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = TracedHeap::new(self.reflector().get());
-		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(this.to_local());
-				let response = Response::get_mut_private(&mut response);
-				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
-				cx.unroot_persistent_object(this.get());
-				let stream = ion::ReadableStream::from_bytes(&cx, bytes?.into());
-				Ok((*stream).get())
-			})
-		}
+	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Result<*mut JSObject> {
+		let bytes = self.take_body_bytes()?;
+		let stream = ion::ReadableStream::from_bytes(&cx, bytes.into());
+		Ok((*stream).get())
 	}
 
-	#[ion(get)]
+	#[ion(get, name = "bodyUsed")]
 	pub fn get_body_used(&self) -> bool {
-		self.body_used
+		self.body.is_none()
 	}
 
 	#[ion(name = "arrayBuffer")]
 	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+			future_to_promise::<_, _, _, Error>(cx, move |_| async move {
 				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
-				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
-				cx.unroot_persistent_object(this.get());
-				Ok(ArrayBuffer::from(bytes?))
+				let bytes = response.take_body_bytes()?;
+				Ok(ArrayBuffer::from(Vec::from(bytes)))
 			})
 		}
 	}
@@ -274,11 +240,10 @@ impl Response {
 	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+			future_to_promise::<_, _, _, Error>(cx, move |_| async move {
 				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
-				let result = response.read_to_text().await;
-				cx.unroot_persistent_object(this.get());
+				let result = response.take_body_text();
 				result
 			})
 		}
@@ -290,9 +255,7 @@ impl Response {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
-				let (cx, text) = cx.await_native(response.read_to_text()).await;
-				cx.unroot_persistent_object(this.get());
-				let text = text?;
+				let text = response.take_body_text()?;
 
 				let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
 					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
@@ -315,9 +278,7 @@ impl Response {
 				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
 
-				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
-				cx.unroot_persistent_object(this.get());
-				let bytes = bytes?;
+				let bytes = response.take_body_bytes()?;
 
 				let headers = response.get_headers_object(&cx);
 				let content_type_string = ByteString::<_>::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
@@ -358,10 +319,11 @@ pub fn network_error() -> Response {
 	Response {
 		reflector: Reflector::default(),
 
-		response: None,
-		headers: Box::default(),
-		body: None,
-		body_used: false,
+		headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
+		body: Some(FetchBody {
+			body: FetchBodyInner::None,
+			..Default::default()
+		}),
 
 		kind: ResponseKind::Error,
 		url: None,

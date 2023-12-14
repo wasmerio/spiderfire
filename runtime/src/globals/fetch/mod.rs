@@ -5,7 +5,6 @@
  */
 
 use std::iter::once;
-use std::mem::take;
 use std::str;
 use std::str::FromStr;
 
@@ -254,7 +253,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 
 	response.url.get_or_insert(request.url.clone());
 
-	let mut headers = Object::from(unsafe { Local::from_heap(&response.headers) });
+	let mut headers = Object::from(response.headers.to_local());
 	let headers = Headers::get_mut_private(&mut headers);
 
 	if !opaque_redirect
@@ -266,6 +265,9 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 		let url = response.url.take().unwrap();
 		response = network_error();
 		response.url = Some(url);
+
+		// TODO: do we need to keep constructing this network_error response further?
+		return Ok(response);
 	}
 
 	if !opaque_redirect
@@ -510,19 +512,9 @@ async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: 
 		return Ok(network_error());
 	};
 
-	let (cx, response) = cx.await_native(client.request(hyper_request)).await;
-	let response = response?;
-	let mut response = {
-		let mut response = Response::new(response, req.url.clone());
-
-		let headers = Headers {
-			reflector: Reflector::default(),
-			headers: take(response.response.as_mut().unwrap().headers_mut()),
-			kind: HeadersKind::Immutable,
-		};
-		response.headers.set(Headers::new_object(&cx, Box::new(headers)));
-		response
-	};
+	let (cx, hyper_response) = cx.await_native(client.request(hyper_request)).await;
+	let hyper_response = hyper_response?;
+	let mut response = Response::from_hyper_response(&cx, hyper_response, req.url.clone()).await?;
 
 	response.range_requested = range_requested;
 
@@ -540,7 +532,7 @@ async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: 
 async fn http_redirect_fetch(
 	cx: Context, request: &mut Request, response: Response, client: Client, taint: ResponseTaint, redirections: u8,
 ) -> Result<Response> {
-	let headers = Object::from(unsafe { Local::from_heap(&response.headers) });
+	let headers = Object::from(response.headers.to_local());
 	let headers = Headers::get_private(&headers);
 	let mut location = headers.headers.get_all(LOCATION).into_iter();
 	let location = match location.size_hint().1 {

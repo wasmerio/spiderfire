@@ -103,7 +103,6 @@ impl FileReader {
 				let reader = FileReader::get_private(&reader);
 				let array_buffer = ArrayBuffer::from(bytes.to_vec());
 				reader.result.set(array_buffer.as_value(&cx).get());
-				cx.unroot_persistent_object(this.get());
 				Ok::<_, ()>(())
 			})
 		};
@@ -123,7 +122,6 @@ impl FileReader {
 				let reader = FileReader::get_private(&reader);
 				let byte_string = ByteString::<Latin1>::from_unchecked(bytes.to_vec());
 				reader.result.set(byte_string.as_value(&cx).get());
-				cx.unroot_persistent_object(this.get());
 				Ok::<_, ()>(())
 			})
 		};
@@ -146,7 +144,6 @@ impl FileReader {
 				let reader = FileReader::get_private(&reader);
 				let str = encoding.decode_without_bom_handling(&bytes).0;
 				reader.result.set(str.as_value(&cx).get());
-				cx.unroot_persistent_object(this.get());
 				Ok::<_, ()>(())
 			})
 		};
@@ -172,7 +169,6 @@ impl FileReader {
 				};
 
 				reader.result.set(data_url.as_value(&cx).get());
-				cx.unroot_persistent_object(this.get());
 				Ok::<_, ()>(())
 			})
 		};
