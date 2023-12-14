@@ -8,16 +8,72 @@ use colored::Color;
 
 use crate::flags::IteratorFlags;
 
+/// Configuration for the colours used when formatting values as specific types.
+#[derive(Clone, Copy, Debug)]
+pub struct ColourConfig {
+	pub boolean: Color,
+	pub number: Color,
+	pub string: Color,
+	pub bigint: Color,
+	pub symbol: Color,
+	pub null: Color,
+	pub undefined: Color,
+	pub array: Color,
+	pub object: Color,
+	pub function: Color,
+	pub date: Color,
+	pub promise: Color,
+	pub regexp: Color,
+}
+
+impl Default for ColourConfig {
+	fn default() -> Self {
+		ColourConfig {
+			boolean: Color::Cyan,
+			number: Color::Blue,
+			string: Color::Green,
+			bigint: Color::Blue,
+			symbol: Color::Magenta,
+			null: Color::TrueColor { r: 118, g: 118, b: 118 },
+			undefined: Color::TrueColor { r: 118, g: 118, b: 118 },
+			array: Color::White,
+			object: Color::White,
+			function: Color::White,
+			date: Color::White,
+			promise: Color::Yellow,
+			regexp: Color::Green,
+		}
+	}
+}
+
+impl ColourConfig {
+	/// Returns [ColourConfig] where all formatted strings are white.
+	pub fn white() -> ColourConfig {
+		ColourConfig {
+			boolean: Color::White,
+			number: Color::White,
+			string: Color::White,
+			bigint: Color::White,
+			symbol: Color::White,
+			null: Color::White,
+			undefined: Color::White,
+			array: Color::White,
+			object: Color::White,
+			function: Color::White,
+			date: Color::White,
+			promise: Color::White,
+			regexp: Color::White,
+		}
+	}
+}
+
 /// Represents configuration for formatting
-#[derive(Clone, Copy, Debug, Derivative)]
-#[derivative(Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Config {
 	pub colours: ColourConfig,
-	#[derivative(Default(value = "IteratorFlags::empty()"))]
 	pub iteration: IteratorFlags,
 	pub depth: u16,
 	pub indentation: u16,
-	#[derivative(Default(value = "true"))]
 	pub multiline: bool,
 	pub quoted: bool,
 }
@@ -49,58 +105,15 @@ impl Config {
 	}
 }
 
-/// Configuration for the colours used when formatting values as specific types.
-#[derive(Clone, Copy, Debug)]
-pub struct ColourConfig {
-	pub boolean: Color,
-	pub number: Color,
-	pub string: Color,
-	pub bigint: Color,
-	pub symbol: Color,
-	pub null: Color,
-	pub undefined: Color,
-	pub array: Color,
-	pub object: Color,
-	pub date: Color,
-	pub promise: Color,
-	pub regexp: Color,
-}
-
-impl Default for ColourConfig {
-	fn default() -> Self {
-		ColourConfig {
-			boolean: Color::Cyan,
-			number: Color::Blue,
-			string: Color::Green,
-			bigint: Color::Blue,
-			symbol: Color::Magenta,
-			null: Color::TrueColor { r: 118, g: 118, b: 118 },
-			undefined: Color::TrueColor { r: 118, g: 118, b: 118 },
-			array: Color::White,
-			object: Color::White,
-			date: Color::White,
-			promise: Color::Yellow,
-			regexp: Color::Green,
-		}
-	}
-}
-
-impl ColourConfig {
-	/// Returns [ColourConfig] where all formatted strings are white.
-	pub fn white() -> ColourConfig {
-		ColourConfig {
-			boolean: Color::White,
-			number: Color::White,
-			string: Color::White,
-			bigint: Color::White,
-			symbol: Color::White,
-			null: Color::White,
-			undefined: Color::White,
-			array: Color::White,
-			object: Color::White,
-			date: Color::White,
-			promise: Color::White,
-			regexp: Color::White,
+impl Default for Config {
+	fn default() -> Config {
+		Config {
+			colours: ColourConfig::default(),
+			iteration: IteratorFlags::default(),
+			depth: 0,
+			indentation: 0,
+			multiline: true,
+			quoted: false,
 		}
 	}
 }

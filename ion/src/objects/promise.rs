@@ -11,8 +11,9 @@ use std::ops::{Deref, DerefMut};
 use futures::executor::block_on;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
-	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject, NewPromiseObject, PromiseState, RejectPromise, ResolvePromise,
-	AddPromiseReactionsIgnoringUnhandledRejection, CallOriginalPromiseResolve, CallOriginalPromiseReject,
+	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject, NewPromiseObject, PromiseState,
+	RejectPromise, ResolvePromise, AddPromiseReactionsIgnoringUnhandledRejection, CallOriginalPromiseResolve,
+	CallOriginalPromiseReject,
 };
 use mozjs::rust::HandleObject;
 use mozjs_sys::jsapi::JS_GetPendingException;
@@ -37,7 +38,9 @@ impl Promise {
 	/// Creates a new [Promise] which never resolves.
 	pub fn new(cx: &Context) -> Promise {
 		Promise {
-			promise: TracedHeap::from_local(&cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) })),
+			promise: TracedHeap::from_local(
+				&cx.root_object(unsafe { NewPromiseObject(cx.as_ptr(), HandleObject::null().into()) }),
+			),
 		}
 	}
 
@@ -46,7 +49,9 @@ impl Promise {
 		Box::new(value).into_value(cx, &mut val);
 
 		Promise {
-			promise: TracedHeap::from_local(&cx.root_object(unsafe { CallOriginalPromiseResolve(cx.as_ptr(), val.handle().into()) })),
+			promise: TracedHeap::from_local(
+				&cx.root_object(unsafe { CallOriginalPromiseResolve(cx.as_ptr(), val.handle().into()) }),
+			),
 		}
 	}
 
@@ -55,7 +60,9 @@ impl Promise {
 		Box::new(value).into_value(cx, &mut val);
 
 		Promise {
-			promise: TracedHeap::from_local(&cx.root_object(unsafe { CallOriginalPromiseReject(cx.as_ptr(), val.handle().into()) })),
+			promise: TracedHeap::from_local(
+				&cx.root_object(unsafe { CallOriginalPromiseReject(cx.as_ptr(), val.handle().into()) }),
+			),
 		}
 	}
 
@@ -192,7 +199,9 @@ impl Promise {
 	/// `on_resolved` is similar to calling `.then()` on a promise.
 	///
 	/// `on_rejected` is similar to calling `.catch()` on a promise.
-	pub fn add_reactions(&self, cx: &'_ Context, on_resolved: Option<Function<'_>>, on_rejected: Option<Function<'_>>) -> bool {
+	pub fn add_reactions(
+		&self, cx: &'_ Context, on_resolved: Option<Function<'_>>, on_rejected: Option<Function<'_>>,
+	) -> bool {
 		let mut resolved = Object::null(cx);
 		let mut rejected = Object::null(cx);
 		if let Some(on_resolved) = on_resolved {

@@ -38,7 +38,9 @@ impl EventLoop {
 		poll_fn(|wcx| self.poll_event_loop(cx, wcx, &mut complete)).await
 	}
 
-	fn poll_event_loop(&mut self, cx: &Context, wcx: &mut task::Context, complete: &mut bool) -> Poll<Result<(), Option<ErrorReport>>> {
+	fn poll_event_loop(
+		&mut self, cx: &Context, wcx: &mut task::Context, complete: &mut bool,
+	) -> Poll<Result<(), Option<ErrorReport>>> {
 		if let Some(futures) = &mut self.futures {
 			if !futures.is_empty() {
 				futures.run_futures(cx, wcx)?;
@@ -60,7 +62,10 @@ impl EventLoop {
 		while let Some(promise) = self.unhandled_rejections.pop_front() {
 			let promise = Promise::from(unsafe { Local::from_heap(&promise) }).unwrap();
 			let result = promise.result(cx);
-			eprintln!("Unhandled Promise Rejection: {}", format_value(cx, Config::default(), &result));
+			eprintln!(
+				"Unhandled Promise Rejection: {}",
+				format_value(cx, Config::default(), &result)
+			);
 		}
 
 		let empty = self.is_empty();
@@ -85,7 +90,7 @@ pub(crate) unsafe extern "C" fn promise_rejection_tracker_callback(
 ) {
 	let cx = unsafe { &Context::new_unchecked(cx) };
 	let promise = Promise::from(unsafe { Local::from_raw_handle(promise) }).unwrap();
-	let unhandled = unsafe { &mut (*cx.get_private().as_ptr()).event_loop.unhandled_rejections };
+	let unhandled = unsafe { &mut cx.get_private().event_loop.unhandled_rejections };
 	match state {
 		PromiseRejectionHandlingState::Unhandled => unhandled.push_back(Heap::boxed(promise.get())),
 		PromiseRejectionHandlingState::Handled => {

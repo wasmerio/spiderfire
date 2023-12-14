@@ -4,12 +4,13 @@ use bytes::Bytes;
 use crate::{Context, TracedHeap};
 use mozjs::{
 	jsapi::{
-		JSContext, JSObject, HandleObject, JS_GetArrayBufferViewData, AutoRequireNoGC, ReadableStreamUnderlyingSource, HandleValue,
-		ReadableStreamUpdateDataAvailableFromSource, NewReadableExternalSourceStreamObject, ReadableStreamClose,
+		JSContext, JSObject, HandleObject, JS_GetArrayBufferViewData, AutoRequireNoGC, ReadableStreamUnderlyingSource,
+		HandleValue, ReadableStreamUpdateDataAvailableFromSource, NewReadableExternalSourceStreamObject,
+		ReadableStreamClose,
 	},
 	glue::{
-		DeleteReadableStreamUnderlyingSource, ReadableStreamUnderlyingSourceTraps, CreateReadableStreamUnderlyingSource,
-		ReadableStreamUnderlyingSourceGetSource,
+		DeleteReadableStreamUnderlyingSource, ReadableStreamUnderlyingSourceTraps,
+		CreateReadableStreamUnderlyingSource, ReadableStreamUnderlyingSourceGetSource,
 	},
 	jsval::JSVal,
 };
@@ -54,7 +55,9 @@ struct MemoryBackedReadableStream {
 	bytes: RefCell<Bytes>,
 }
 
-unsafe extern "C" fn request_data(_source: *const c_void, _cx: *mut JSContext, _stream: HandleObject, _desired_size: usize) {
+unsafe extern "C" fn request_data(
+	_source: *const c_void, _cx: *mut JSContext, _stream: HandleObject, _desired_size: usize,
+) {
 	// Note: this is the place to pull more data by querying sources.
 	// Once we have more data, we mush call ReadableStreamUpdateDataAvailableFromSource
 	// to signal the availability of more bytes.
@@ -62,7 +65,8 @@ unsafe extern "C" fn request_data(_source: *const c_void, _cx: *mut JSContext, _
 
 #[allow(unsafe_code)]
 unsafe extern "C" fn write_into_read_request_buffer(
-	source: *const c_void, _cx: *mut JSContext, _stream: HandleObject, chunk: HandleObject, length: usize, bytes_written: *mut usize,
+	source: *const c_void, _cx: *mut JSContext, _stream: HandleObject, chunk: HandleObject, length: usize,
+	bytes_written: *mut usize,
 ) {
 	unsafe {
 		let source = &*(source as *const MemoryBackedReadableStream);
@@ -78,7 +82,10 @@ unsafe extern "C" fn write_into_read_request_buffer(
 }
 
 #[allow(unsafe_code)]
-unsafe extern "C" fn cancel(_source: *const c_void, _cx: *mut JSContext, _stream: HandleObject, _reason: HandleValue, _resolve_to: *mut JSVal) {}
+unsafe extern "C" fn cancel(
+	_source: *const c_void, _cx: *mut JSContext, _stream: HandleObject, _reason: HandleValue, _resolve_to: *mut JSVal,
+) {
+}
 
 #[allow(unsafe_code)]
 unsafe extern "C" fn close(_source: *const c_void, _cx: *mut JSContext, _stream: HandleObject) {}

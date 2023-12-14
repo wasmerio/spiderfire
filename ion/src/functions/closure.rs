@@ -10,7 +10,8 @@ use std::ptr;
 
 use mozjs::glue::JS_GetReservedSlot;
 use mozjs::jsapi::{
-	GCContext, GetFunctionNativeReserved, JS_NewObject, JS_SetReservedSlot, JSClass, JSCLASS_BACKGROUND_FINALIZE, JSClassOps, JSContext, JSObject,
+	GCContext, GetFunctionNativeReserved, JS_NewObject, JS_SetReservedSlot, JSClass, JSCLASS_BACKGROUND_FINALIZE,
+	JSClassOps, JSContext, JSObject,
 };
 use mozjs::jsval::{JSVal, PrivateValue, UndefinedValue};
 
@@ -120,7 +121,9 @@ unsafe extern "C" fn finalise_closure(_: *mut GCContext, object: *mut JSObject) 
 
 		match once_status {
 			ONCE_STATUS_NOT_ONCE => drop(Box::from_raw(closure_value.to_private() as *mut Box<Closure>)),
-			ONCE_STATUS_ONCE => drop(Box::from_raw(closure_value.to_private() as *mut Option<Box<ClosureOnce>>)),
+			ONCE_STATUS_ONCE => drop(Box::from_raw(
+				closure_value.to_private() as *mut Option<Box<ClosureOnce>>
+			)),
 			_ => (),
 		}
 	}

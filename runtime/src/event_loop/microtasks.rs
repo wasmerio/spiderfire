@@ -78,10 +78,11 @@ unsafe extern "C" fn get_incumbent_global(_: *const c_void, cx: *mut JSContext) 
 }
 
 unsafe extern "C" fn enqueue_promise_job(
-	_: *const c_void, cx: *mut JSContext, _: Handle<*mut JSObject>, job: Handle<*mut JSObject>, _: Handle<*mut JSObject>, _: Handle<*mut JSObject>,
+	_: *const c_void, cx: *mut JSContext, _: Handle<*mut JSObject>, job: Handle<*mut JSObject>,
+	_: Handle<*mut JSObject>, _: Handle<*mut JSObject>,
 ) -> bool {
 	let cx = unsafe { &Context::new_unchecked(cx) };
-	let event_loop = unsafe { &mut (*cx.get_private().as_ptr()).event_loop };
+	let event_loop = unsafe { &mut cx.get_private().event_loop };
 	let microtasks = event_loop.microtasks.as_mut().unwrap();
 	if !job.is_null() {
 		microtasks.enqueue(cx, Microtask::Promise(job.get()))

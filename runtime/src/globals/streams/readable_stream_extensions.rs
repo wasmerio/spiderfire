@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use ion::{
-	Context, Object, flags::PropertyFlags, js_fn, Function, TracedHeap, ReadableStream, Result, Error, ErrorKind, Value, conversions::ToValue,
-	Promise, objects::WritableStream,
+	Context, Object, flags::PropertyFlags, js_fn, Function, TracedHeap, ReadableStream, Result, Error, ErrorKind,
+	Value, conversions::ToValue, Promise, objects::WritableStream,
 };
 use mozjs::jsapi::JSFunction;
 
@@ -15,11 +15,17 @@ fn pipe_through<'cx>(
 	cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer: Object<'cx>, options: Option<Value<'cx>>,
 ) -> Result<Object<'cx>> {
 	if !ReadableStream::is_readable_stream(this) {
-		return Err(Error::new("pipeThrough must be called on a ReadableStream", ErrorKind::Type));
+		return Err(Error::new(
+			"pipeThrough must be called on a ReadableStream",
+			ErrorKind::Type,
+		));
 	}
 
 	if ReadableStream::static_is_locked(cx, this) {
-		return Err(Error::new("pipeThrough called on a stream that's already locked", ErrorKind::Normal));
+		return Err(Error::new(
+			"pipeThrough called on a stream that's already locked",
+			ErrorKind::Normal,
+		));
 	}
 
 	let Some(readable_end) = transformer.get(cx, "readable") else {
@@ -61,7 +67,14 @@ fn pipe_through<'cx>(
 			.root(cx)
 	}));
 
-	let Ok(rval) = pipe_to_fn.call(cx, this, &[writable_end.as_value(cx), options.unwrap_or_else(|| Value::undefined(cx))]) else {
+	let Ok(rval) = pipe_to_fn.call(
+		cx,
+		this,
+		&[
+			writable_end.as_value(cx),
+			options.unwrap_or_else(|| Value::undefined(cx)),
+		],
+	) else {
 		return Err(Error::none());
 	};
 

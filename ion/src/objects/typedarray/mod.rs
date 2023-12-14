@@ -12,6 +12,8 @@ use crate::{Context, Error, Object, Result, Value};
 use crate::conversions::ToValue;
 use crate::exception::ThrowException;
 
+pub mod buffer;
+
 macro_rules! impl_typedarray_wrapper {
 	($typedarray:ident, $ty:ty) => {
 		pub struct $typedarray {
@@ -21,10 +23,20 @@ macro_rules! impl_typedarray_wrapper {
 		impl $typedarray {
 			pub fn to_object<'cx>(&self, cx: &'cx Context) -> Result<Object<'cx>> {
 				let mut typed_array = Object::new(cx);
-				if unsafe { mozjs::typedarray::$typedarray::create(cx.as_ptr(), CreateWith::Slice(&self.buf), typed_array.handle_mut()).is_ok() } {
+				if unsafe {
+					mozjs::typedarray::$typedarray::create(
+						cx.as_ptr(),
+						CreateWith::Slice(&self.buf),
+						typed_array.handle_mut(),
+					)
+					.is_ok()
+				} {
 					Ok(typed_array)
 				} else {
-					Err(Error::new(concat!("Failed to create", stringify!($typedarray)), None))
+					Err(Error::new(
+						concat!("Failed to create", stringify!($typedarray)),
+						None,
+					))
 				}
 			}
 		}

@@ -17,7 +17,9 @@ pub enum FormDataEntryValue {
 }
 
 impl FormDataEntryValue {
-	pub fn from_value<'cx: 'v, 'v>(cx: &'cx Context, value: &ion::Value<'v>, file_name: Option<String>) -> Result<Self> {
+	pub fn from_value<'cx: 'v, 'v>(
+		cx: &'cx Context, value: &ion::Value<'v>, file_name: Option<String>,
+	) -> Result<Self> {
 		if value.get().is_string() {
 			let str = String::from_value(cx, value, false, ())?;
 			match file_name {
@@ -27,7 +29,10 @@ impl FormDataEntryValue {
 		} else if value.get().is_object() && Blob::instance_of(cx, &value.to_object(cx), None) {
 			let obj = value.to_object(cx);
 			let blob = Blob::get_private(&obj);
-			Ok(Self::File(blob.as_bytes().clone(), file_name.unwrap_or_else(|| "blob".to_string())))
+			Ok(Self::File(
+				blob.as_bytes().clone(),
+				file_name.unwrap_or_else(|| "blob".to_string()),
+			))
 		} else {
 			Err(Error::new("FormData value must be a string or a Blob", ErrorKind::Type))
 		}
@@ -84,7 +89,9 @@ impl FormData {
 		}
 	}
 
-	pub fn append<'cx>(&mut self, cx: &'cx Context, name: String, value: ion::Value<'cx>, file_name: Option<String>) -> Result<()> {
+	pub fn append<'cx>(
+		&mut self, cx: &'cx Context, name: String, value: ion::Value<'cx>, file_name: Option<String>,
+	) -> Result<()> {
 		let value = FormDataEntryValue::from_value(cx, &value, file_name)?;
 		self.kv_pairs.push(KvPair { key: name, value });
 		Ok(())
@@ -106,7 +113,9 @@ impl FormData {
 		self.kv_pairs.iter().any(|kv| kv.key == name)
 	}
 
-	pub fn set<'cx>(&mut self, cx: &'cx Context, name: String, value: ion::Value<'cx>, file_name: Option<String>) -> Result<()> {
+	pub fn set<'cx>(
+		&mut self, cx: &'cx Context, name: String, value: ion::Value<'cx>, file_name: Option<String>,
+	) -> Result<()> {
 		let value = FormDataEntryValue::from_value(cx, &value, file_name)?;
 
 		let mut i = 0;

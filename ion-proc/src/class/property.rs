@@ -21,7 +21,7 @@ pub(super) enum PropertyType {
 	String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct Property {
 	pub(super) ty: PropertyType,
 	pub(super) ident: Ident,
@@ -37,7 +37,8 @@ impl Property {
 
 		for attr in &con.attrs {
 			if attr.path().is_ident("ion") {
-				let args: Punctuated<PropertyAttribute, Token![,]> = attr.parse_args_with(Punctuated::parse_terminated)?;
+				let args: Punctuated<PropertyAttribute, Token![,]> =
+					attr.parse_args_with(Punctuated::parse_terminated)?;
 
 				for arg in args {
 					match arg {

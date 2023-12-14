@@ -4,18 +4,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::c_void;
-use std::ptr;
 use std::ptr::NonNull;
 
 use futures::Future;
 use mozjs::gc::{GCMethods, RootedTraceableSet};
 use mozjs::jsapi::{
-	BigInt, Heap, JS_GetContextPrivate, JS_SetContextPrivate, JSContext, JSFunction, JSObject, JSScript, JSString, PropertyDescriptor, PropertyKey,
-	Rooted, Symbol,
+	BigInt, Heap, JS_GetContextPrivate, JS_SetContextPrivate, JSContext, JSFunction, JSObject, JSScript, JSString,
+	PropertyDescriptor, PropertyKey, Rooted, Symbol,
 };
 use mozjs::jsval::JSVal;
 use mozjs::rust::Runtime;
@@ -58,22 +56,12 @@ pub struct Persistent {
 	objects: Vec<Box<Heap<*mut JSObject>>>,
 }
 
+#[derive(Default)]
 pub struct ContextInner {
 	pub class_infos: HashMap<TypeId, ClassInfo>,
 	pub module_loader: Option<Box<dyn ModuleLoader>>,
 	persistent: Persistent,
-	private: *mut c_void,
-}
-
-impl Default for ContextInner {
-	fn default() -> ContextInner {
-		ContextInner {
-			class_infos: HashMap::new(),
-			module_loader: None,
-			persistent: Persistent::default(),
-			private: ptr::null_mut(),
-		}
-	}
+	private: Option<Box<dyn Any>>,
 }
 
 /// Represents the thread-local state of the runtime.
@@ -128,15 +116,15 @@ impl Context {
 		self.private
 	}
 
-	pub fn get_raw_private(&self) -> *mut c_void {
+	pub fn get_raw_private(&self) -> *mut dyn Any {
 		let inner = self.get_inner_data();
-		unsafe { (*inner.as_ptr()).private }
+		unsafe { (*inner.as_ptr()).private.as_deref().unwrap() as *const _ as *mut _ }
 	}
 
-	pub fn set_private<T>(&self, private: Box<T>) {
+	pub fn set_private(&self, private: Box<dyn Any>) {
 		let inner_private = self.get_inner_data();
 		unsafe {
-			(*inner_private.as_ptr()).private = Box::into_raw(private).cast();
+			(*inner_private.as_ptr()).private = Some(private);
 		}
 	}
 
@@ -155,7 +143,9 @@ impl Context {
 	/// See documentation for [runtime::promise::future_to_promise].
 	///
 	/// This variation also provides a [`Context`] for use by the future.
-	pub async fn await_native_cx<F: FnOnce(Context) -> Fut, Fut: Future>(self, future: F) -> (Self, <Fut as Future>::Output) {
+	pub async fn await_native_cx<F: FnOnce(Context) -> Fut, Fut: Future>(
+		self, future: F,
+	) -> (Self, <Fut as Future>::Output) {
 		unsafe {
 			let cx_ptr = self.as_ptr();
 

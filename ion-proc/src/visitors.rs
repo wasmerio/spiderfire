@@ -8,16 +8,19 @@ use syn::{GenericArgument, PathArguments, Type, TypePath, TypeReference};
 use syn::punctuated::Punctuated;
 use syn::visit_mut::{visit_type_mut, visit_type_path_mut, visit_type_reference_mut, VisitMut};
 
+use crate::utils::path_ends_with;
+
 pub(crate) struct LifetimeRemover;
 
 impl VisitMut for LifetimeRemover {
 	fn visit_type_path_mut(&mut self, ty: &mut TypePath) {
 		if let Some(segment) = ty.path.segments.last_mut() {
 			if let PathArguments::AngleBracketed(arguments) = &mut segment.arguments {
-				arguments.args = Punctuated::from_iter(arguments.args.clone().into_iter().filter(|argument| match argument {
+				let args = arguments.args.clone().into_iter().filter(|argument| match argument {
 					GenericArgument::Lifetime(lt) => *lt == parse_quote!('static),
 					_ => true,
-				}));
+				});
+				arguments.args = Punctuated::from_iter(args);
 			}
 		}
 		visit_type_path_mut(self, ty);
@@ -37,8 +40,10 @@ pub(crate) struct SelfRenamer<'t> {
 
 impl VisitMut for SelfRenamer<'_> {
 	fn visit_type_mut(&mut self, ty: &mut Type) {
-		if ty == &mut parse_quote!(Self) {
-			*ty = self.ty.clone();
+		if let Type::Path(typ) = ty {
+			if path_ends_with(&typ.path, "Self") {
+				*ty = self.ty.clone();
+			}
 		}
 		visit_type_mut(self, ty);
 	}

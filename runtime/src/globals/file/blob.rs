@@ -45,7 +45,10 @@ impl<'cx> FromValue<'cx> for BlobPart {
 				return Ok(BlobPart(blob.bytes.clone()));
 			}
 		}
-		Err(Error::new("Expected BufferSource, Blob or String in Blob constructor.", ErrorKind::Type))
+		Err(Error::new(
+			"Expected BufferSource, Blob or String in Blob constructor.",
+			ErrorKind::Type,
+		))
 	}
 }
 
@@ -212,6 +215,10 @@ impl Blob {
 	#[ion(name = "arrayBuffer")]
 	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
-		unsafe { future_to_promise(cx, |_| async move { Ok::<_, ()>(ion::typedarray::ArrayBuffer::from(bytes.to_vec())) }) }
+		unsafe {
+			future_to_promise(cx, |_| async move {
+				Ok::<_, ()>(ion::typedarray::ArrayBuffer::from(bytes.to_vec()))
+			})
+		}
 	}
 }

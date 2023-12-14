@@ -5,12 +5,7 @@
  */
 
 #![allow(clippy::missing_safety_doc)]
-#![deny(unsafe_op_in_unsafe_fn)]
 
-#[macro_use]
-extern crate bitflags;
-#[macro_use]
-extern crate derivative;
 #[macro_use]
 extern crate mozjs;
 
@@ -26,7 +21,10 @@ pub use heap::{Heap, TracedHeap};
 #[cfg(feature = "macros")]
 pub use ion_proc::*;
 pub use local::Local;
-pub use objects::{Array, Date, Iterator, JSIterator, Object, OwnedKey, Promise, PropertyKey, RegExp, ReadableStream, ReadableStreamReader};
+pub use objects::{
+	Array, Date, Iterator, JSIterator, Object, OwnedKey, Promise, PropertyKey, RegExp, ReadableStream,
+	ReadableStreamReader,
+};
 pub use objects::typedarray;
 pub use stack::{Stack, StackRecord};
 pub use string::{String, StringRef};

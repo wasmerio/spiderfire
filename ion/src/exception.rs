@@ -6,8 +6,9 @@
 
 use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::{
-	ESClass, ExceptionStack, ExceptionStackBehavior, ExceptionStackOrNull, GetPendingExceptionStack, IdentifyStandardInstance,
-	JS_ClearPendingException, JS_GetPendingException, JS_IsExceptionPending, JS_SetPendingException, Rooted,
+	ESClass, ExceptionStack, ExceptionStackBehavior, ExceptionStackOrNull, GetPendingExceptionStack,
+	IdentifyStandardInstance, JS_ClearPendingException, JS_GetPendingException, JS_IsExceptionPending,
+	JS_SetPendingException, Rooted,
 };
 use mozjs::jsval::{JSVal, ObjectValue};
 #[cfg(feature = "sourcemap")]
@@ -15,7 +16,7 @@ use sourcemap::SourceMap;
 
 use crate::{Context, Error, ErrorKind, Object, Stack, Value};
 use crate::conversions::{FromValue, ToValue};
-use crate::format::{format_value, NEWLINE};
+use crate::format::{Config, format_value, NEWLINE};
 use crate::stack::Location;
 
 pub trait ThrowException {
@@ -123,7 +124,7 @@ impl Exception {
 			Exception::Other(value) => {
 				format!(
 					"Uncaught Exception - {}",
-					format_value(cx, Default::default(), &cx.root_value(*value).into())
+					format_value(cx, Config::default(), &cx.root_value(*value).into())
 				)
 			}
 		}
@@ -136,7 +137,13 @@ impl ThrowException for Exception {
 			Exception::Error(error) => {
 				if let Error { object: Some(object), .. } = error {
 					let exception = Value::from(cx.root_value(ObjectValue(*object)));
-					unsafe { JS_SetPendingException(cx.as_ptr(), exception.handle().into(), ExceptionStackBehavior::DoNotCapture) }
+					unsafe {
+						JS_SetPendingException(
+							cx.as_ptr(),
+							exception.handle().into(),
+							ExceptionStackBehavior::DoNotCapture,
+						)
+					}
 				} else {
 					error.throw(cx);
 				}

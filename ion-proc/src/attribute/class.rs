@@ -27,7 +27,7 @@ mod keywords {
 	custom_keyword!(set);
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) enum Name {
 	String(LitStr),
 	Symbol(ExprPath),
@@ -53,7 +53,10 @@ impl Parse for Name {
 			if !string.starts_with('[') && !string.ends_with(']') {
 				Ok(Name::String(literal))
 			} else {
-				Err(Error::new(literal.span(), "Function name must not start with '[' or end with ']'"))
+				Err(Error::new(
+					literal.span(),
+					"Function name must not start with '[' or end with ']'",
+				))
 			}
 		} else if let Ok(other) = input.parse() {
 			Ok(Name::Symbol(other))
@@ -64,7 +67,6 @@ impl Parse for Name {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
 pub(crate) struct NameAttribute {
 	kw: keywords::name,
 	eq: Token![=],
@@ -87,7 +89,6 @@ impl Parse for NameAttribute {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
 pub(crate) struct ClassNameAttribute {
 	kw: keywords::name,
 	eq: Token![=],
@@ -110,7 +111,6 @@ impl Parse for ClassNameAttribute {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
 pub(crate) struct AliasAttribute {
 	kw: keywords::alias,
 	eq: Token![=],
@@ -138,7 +138,6 @@ impl Parse for AliasAttribute {
 
 // TODO: Add `inspectable` to provide `toString` and `toJSON`
 #[allow(dead_code)]
-#[derive(Debug)]
 pub(crate) enum ClassAttribute {
 	Name(ClassNameAttribute),
 	Class(keywords::class),
@@ -159,7 +158,6 @@ impl Parse for ClassAttribute {
 	}
 }
 
-#[derive(Debug)]
 pub(crate) enum MethodAttribute {
 	Name(NameAttribute),
 	Alias(AliasAttribute),

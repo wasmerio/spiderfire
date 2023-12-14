@@ -17,7 +17,6 @@ use crate::attribute::class::Name;
 use crate::class::method::{impl_method, Method};
 use crate::function::parameters::{Parameter, Parameters};
 
-#[derive(Debug)]
 pub(super) struct Accessor(pub(super) Option<Method>, Option<Method>);
 
 impl Accessor {
@@ -99,7 +98,9 @@ pub(super) fn get_accessor_name(mut name: String, is_setter: bool) -> String {
 	name
 }
 
-pub(super) fn impl_accessor(ion: &TokenStream, method: ItemFn, ty: &Type, is_setter: bool) -> Result<(Method, Parameters)> {
+pub(super) fn impl_accessor(
+	ion: &TokenStream, method: ItemFn, ty: &Type, is_setter: bool,
+) -> Result<(Method, Parameters)> {
 	let expected_args = is_setter as i32;
 	let error_message = if is_setter {
 		format!("Expected Setter to have {} argument", expected_args)
@@ -130,7 +131,9 @@ pub(super) fn impl_accessor(ion: &TokenStream, method: ItemFn, ty: &Type, is_set
 	Ok((accessor, parameters))
 }
 
-pub(super) fn insert_accessor(accessors: &mut HashMap<String, Accessor>, name: String, getter: Option<Method>, setter: Option<Method>) {
+pub(super) fn insert_accessor(
+	accessors: &mut HashMap<String, Accessor>, name: String, getter: Option<Method>, setter: Option<Method>,
+) {
 	match accessors.entry(name) {
 		Entry::Occupied(mut o) => match (getter, setter) {
 			(Some(g), Some(s)) => *o.get_mut() = Accessor(Some(g), Some(s)),

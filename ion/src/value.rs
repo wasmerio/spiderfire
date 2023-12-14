@@ -7,7 +7,11 @@
 use std::ops::{Deref, DerefMut};
 
 use mozjs::jsapi::SameValue;
-use mozjs::jsval::{BigIntValue, BooleanValue, DoubleValue, Int32Value, JSVal, NullValue, ObjectValue, SymbolValue, UInt32Value, UndefinedValue};
+use mozjs::jsval::{
+	BigIntValue, BooleanValue, DoubleValue, Int32Value, JSVal, NullValue, ObjectValue, SymbolValue, UInt32Value,
+	UndefinedValue,
+};
+use mozjs_sys::jsapi::JS_ValueToSource;
 
 use crate::{Array, Context, Local, Object, Symbol};
 use crate::bigint::BigInt;
@@ -97,6 +101,10 @@ impl<'v> Value<'v> {
 	pub fn is_same(&self, cx: &Context, other: &Value) -> bool {
 		let mut same = false;
 		unsafe { SameValue(cx.as_ptr(), self.handle().into(), other.handle().into(), &mut same) && same }
+	}
+
+	pub fn to_source<'cx>(&self, cx: &'cx Context) -> crate::String<'cx> {
+		crate::String::from(cx.root_string(unsafe { JS_ValueToSource(cx.as_ptr(), self.handle().into()) }))
 	}
 
 	pub fn into_local(self) -> Local<'v, JSVal> {

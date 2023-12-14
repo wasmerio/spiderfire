@@ -27,7 +27,9 @@ impl TextEncoderStreamTransformer {
 // this will be hard, since we'll have to directly work on the
 // UTF-16 data from Spidermonkey.
 impl TextEncoderStreamTransformer {
-	fn transform_chunk(&self, cx: &Context, chunk: String, controller: &TransformStreamDefaultController) -> Result<()> {
+	fn transform_chunk(
+		&self, cx: &Context, chunk: String, controller: &TransformStreamDefaultController,
+	) -> Result<()> {
 		let stream = TextEncoderStream::get_private(&self.stream.root(cx).into());
 		let encoder = TextEncoder::get_mut_private(&mut stream.encoder.root(cx).into());
 		controller

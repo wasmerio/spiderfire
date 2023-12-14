@@ -2,12 +2,15 @@ use std::ops::{Deref, DerefMut};
 
 use bytes::Bytes;
 use mozjs::jsapi::{
-	JSObject, ReadableStreamIsLocked, ReadableStreamIsDisturbed, ReadableStreamGetReader, ReadableStreamReaderMode, ReadableStreamReaderReleaseLock,
-	ReadableStreamDefaultReaderRead, AutoRequireNoGC, IsReadableStream,
+	JSObject, ReadableStreamIsLocked, ReadableStreamIsDisturbed, ReadableStreamGetReader, ReadableStreamReaderMode,
+	ReadableStreamReaderReleaseLock, ReadableStreamDefaultReaderRead, AutoRequireNoGC, IsReadableStream,
 };
 use mozjs_sys::jsapi::{JS_IsArrayBufferViewObject, JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewData};
 
-use crate::{Context, Error, ErrorKind, Object, Promise, TracedHeap, PromiseFuture, ResultExc, Exception, conversions::FromValue, Local};
+use crate::{
+	Context, Error, ErrorKind, Object, Promise, TracedHeap, PromiseFuture, ResultExc, Exception,
+	conversions::FromValue, Local,
+};
 
 pub struct ReadableStream {
 	// Since streams are async by nature, they cannot be tied to the lifetime
@@ -120,7 +123,10 @@ impl ReadableStreamReader {
 
 	pub fn read_chunk<'cx>(&self, cx: &'cx Context) -> Promise {
 		unsafe {
-			let promise = cx.root_object(ReadableStreamDefaultReaderRead(cx.as_ptr(), self.reader.root(cx).handle().into()));
+			let promise = cx.root_object(ReadableStreamDefaultReaderRead(
+				cx.as_ptr(),
+				self.reader.root(cx).handle().into(),
+			));
 			Promise::from(promise).expect("ReadableStreamDefaultReaderRead should return a Promise")
 		}
 	}
@@ -147,8 +153,13 @@ impl ReadableStreamReader {
 				}
 			};
 
-			let done = bool::from_value(&cx, &chunk.get(&cx, "done").expect("Chunk must have a done property"), true, ())
-				.expect("chunk.done must be a boolean");
+			let done = bool::from_value(
+				&cx,
+				&chunk.get(&cx, "done").expect("Chunk must have a done property"),
+				true,
+				(),
+			)
+			.expect("chunk.done must be a boolean");
 
 			if done {
 				return Ok(result);
@@ -160,7 +171,8 @@ impl ReadableStreamReader {
 				assert!(JS_IsArrayBufferViewObject(obj_ptr));
 				let length = JS_GetArrayBufferViewByteLength(obj_ptr);
 				let mut is_shared_memory = false;
-				let data_ptr = JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+				let data_ptr =
+					JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
 				result.extend_from_slice(std::slice::from_raw_parts(data_ptr as *const _, length));
 			}
 		}

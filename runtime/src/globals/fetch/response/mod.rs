@@ -179,8 +179,14 @@ impl Response {
 		let mut headers = init.headers.into_headers(HeaderMap::new(), HeadersKind::Response)?;
 
 		if let Some(body) = body {
-			if init.status == StatusCode::NO_CONTENT || init.status == StatusCode::RESET_CONTENT || init.status == StatusCode::NOT_MODIFIED {
-				return Err(Error::new("Received non-null body with null body status.", ErrorKind::Type));
+			if init.status == StatusCode::NO_CONTENT
+				|| init.status == StatusCode::RESET_CONTENT
+				|| init.status == StatusCode::NOT_MODIFIED
+			{
+				return Err(Error::new(
+					"Received non-null body with null body status.",
+					ErrorKind::Type,
+				));
 			}
 
 			if let Some(kind) = &body.kind {
@@ -293,7 +299,7 @@ impl Response {
 				cx.unroot_persistent_object(this.get());
 				let text = text?;
 
-				let Some(str) = ion::String::new(&cx, text.as_str()) else {
+				let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
 					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
 				};
 				let mut result = ion::Value::undefined(&cx);
@@ -322,7 +328,10 @@ impl Response {
 				let headers = response.get_headers_object(&cx);
 				let content_type_string = ByteString::<_>::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
 				let Some(content_type) = headers.get(content_type_string)? else {
-					return Err(Error::new("No content-type header, cannot decide form data format", ErrorKind::Type));
+					return Err(Error::new(
+						"No content-type header, cannot decide form data format",
+						ErrorKind::Type,
+					));
 				};
 				let content_type = content_type.to_string();
 
@@ -336,9 +345,15 @@ impl Response {
 
 					Ok(FormData::new_object(&cx, Box::new(form_data)))
 				} else if content_type.starts_with("multipart/form-data") {
-					Err(Error::new("multipart/form-data deserialization is not supported yet", ErrorKind::Normal))
+					Err(Error::new(
+						"multipart/form-data deserialization is not supported yet",
+						ErrorKind::Normal,
+					))
 				} else {
-					Err(Error::new("Invalid content-type, cannot decide form data format", ErrorKind::Type))
+					Err(Error::new(
+						"Invalid content-type, cannot decide form data format",
+						ErrorKind::Type,
+					))
 				}
 			})
 		}

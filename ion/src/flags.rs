@@ -9,11 +9,11 @@ use std::fmt::{Display, Formatter};
 use std::str;
 
 use arrayvec::ArrayVec;
-use bitflags::Flags;
+use bitflags::{bitflags, Flags};
 use mozjs::jsapi::{
-	JSITER_FORAWAITOF, JSITER_HIDDEN, JSITER_OWNONLY, JSITER_PRIVATE, JSITER_SYMBOLS, JSITER_SYMBOLSONLY, JSPROP_ENUMERATE, JSPROP_PERMANENT,
-	JSPROP_READONLY, JSPROP_RESOLVING, RegExpFlag_DotAll, RegExpFlag_Global, RegExpFlag_HasIndices, RegExpFlag_IgnoreCase, RegExpFlag_Multiline,
-	RegExpFlag_Sticky, RegExpFlag_Unicode,
+	JSITER_FORAWAITOF, JSITER_HIDDEN, JSITER_OWNONLY, JSITER_PRIVATE, JSITER_SYMBOLS, JSITER_SYMBOLSONLY,
+	JSPROP_ENUMERATE, JSPROP_PERMANENT, JSPROP_READONLY, JSPROP_RESOLVING, RegExpFlag_DotAll, RegExpFlag_Global,
+	RegExpFlag_HasIndices, RegExpFlag_IgnoreCase, RegExpFlag_Multiline, RegExpFlag_Sticky, RegExpFlag_Unicode,
 };
 use mozjs::jsapi::RegExpFlags as REFlags;
 
@@ -37,7 +37,7 @@ bitflags! {
 
 bitflags! {
 	/// Represents the flags when iterating over an [Object](crate::Object).
-	#[derive(Clone, Copy, Debug)]
+	#[derive(Clone, Copy, Debug, Default)]
 	pub struct IteratorFlags: u32 {
 		/// Allows iterating over private properties.
 		const PRIVATE = JSITER_PRIVATE;

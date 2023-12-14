@@ -7,10 +7,12 @@ use ion::{
 };
 use mozjs::{
 	jsapi::{
-		JSObject, JSFunction, ReadableStreamGetController, WritableStreamGetController, CheckReadableStreamControllerCanCloseOrEnqueue,
-		ReadableStreamEnqueue, JS_GetPendingException, JS_ClearPendingException, ReadableStreamGetStoredError, ReadableStreamClose,
-		JS_ReportErrorLatin1, ReadableStreamError, WritableStreamGetState, WritableStreamState, WritableStreamError, ReadableStreamGetDesiredSize,
-		NewWritableDefaultStreamObject, HandleObject, HandleFunction, ReadableStreamIsErrored, NewReadableDefaultStreamObject,
+		JSObject, JSFunction, ReadableStreamGetController, WritableStreamGetController,
+		CheckReadableStreamControllerCanCloseOrEnqueue, ReadableStreamEnqueue, JS_GetPendingException,
+		JS_ClearPendingException, ReadableStreamGetStoredError, ReadableStreamClose, JS_ReportErrorLatin1,
+		ReadableStreamError, WritableStreamGetState, WritableStreamState, WritableStreamError,
+		ReadableStreamGetDesiredSize, NewWritableDefaultStreamObject, HandleObject, HandleFunction,
+		ReadableStreamIsErrored, NewReadableDefaultStreamObject,
 	},
 	c_str,
 	jsval::JSVal,
@@ -64,28 +66,36 @@ impl HeapTransformer {
 	fn start_function<'cx>(&self, cx: &'cx Context) -> Option<(Object<'cx>, Function<'cx>)> {
 		match self {
 			Self::Null | Self::Object { start: None, .. } => None,
-			Self::Object { instance, start: Some(start), .. } => Some((instance.root(cx).into(), start.root(cx).into())),
+			Self::Object { instance, start: Some(start), .. } => {
+				Some((instance.root(cx).into(), start.root(cx).into()))
+			}
 		}
 	}
 
 	fn transform_function<'cx>(&self, cx: &'cx Context) -> Option<(Object<'cx>, Function<'cx>)> {
 		match self {
 			Self::Null | Self::Object { transform: None, .. } => None,
-			Self::Object { instance, transform: Some(transform), .. } => Some((instance.root(cx).into(), transform.root(cx).into())),
+			Self::Object { instance, transform: Some(transform), .. } => {
+				Some((instance.root(cx).into(), transform.root(cx).into()))
+			}
 		}
 	}
 
 	fn flush_function<'cx>(&self, cx: &'cx Context) -> Option<(Object<'cx>, Function<'cx>)> {
 		match self {
 			Self::Null | Self::Object { flush: None, .. } => None,
-			Self::Object { instance, flush: Some(flush), .. } => Some((instance.root(cx).into(), flush.root(cx).into())),
+			Self::Object { instance, flush: Some(flush), .. } => {
+				Some((instance.root(cx).into(), flush.root(cx).into()))
+			}
 		}
 	}
 
 	fn cancel_function<'cx>(&self, cx: &'cx Context) -> Option<(Object<'cx>, Function<'cx>)> {
 		match self {
 			Self::Null | Self::Object { cancel: None, .. } => None,
-			Self::Object { instance, cancel: Some(cancel), .. } => Some((instance.root(cx).into(), cancel.root(cx).into())),
+			Self::Object { instance, cancel: Some(cancel), .. } => {
+				Some((instance.root(cx).into(), cancel.root(cx).into()))
+			}
 		}
 	}
 }
@@ -127,7 +137,14 @@ impl TransformStreamDefaultController {
 		let readable = TransformStream::from_heap(cx, &self.stream).readable.root(cx);
 		let mut value = 0.0;
 		let mut has_value = false;
-		if !unsafe { ReadableStreamGetDesiredSize(cx.as_ptr(), readable.get(), &mut has_value as *mut _, &mut value as *mut _) } {
+		if !unsafe {
+			ReadableStreamGetDesiredSize(
+				cx.as_ptr(),
+				readable.get(),
+				&mut has_value as *mut _,
+				&mut value as *mut _,
+			)
+		} {
 			return Err(Error::none());
 		}
 
@@ -143,8 +160,15 @@ impl TransformStreamDefaultController {
 		let readable = stream.readable.root(cx);
 		let controller = stream.get_readable_controller(cx);
 		unsafe {
-			if !CheckReadableStreamControllerCanCloseOrEnqueue(cx.as_ptr(), controller.handle().into(), c_str!("enqueue")) {
-				return Err(Exception::Error(Error::new("Readable stream is already closed", ErrorKind::Type)));
+			if !CheckReadableStreamControllerCanCloseOrEnqueue(
+				cx.as_ptr(),
+				controller.handle().into(),
+				c_str!("enqueue"),
+			) {
+				return Err(Exception::Error(Error::new(
+					"Readable stream is already closed",
+					ErrorKind::Type,
+				)));
 			}
 
 			if !ReadableStreamEnqueue(cx.as_ptr(), readable.handle().into(), chunk.handle().into()) {
@@ -174,7 +198,8 @@ impl TransformStreamDefaultController {
 		let controller = stream.get_readable_controller(cx);
 
 		unsafe {
-			if CheckReadableStreamControllerCanCloseOrEnqueue(cx.as_ptr(), controller.handle().into(), c_str!("close")) {
+			if CheckReadableStreamControllerCanCloseOrEnqueue(cx.as_ptr(), controller.handle().into(), c_str!("close"))
+			{
 				if !ReadableStreamClose(cx.as_ptr(), readable.handle().into()) {
 					return Err(Error::none());
 				}
@@ -266,8 +291,9 @@ impl NativeStreamSinkCallbacks for Sink {
 			Some((o, f)) => match f.call(&cx, &o, &[chunk, controller_object]) {
 				Err(e) => Promise::new_rejected(
 					cx,
-					e.map(|e| e.exception)
-						.unwrap_or_else(|| Exception::Error(Error::new("Call to transformer.transform failed", ErrorKind::Normal))),
+					e.map(|e| e.exception).unwrap_or_else(|| {
+						Exception::Error(Error::new("Call to transformer.transform failed", ErrorKind::Normal))
+					}),
 				),
 				Ok(val) => {
 					if !val.get().is_object() {
@@ -293,9 +319,9 @@ impl NativeStreamSinkCallbacks for Sink {
 				"__TransformStreamSinkWriteCallbackFailed",
 				Box::new(move |args| {
 					let mut accessor = args.access();
-					let reason = accessor
-						.arg::<Value>(false, ())
-						.ok_or_else(|| Exception::Error(Error::new("Bad arguments to promise.reject", ErrorKind::Internal)))??;
+					let reason = accessor.arg::<Value>(false, ()).ok_or_else(|| {
+						Exception::Error(Error::new("Bad arguments to promise.reject", ErrorKind::Internal))
+					})??;
 
 					let ts = TransformStream::from_heap(args.cx(), &ts_heap);
 					ts.error(args.cx(), &reason)?;
@@ -346,7 +372,8 @@ impl NativeStreamSinkCallbacks for Sink {
 											ts.error(&cx, &cx.root_value(e).into())?;
 
 											let readable = ts.readable.root(&cx);
-											let error = ReadableStreamGetStoredError(cx.as_ptr(), readable.handle().into());
+											let error =
+												ReadableStreamGetStoredError(cx.as_ptr(), readable.handle().into());
 
 											return Err(Exception::Other(error));
 										}
@@ -375,7 +402,11 @@ impl NativeStreamSinkCallbacks for Sink {
 					return Err(Exception::Other(e));
 				}
 
-				if CheckReadableStreamControllerCanCloseOrEnqueue(cx.as_ptr(), ts.get_readable_controller(&cx).handle().into(), c_str!("close")) {
+				if CheckReadableStreamControllerCanCloseOrEnqueue(
+					cx.as_ptr(),
+					ts.get_readable_controller(&cx).handle().into(),
+					c_str!("close"),
+				) {
 					if !ReadableStreamClose(cx.as_ptr(), readable.handle().into()) {
 						return Err(Exception::Error(Error::none()));
 					}
@@ -441,11 +472,15 @@ impl TransformStream {
 
 	pub fn get_readable_controller<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
 		// TODO: Implement ion wrapper type for the controller
-		Object::from(cx.root_object(unsafe { ReadableStreamGetController(cx.as_ptr(), self.readable.root(cx).handle().into()) }))
+		Object::from(
+			cx.root_object(unsafe { ReadableStreamGetController(cx.as_ptr(), self.readable.root(cx).handle().into()) }),
+		)
 	}
 
 	pub fn get_writable_controller<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
-		Object::from(cx.root_object(unsafe { WritableStreamGetController(cx.as_ptr(), self.writable.root(cx).handle().into()) }))
+		Object::from(
+			cx.root_object(unsafe { WritableStreamGetController(cx.as_ptr(), self.writable.root(cx).handle().into()) }),
+		)
 	}
 
 	pub fn error(&self, cx: &Context, e: &Value) -> Result<()> {
@@ -480,10 +515,13 @@ const NULL_FUNCTION: *mut JSFunction = 0 as *mut JSFunction;
 #[js_class]
 impl TransformStream {
 	#[ion(constructor)]
-	pub fn constructor<'cx>(cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer_object: Option<Object<'cx>>) -> Result<TransformStream> {
+	pub fn constructor<'cx>(
+		cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer_object: Option<Object<'cx>>,
+	) -> Result<TransformStream> {
 		let transformer = HeapTransformer::from_transformer(cx, transformer_object)?;
 
-		let controller = ClassDefinition::new_object(cx, Box::new(TransformStreamDefaultController::new(this, transformer)));
+		let controller =
+			ClassDefinition::new_object(cx, Box::new(TransformStreamDefaultController::new(this, transformer)));
 
 		// For use in the start promise, below
 		let controller_heap = TracedHeap::new(controller);
@@ -510,7 +548,10 @@ impl TransformStream {
 			stream: Heap::from_local(&this),
 			start_promise: unsafe { Promise::from_unchecked(start_promise.root(cx)) },
 		};
-		let sink_obj = cx.root_object(NativeStreamSink::new_object(cx, Box::new(NativeStreamSink::new(Box::new(sink)))));
+		let sink_obj = cx.root_object(NativeStreamSink::new_object(
+			cx,
+			Box::new(NativeStreamSink::new(Box::new(sink))),
+		));
 
 		let writable = unsafe {
 			cx.root_object(NewWritableDefaultStreamObject(
@@ -523,14 +564,20 @@ impl TransformStream {
 		};
 
 		if writable.get().is_null() {
-			return Err(Error::new("Failed to create writable half of stream", ErrorKind::Normal));
+			return Err(Error::new(
+				"Failed to create writable half of stream",
+				ErrorKind::Normal,
+			));
 		}
 
 		let source = Source {
 			stream: Heap::from_local(&this),
 			start_promise,
 		};
-		let source_obj = cx.root_object(NativeStreamSource::new_object(cx, Box::new(NativeStreamSource::new(Box::new(source)))));
+		let source_obj = cx.root_object(NativeStreamSource::new_object(
+			cx,
+			Box::new(NativeStreamSource::new(Box::new(source))),
+		));
 
 		let readable = unsafe {
 			cx.root_object(NewReadableDefaultStreamObject(
@@ -543,7 +590,10 @@ impl TransformStream {
 		};
 
 		if readable.get().is_null() {
-			return Err(Error::new("Failed to create readable half of stream", ErrorKind::Normal));
+			return Err(Error::new(
+				"Failed to create readable half of stream",
+				ErrorKind::Normal,
+			));
 		}
 
 		Ok(Self {

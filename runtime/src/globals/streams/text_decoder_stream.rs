@@ -31,7 +31,9 @@ impl TextDecoderStreamTransformer {
 }
 
 impl TextDecoderStreamTransformer {
-	fn transform_chunk(&self, cx: &Context, chunk: ArrayBufferView, final_chunk: bool, controller: &TransformStreamDefaultController) -> Result<()> {
+	fn transform_chunk(
+		&self, cx: &Context, chunk: ArrayBufferView, final_chunk: bool, controller: &TransformStreamDefaultController,
+	) -> Result<()> {
 		let stream = TextDecoderStream::get_private(&self.stream.root(cx).into());
 		let decoder = TextDecoder::get_mut_private(&mut stream.decoder.root(cx).into());
 		match decoder.decode(chunk, Some(TextDecodeOptions::new(!final_chunk))) {
@@ -49,7 +51,9 @@ impl TextDecoderStreamTransformer {
 		Err(Error::new("Cannot construct this type", ErrorKind::Type))
 	}
 
-	pub fn transform(&self, cx: &Context, chunk: ArrayBufferView, controller: &TransformStreamDefaultController) -> Result<()> {
+	pub fn transform(
+		&self, cx: &Context, chunk: ArrayBufferView, controller: &TransformStreamDefaultController,
+	) -> Result<()> {
 		self.transform_chunk(cx, chunk, false, controller)
 	}
 
@@ -58,7 +62,8 @@ impl TextDecoderStreamTransformer {
 		let empty_array = Value::object(cx, &cx.root_object(unsafe { JS_NewUint8Array(cx.as_ptr(), 0) }).into());
 		self.transform_chunk(
 			cx,
-			ArrayBufferView::from_value(cx, &empty_array, false, ()).expect("ArrayBuffer should turn into ArrayBufferView"),
+			ArrayBufferView::from_value(cx, &empty_array, false, ())
+				.expect("ArrayBuffer should turn into ArrayBufferView"),
 			true,
 			controller,
 		)
@@ -88,7 +93,10 @@ impl TextDecoderStream {
 	pub fn constructor(
 		cx: &Context, #[ion(this)] this: &Object, label: Option<String>, options: Option<TextDecoderOptions>,
 	) -> Result<TextDecoderStream> {
-		let decoder = cx.root_object(TextDecoder::new_object(cx, Box::new(TextDecoder::constructor(label, options)?)));
+		let decoder = cx.root_object(TextDecoder::new_object(
+			cx,
+			Box::new(TextDecoder::constructor(label, options)?),
+		));
 
 		let transformer = Object::from(cx.root_object(TextDecoderStreamTransformer::new_object(
 			cx,

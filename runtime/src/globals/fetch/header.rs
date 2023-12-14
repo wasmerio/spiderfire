@@ -14,9 +14,10 @@ use std::str::FromStr;
 use std::vec;
 
 use http::header::{
-	ACCEPT, ACCEPT_CHARSET, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, CONNECTION,
-	CONTENT_LANGUAGE, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, DATE, DNT, Entry, EXPECT, HeaderMap, HeaderName, HeaderValue, HOST, ORIGIN, RANGE,
-	REFERER, SET_COOKIE, TE, TRAILER, TRANSFER_ENCODING, UPGRADE, VIA,
+	ACCEPT, ACCEPT_CHARSET, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ACCESS_CONTROL_ALLOW_HEADERS,
+	ACCESS_CONTROL_ALLOW_METHODS, CONNECTION, CONTENT_LANGUAGE, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, DATE, DNT, Entry,
+	EXPECT, HeaderMap, HeaderName, HeaderValue, HOST, ORIGIN, RANGE, REFERER, SET_COOKIE, TE, TRAILER,
+	TRANSFER_ENCODING, UPGRADE, VIA,
 };
 use mime::{APPLICATION, FORM_DATA, Mime, MULTIPART, PLAIN, TEXT, WWW_FORM_URLENCODED};
 
@@ -203,7 +204,10 @@ impl Headers {
 			return Ok(());
 		}
 
-		if self.kind == HeadersKind::RequestNoCors && !NO_CORS_SAFELISTED_REQUEST_HEADERS.contains(&name) && name != RANGE {
+		if self.kind == HeadersKind::RequestNoCors
+			&& !NO_CORS_SAFELISTED_REQUEST_HEADERS.contains(&name)
+			&& name != RANGE
+		{
 			return Ok(());
 		}
 
@@ -236,7 +240,9 @@ impl Headers {
 		if !validate_header(&name, &HeaderValue::from_static(""), self.kind)? {
 			return Ok(());
 		}
-		if self.kind == HeadersKind::RequestNoCors && !validate_no_cors_safelisted_request_header(&mut self.headers, &name, &value) {
+		if self.kind == HeadersKind::RequestNoCors
+			&& !validate_no_cors_safelisted_request_header(&mut self.headers, &name, &value)
+		{
 			return Ok(());
 		}
 		self.headers.insert(name, value);
@@ -380,10 +386,9 @@ fn validate_no_cors_safelisted_request_header(headers: &mut HeaderMap, name: &He
 			return false;
 		}
 	} else if name == ACCEPT_LANGUAGE || name == CONTENT_LANGUAGE {
-		let cond = temp
-			.as_bytes()
-			.iter()
-			.all(|b| matches!(b, b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b' ' | b'*' | b',' | b'-' | b'.' | b';' | b'='));
+		let cond = temp.as_bytes().iter().all(
+			|b| matches!(b, b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b' ' | b'*' | b',' | b'-' | b'.' | b';' | b'='),
+		);
 		if !cond {
 			return false;
 		}

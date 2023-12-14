@@ -5,7 +5,6 @@
  */
 
 #![allow(clippy::module_inception)]
-#![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(target_os = "wasi", feature(wasi_ext))]
 
 #[macro_use]
