@@ -52,8 +52,8 @@ impl ToValue<'_> for Header {
 }
 
 pub struct HeaderEntry {
-	name: ByteString<VisibleAscii>,
-	value: ByteString<VisibleAscii>,
+	pub name: ByteString<VisibleAscii>,
+	pub value: ByteString<VisibleAscii>,
 }
 
 impl<'cx> FromValue<'cx> for HeaderEntry {

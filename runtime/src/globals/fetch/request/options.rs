@@ -384,26 +384,26 @@ impl<'cx> FromValue<'cx> for RequestPriority {
 
 #[derive(Default, FromValue)]
 pub struct RequestInit<'cx> {
-	pub(crate) method: Option<String>,
-	pub(crate) headers: Option<HeadersInit<'cx>>,
-	pub(crate) body: Option<FetchBody>,
+	pub method: Option<String>,
+	pub headers: Option<HeadersInit<'cx>>,
+	pub body: Option<FetchBody>,
 
-	pub(crate) referrer: Option<Referrer>,
-	pub(crate) referrer_policy: Option<ReferrerPolicy>,
+	pub referrer: Option<Referrer>,
+	pub referrer_policy: Option<ReferrerPolicy>,
 
-	pub(crate) mode: Option<RequestMode>,
-	pub(crate) credentials: Option<RequestCredentials>,
-	pub(crate) cache: Option<RequestCache>,
-	pub(crate) redirect: Option<RequestRedirect>,
+	pub mode: Option<RequestMode>,
+	pub credentials: Option<RequestCredentials>,
+	pub cache: Option<RequestCache>,
+	pub redirect: Option<RequestRedirect>,
 
-	pub(crate) integrity: Option<String>,
-	pub(crate) keepalive: Option<bool>,
-	pub(crate) signal: Option<*mut JSObject>,
+	pub integrity: Option<String>,
+	pub keepalive: Option<bool>,
+	pub signal: Option<*mut JSObject>,
 
 	#[allow(dead_code)]
-	pub(crate) duplex: Option<RequestDuplex>,
+	pub duplex: Option<RequestDuplex>,
 	#[allow(dead_code)]
 	#[ion(default)]
-	priority: Option<RequestPriority>,
-	pub(crate) window: Option<JSVal>,
+	pub priority: Option<RequestPriority>,
+	pub window: Option<JSVal>,
 }

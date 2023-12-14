@@ -9,10 +9,13 @@ use std::str::FromStr;
 use http::{HeaderMap, HeaderValue};
 use http::header::CONTENT_TYPE;
 use hyper::Method;
+use ion::{Value, Local};
+use ion::string::byte::ByteString;
+use ion::typedarray::ArrayBuffer;
 use mozjs::jsapi::{Heap, JSObject};
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Result};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Result, Promise};
 use ion::class::Reflector;
 pub use options::*;
 
@@ -20,6 +23,7 @@ use crate::globals::abort::AbortSignal;
 use crate::globals::fetch::body::FetchBody;
 use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
+use crate::globals::form_data::FormData;
 
 mod options;
 
@@ -38,7 +42,7 @@ pub struct Request {
 	#[ion(no_trace)]
 	pub(crate) method: Method,
 	pub(crate) headers: Box<Heap<*mut JSObject>>,
-	pub(crate) body: FetchBody,
+	pub(crate) body: Option<FetchBody>,
 	pub(crate) body_used: bool,
 
 	#[ion(no_trace)]
@@ -64,6 +68,30 @@ pub struct Request {
 	pub(crate) signal_object: Box<Heap<*mut JSObject>>,
 }
 
+impl Request {
+	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
+		match &self.body {
+			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
+			Some(body) => Ok(body),
+		}
+	}
+
+	pub fn take_and_use_body(&mut self) -> Result<FetchBody> {
+		match self.body.take() {
+			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
+			Some(body) => Ok(body),
+		}
+	}
+
+	fn text_impl(&mut self) -> Result<String> {
+		Ok(self
+			.take_and_use_body()?
+			.into_bytes()
+			.map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
+			.unwrap_or_else(|| String::new()))
+	}
+}
+
 #[js_class]
 impl Request {
 	#[ion(constructor)]
@@ -85,7 +113,7 @@ impl Request {
 
 					method: Method::GET,
 					headers: Box::default(),
-					body: FetchBody::default(),
+					body: Some(FetchBody::default()),
 					body_used: false,
 
 					url: url.clone(),
@@ -211,7 +239,7 @@ impl Request {
 				}
 			}
 
-			request.body = body;
+			request.body = Some(body);
 		}
 		request.headers.set(Headers::new_object(cx, Box::new(headers)));
 
@@ -296,6 +324,94 @@ impl Request {
 	#[ion(get)]
 	pub fn get_duplex(&self) -> String {
 		String::from("half")
+	}
+
+	#[ion(get)]
+	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
+		let body = self.take_and_use_body()?;
+		let stream = ion::ReadableStream::from_bytes(cx, body.into_bytes().unwrap_or_else(|| vec![].into()));
+		Ok((*stream).get())
+	}
+
+	#[ion(get, name = "bodyUsed")]
+	pub fn get_body_used(&self) -> bool {
+		self.body.is_none()
+	}
+
+	#[ion(name = "arrayBuffer")]
+	pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
+		Promise::new_from_result(
+			cx,
+			self.take_and_use_body().map(|body| match body.into_bytes() {
+				Some(ref bytes) => ArrayBuffer::from(bytes.as_ref()),
+				None => ArrayBuffer::from(&b""[..]),
+			}),
+		)
+	}
+
+	pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
+		Promise::new_from_result(cx, self.text_impl())
+	}
+
+	pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
+		Promise::new_from_result(
+			cx,
+			self.text_impl().and_then(|text| {
+				let Some(str) = ion::String::copy_from_str(cx, text.as_str()) else {
+					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
+				};
+				let mut result = Value::undefined(cx);
+				if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) }
+				{
+					return Err(ion::Error::none());
+				}
+
+				Ok((*result.to_object(cx)).get())
+			}),
+		)
+	}
+
+	#[ion(name = "formData")]
+	pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
+		Promise::new_from_result(
+			cx,
+			self.take_and_use_body().and_then(|body| {
+				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into()).unwrap();
+				let headers = Headers::get_private(&unsafe { Local::from_heap(&self.headers) }.into());
+				let Some(content_type) = headers.get(content_type_string).unwrap() else {
+					return Err(ion::Error::new(
+						"No content-type header, cannot decide form data format",
+						ion::ErrorKind::Type,
+					));
+				};
+				let content_type = content_type.to_string();
+
+				let bytes = body.into_bytes();
+
+				let bytes = bytes.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]);
+
+				if content_type.starts_with("application/x-www-form-urlencoded") {
+					let parsed = form_urlencoded::parse(bytes.as_ref());
+					let mut form_data = FormData::constructor();
+
+					for (key, val) in parsed {
+						form_data.append_native_string(key.into_owned(), val.into_owned());
+					}
+
+					Ok(FormData::new_object(cx, Box::new(form_data)))
+				} else if content_type.starts_with("multipart/form-data") {
+					Err(ion::Error::new(
+						"multipart/form-data deserialization is not supported yet",
+						ion::ErrorKind::Normal,
+					))
+				} else {
+					Err(ion::Error::new(
+						"Invalid content-type, cannot decide form data format",
+						ion::ErrorKind::Type,
+					))
+				}
+			}),
+		)
 	}
 }
 

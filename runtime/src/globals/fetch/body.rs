@@ -23,7 +23,7 @@ use crate::globals::url::URLSearchParams;
 
 #[derive(Debug, Clone, Traceable)]
 #[non_exhaustive]
-enum FetchBodyInner {
+pub enum FetchBodyInner {
 	None,
 	Bytes(#[ion(no_trace)] Bytes),
 }
@@ -50,9 +50,9 @@ impl Display for FetchBodyKind {
 
 #[derive(Debug, Traceable)]
 pub struct FetchBody {
-	body: FetchBodyInner,
-	source: Option<Box<Heap<JSVal>>>,
-	pub(crate) kind: Option<FetchBodyKind>,
+	pub body: FetchBodyInner,
+	pub source: Option<Box<Heap<JSVal>>>,
+	pub kind: Option<FetchBodyKind>,
 }
 
 impl FetchBody {
@@ -87,6 +87,13 @@ impl FetchBody {
 
 	pub fn to_bytes(&self) -> Option<&Bytes> {
 		match &self.body {
+			FetchBodyInner::Bytes(bytes) => Some(bytes),
+			FetchBodyInner::None => None,
+		}
+	}
+
+	pub fn into_bytes(self) -> Option<Bytes> {
+		match self.body {
 			FetchBodyInner::Bytes(bytes) => Some(bytes),
 			FetchBodyInner::None => None,
 		}
