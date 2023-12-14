@@ -91,11 +91,10 @@ fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>
 		headers.headers.append(ACCEPT_LANGUAGE, HeaderValue::from_str(&locale_string).unwrap());
 	}
 
-	let request = cx.root_persistent_object(Request::new_object(cx, Box::new(request)));
-	let request = request.handle().into_handle();
+	let request = TracedHeap::new(Request::new_object(cx, Box::new(request)));
 	unsafe {
 		future_to_promise(cx, move |cx| async move {
-			let mut request = Object::from(Local::from_raw_handle(request));
+			let mut request = Object::from(request.to_local());
 			let (cx, res) = cx
 				.await_native_cx(|cx| fetch_internal(cx, &mut request, GLOBAL_CLIENT.get().unwrap().clone()))
 				.await;

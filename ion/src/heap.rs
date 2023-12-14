@@ -56,6 +56,12 @@ where
 	pub fn from_local(local: &Local<'_, T>) -> Self {
 		Self::new(local.get())
 	}
+
+	/// This constructs a Local from the Heap directly as opposed to rooting on the stack.
+	/// The returned Local cannot be used to construct a HandleMut.
+	pub fn to_local<'a>(&'a self) -> Local<'a, T> {
+		unsafe { Local::from_heap(&self.heap) }
+	}
 }
 
 impl_heap_root! {
@@ -98,7 +104,7 @@ where
 	T: GCMethods + Copy + 'static,
 	JSHeap<T>: Traceable,
 {
-	heap: Box<mozjs::jsapi::Heap<T>>,
+	heap: Box<JSHeap<T>>,
 }
 
 impl<T> TracedHeap<T>
@@ -128,6 +134,12 @@ where
 {
 	pub fn from_local(local: &Local<'_, T>) -> Self {
 		Self::new(local.get())
+	}
+
+	/// This constructs a Local from the Heap directly as opposed to rooting on the stack.
+	/// The returned Local cannot be used to construct a HandleMut.
+	pub fn to_local<'a>(&'a self) -> Local<'a, T> {
+		unsafe { Local::from_heap(&self.heap) }
 	}
 }
 

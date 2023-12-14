@@ -12,10 +12,9 @@ use hyper::body::HttpBody;
 use hyper::ext::ReasonPhrase;
 use ion::string::byte::ByteString;
 use mozjs::jsapi::{Heap, JSObject};
-use mozjs::rust::IntoHandle;
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Local, Object, Promise, Result};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap};
 use ion::class::{NativeObject, Reflector};
 use ion::typedarray::ArrayBuffer;
 pub use options::*;
@@ -240,11 +239,10 @@ impl Response {
 	// TODO: get_body must be a sync call
 	#[ion(get)]
 	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = cx.root_persistent_object(self.reflector().get());
-		let this = this.handle().into_handle();
+		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(Local::from_raw_handle(this));
+				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
 				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
 				cx.unroot_persistent_object(this.get());
@@ -261,11 +259,10 @@ impl Response {
 
 	#[ion(name = "arrayBuffer")]
 	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = cx.root_persistent_object(self.reflector().get());
-		let this = this.handle().into_handle();
+		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(Local::from_raw_handle(this));
+				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
 				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
 				cx.unroot_persistent_object(this.get());
@@ -275,11 +272,10 @@ impl Response {
 	}
 
 	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = cx.root_persistent_object(self.reflector().get());
-		let this = this.handle().into_handle();
+		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(Local::from_raw_handle(this));
+				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
 				let result = response.read_to_text().await;
 				cx.unroot_persistent_object(this.get());
@@ -289,11 +285,10 @@ impl Response {
 	}
 
 	pub fn json<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = cx.root_persistent_object(self.reflector().get());
-		let this = this.handle().into_handle();
+		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(Local::from_raw_handle(this));
+				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
 				let (cx, text) = cx.await_native(response.read_to_text()).await;
 				cx.unroot_persistent_object(this.get());
@@ -314,11 +309,10 @@ impl Response {
 
 	#[ion(name = "formData")]
 	pub fn form_data<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = cx.root_persistent_object(self.reflector().get());
-		let this = this.handle().into_handle();
+		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(Local::from_raw_handle(this));
+				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
 
 				let (cx, bytes) = cx.await_native(response.read_to_bytes()).await;
