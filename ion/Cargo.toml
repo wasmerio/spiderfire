@@ -21,6 +21,7 @@ chrono.workspace = true
 indent.workspace = true
 mozjs.workspace = true
 mozjs_sys.workspace = true
+async-stream = "0.3.5"
 
 [dependencies.futures]
 workspace = true

@@ -12,6 +12,7 @@ use crate::{
 	conversions::FromValue, Local,
 };
 
+#[derive(Debug)]
 pub struct ReadableStream {
 	// Since streams are async by nature, they cannot be tied to the lifetime
 	// of one Context.
@@ -19,8 +20,16 @@ pub struct ReadableStream {
 }
 
 impl ReadableStream {
-	pub fn from_local(local: Local<'_, *mut JSObject>) -> Option<Self> {
-		if Self::is_readable_stream(&local) {
+	pub fn new(obj: *mut JSObject) -> Option<Self> {
+		if Self::is_readable_stream(obj) {
+			Some(Self { stream: TracedHeap::new(obj) })
+		} else {
+			None
+		}
+	}
+
+	pub fn from_local(local: &Local<'_, *mut JSObject>) -> Option<Self> {
+		if Self::is_readable_stream(local.get()) {
 			Some(Self { stream: TracedHeap::from_local(&local) })
 		} else {
 			None
@@ -33,8 +42,8 @@ impl ReadableStream {
 		}
 	}
 
-	pub fn is_readable_stream(obj: &Local<'_, *mut JSObject>) -> bool {
-		unsafe { IsReadableStream(obj.get()) }
+	pub fn is_readable_stream(obj: *mut JSObject) -> bool {
+		unsafe { IsReadableStream(obj) }
 	}
 
 	pub fn is_locked(&self, cx: &Context) -> bool {
@@ -121,7 +130,21 @@ impl ReadableStreamReader {
 		ReadableStream { stream: self.stream }
 	}
 
-	pub fn read_chunk<'cx>(&self, cx: &'cx Context) -> Promise {
+	pub fn into_rust_stream(self, mut cx: Context) -> impl futures::Stream<Item = crate::ResultExc<Vec<u8>>> {
+		async_stream::try_stream! {
+			loop {
+				let chunk;
+				(cx, chunk) = cx.await_native_cx(|cx| unsafe { self.read_chunk(cx) }).await;
+				let chunk = chunk?;
+				match chunk {
+					Some(c) => yield c.to_vec(),
+					None => break,
+				}
+			}
+		}
+	}
+
+	fn read_chunk_raw<'cx>(&self, cx: &'cx Context) -> Promise {
 		unsafe {
 			let promise = cx.root_object(ReadableStreamDefaultReaderRead(
 				cx.as_ptr(),
@@ -131,49 +154,57 @@ impl ReadableStreamReader {
 		}
 	}
 
-	pub async fn read_to_end(&self, mut cx: Context) -> ResultExc<Vec<u8>> {
+	// Safety: The returned slice must be consumed before the next
+	// SpiderMonkey API call, which may cause GC to collect the chunk
+	pub async unsafe fn read_chunk<'cx>(&self, mut cx: Context) -> ResultExc<Option<&[u8]>> {
+		let chunk = self.read_chunk_raw(&cx);
+		let chunk_val;
+		(cx, chunk_val) = PromiseFuture::new(cx, &chunk).await;
+		let chunk = match chunk_val {
+			Ok(v) => {
+				if !v.is_object() {
+					return Err(Exception::Error(Error::new(
+						"ReadableStreamDefaultReader.read() should return an object",
+						ErrorKind::Type,
+					)));
+				}
+				Object::from(cx.root_object(v.to_object()))
+			}
+			Err(v) => {
+				return Err(Exception::Other(v));
+			}
+		};
+
+		let done = bool::from_value(
+			&cx,
+			&chunk.get(&cx, "done").expect("Chunk must have a done property"),
+			true,
+			(),
+		)
+		.expect("chunk.done must be a boolean");
+
+		if done {
+			return Ok(None);
+		}
+
+		let obj = chunk.get(&cx, "value").expect("Chunk must have a done property").to_object(&cx);
+		let obj_ptr = (*obj).get();
+		unsafe {
+			assert!(JS_IsArrayBufferViewObject(obj_ptr));
+			let length = JS_GetArrayBufferViewByteLength(obj_ptr);
+			let mut is_shared_memory = false;
+			let data_ptr = JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+			Ok(Some(std::slice::from_raw_parts(data_ptr as *const _, length)))
+		}
+	}
+
+	pub async fn read_to_end(&self, cx: Context) -> ResultExc<Vec<u8>> {
 		let mut result = vec![];
 
 		loop {
-			let chunk = self.read_chunk(&cx);
-			let chunk_val;
-			(cx, chunk_val) = PromiseFuture::new(cx, &chunk).await;
-			let chunk = match chunk_val {
-				Ok(v) => {
-					if !v.is_object() {
-						return Err(Exception::Error(Error::new(
-							"ReadableStreamDefaultReader.read() should return an object",
-							ErrorKind::Type,
-						)));
-					}
-					Object::from(cx.root_object(v.to_object()))
-				}
-				Err(v) => {
-					return Err(Exception::Other(v));
-				}
-			};
-
-			let done = bool::from_value(
-				&cx,
-				&chunk.get(&cx, "done").expect("Chunk must have a done property"),
-				true,
-				(),
-			)
-			.expect("chunk.done must be a boolean");
-
-			if done {
-				return Ok(result);
-			}
-
-			let obj = chunk.get(&cx, "value").expect("Chunk must have a done property").to_object(&cx);
-			let obj_ptr = (*obj).get();
-			unsafe {
-				assert!(JS_IsArrayBufferViewObject(obj_ptr));
-				let length = JS_GetArrayBufferViewByteLength(obj_ptr);
-				let mut is_shared_memory = false;
-				let data_ptr =
-					JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
-				result.extend_from_slice(std::slice::from_raw_parts(data_ptr as *const _, length));
+			match unsafe { self.read_chunk(cx.duplicate()) }.await? {
+				Some(slice) => result.extend_from_slice(slice),
+				None => break Ok(result),
 			}
 		}
 	}

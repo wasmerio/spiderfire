@@ -14,7 +14,7 @@ thread_local! {
 fn pipe_through<'cx>(
 	cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer: Object<'cx>, options: Option<Value<'cx>>,
 ) -> Result<Object<'cx>> {
-	if !ReadableStream::is_readable_stream(this) {
+	if !ReadableStream::is_readable_stream((**this).get()) {
 		return Err(Error::new(
 			"pipeThrough must be called on a ReadableStream",
 			ErrorKind::Type,
@@ -35,7 +35,7 @@ fn pipe_through<'cx>(
 		));
 	};
 
-	if !readable_end.get().is_object() || !ReadableStream::is_readable_stream(&readable_end.to_object(cx)) {
+	if !readable_end.get().is_object() || !ReadableStream::is_readable_stream((*readable_end.to_object(cx)).get()) {
 		return Err(Error::new(
 			"First argument to pipeThrough must be an object with a readable property that is a ReadableStream",
 			ErrorKind::Type,
