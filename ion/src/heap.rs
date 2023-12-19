@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use mozjs_sys::jsgc::{GCMethods, RootKind};
 use mozjs::{
 	jsapi::Heap as JSHeap,
@@ -22,6 +24,7 @@ macro_rules! impl_heap_root {
 
 /// Value stored on the heap. [Heap<T>] instances are **not**
 /// automatically traced, and must be traced in the usual way.
+#[derive(Debug)]
 pub struct Heap<T>
 where
 	T: GCMethods + Copy + 'static,
@@ -99,6 +102,7 @@ where
 /// Value stored on the heap and traced automatically. There is
 /// no need to trace [TracedHeap<T>] instances, and thus there
 /// is no [Traceable] implementation for this type.
+#[derive(Debug)]
 pub struct TracedHeap<T>
 where
 	T: GCMethods + Copy + 'static,
@@ -172,5 +176,46 @@ where
 {
 	fn clone(&self) -> Self {
 		Self::new(self.heap.get())
+	}
+}
+
+trait Private {}
+
+#[allow(private_bounds)]
+pub trait HeapPointer<T>: Private {
+	fn to_ptr(&self) -> T;
+}
+
+impl<T> Private for Heap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+}
+
+impl<T> HeapPointer<T> for Heap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn to_ptr(&self) -> T {
+		self.heap.get()
+	}
+}
+
+impl<T> Private for TracedHeap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+}
+
+impl<T> HeapPointer<T> for TracedHeap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn to_ptr(&self) -> T {
+		self.heap.get()
 	}
 }
