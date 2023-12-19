@@ -27,7 +27,7 @@ use url::Url;
 pub use body::{FetchBody, FetchBodyInner, FetchBodyKind};
 pub use client::{default_client, GLOBAL_CLIENT};
 pub use header::{Headers, HeaderEntry, HeadersInit, HeadersObject};
-use ion::{ClassDefinition, Context, Error, ErrorKind, Exception, Local, Object, Promise, ResultExc, TracedHeap, Result};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Exception, Object, Promise, ResultExc, TracedHeap, Result};
 use ion::class::Reflector;
 use ion::conversions::ToValue;
 use ion::flags::PropertyFlags;
@@ -43,6 +43,8 @@ use crate::globals::fetch::request::{
 use crate::globals::fetch::response::{network_error, ResponseKind, ResponseTaint};
 use crate::promise::future_to_promise;
 use crate::VERSION;
+
+use self::body::FetchBodyLength;
 
 mod body;
 mod client;
@@ -66,14 +68,14 @@ fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>
 		}
 	};
 
-	let signal = Object::from(unsafe { Local::from_heap(&request.signal_object) });
+	let signal = Object::from(request.signal_object.to_local());
 	let signal = AbortSignal::get_private(&signal);
 	if let Some(reason) = signal.get_reason() {
 		promise.reject(cx, &cx.root_value(reason).into());
 		return Some(promise);
 	}
 
-	let mut headers = Object::from(unsafe { Local::from_heap(&request.headers) });
+	let mut headers = Object::from(request.headers.to_local());
 	let headers = Headers::get_mut_private(&mut headers);
 	if !headers.headers.contains_key(ACCEPT) {
 		headers.headers.append(ACCEPT, HeaderValue::from_static("*/*"));
@@ -106,7 +108,7 @@ fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>
 
 async fn fetch_internal<'o>(cx: Context, request: &mut Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
 	let request = Request::get_mut_private(request);
-	let signal = Object::from(unsafe { Local::from_heap(&request.signal_object) });
+	let signal = Object::from(request.signal_object.to_local());
 	let signal = AbortSignal::get_private(&signal).signal.clone().poll();
 	let request_url = request.url.clone();
 	let send = main_fetch(cx.duplicate(), request, client, 0);
@@ -429,7 +431,7 @@ async fn http_fetch(
 #[async_recursion(?Send)]
 async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: bool) -> Result<Response> {
 	let mut request = req.clone();
-	let mut headers = Object::from(unsafe { Local::from_heap(&req.headers) });
+	let mut headers = Object::from(req.headers.to_local());
 	let headers = Headers::get_mut_private(&mut headers);
 
 	let mut request_builder = hyper::Request::builder().method(&request.method).uri(request.url.to_string());
@@ -444,9 +446,17 @@ async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: 
 		None => return Err(Error::new("Request body was already used", ErrorKind::Type)),
 	};
 
-	let length = request_body.len().or_else(|| {
-		(request.body.is_none() && (request.method == Method::POST || request.method == Method::PUT)).then_some(0)
-	});
+	let length = match request_body.len() {
+		FetchBodyLength::None => {
+			if request.body.is_none() && (request.method == Method::POST || request.method == Method::PUT) {
+				Some(0)
+			} else {
+				None
+			}
+		}
+		FetchBodyLength::Known(l) => Some(l),
+		FetchBodyLength::Unknown => None,
+	};
 
 	if let Some(length) = length {
 		headers.append(CONTENT_LENGTH, HeaderValue::from_str(&length.to_string()).unwrap());
@@ -508,11 +518,25 @@ async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: 
 
 	let range_requested = headers.contains_key(RANGE);
 
-	let Ok(hyper_request) = request_builder.body(request_body.to_http_body()) else {
+	// We check for the existence of a request body above, so we can safely unwrap here
+	let hyper_body = request.body.unwrap().into_http_body(cx.duplicate());
+	let (hyper_body, body_fut) = hyper_body?;
+	let Ok(hyper_request) = request_builder.body(hyper_body) else {
 		return Ok(network_error());
 	};
 
-	let (cx, hyper_response) = cx.await_native(client.request(hyper_request)).await;
+	let (cx, hyper_response) = match body_fut {
+		None => cx.await_native(client.request(hyper_request)).await,
+		Some(f) => {
+			// See comment on [FetchBody::into_http_body]. We have to run
+			// both futures simultaneously, giving us this lovely bit of
+			// code.
+			let cx2 = cx.duplicate();
+			drop(cx);
+			let res = futures::join!(client.request(hyper_request), f);
+			(cx2, res.0)
+		}
+	};
 	let hyper_response = hyper_response?;
 	let mut response = Response::from_hyper_response(&cx, hyper_response, req.url.clone()).await?;
 
@@ -579,7 +603,7 @@ async fn http_redirect_fetch(
 	{
 		request.method = Method::GET;
 		request.body = Some(FetchBody::default());
-		let mut headers = Object::from(unsafe { Local::from_heap(&request.headers) });
+		let mut headers = Object::from(request.headers.to_local());
 		let headers = Headers::get_mut_private(&mut headers);
 		remove_all_header_entries(&mut headers.headers, &CONTENT_ENCODING);
 		remove_all_header_entries(&mut headers.headers, &CONTENT_LANGUAGE);

@@ -13,7 +13,9 @@ use ion::string::byte::ByteString;
 use mozjs::jsapi::JSObject;
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap};
+use ion::{
+	ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap, HeapPointer, ReadableStream,
+};
 use ion::class::{NativeObject, Reflector};
 use ion::typedarray::ArrayBuffer;
 pub use options::*;
@@ -112,17 +114,22 @@ impl Response {
 		Headers::get_private(&obj)
 	}
 
-	pub fn take_body_bytes(&mut self) -> Result<Bytes> {
+	pub fn take_body(&mut self) -> Result<FetchBody> {
 		let body = self.body.take();
 
 		match body {
 			None => Err(Error::new("Response body has already been used.", None)),
-			Some(body) => Ok(body.into_bytes().unwrap_or_default()),
+			Some(body) => Ok(body),
 		}
 	}
 
-	pub fn take_body_text(&mut self) -> Result<String> {
-		let bytes = self.take_body_bytes()?;
+	pub async fn take_body_bytes(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<Bytes> {
+		let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+		Ok(body.into_bytes(cx).await?.unwrap_or_default())
+	}
+
+	pub async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
+		let bytes = Self::take_body_bytes(this, cx).await?;
 		String::from_utf8(bytes.into()).map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), None))
 	}
 }
@@ -213,10 +220,13 @@ impl Response {
 		self.headers.get()
 	}
 
-	pub fn get_body<'cx>(&mut self, cx: &'cx Context) -> Result<*mut JSObject> {
-		let bytes = self.take_body_bytes()?;
-		let stream = ion::ReadableStream::from_bytes(&cx, bytes.into());
-		Ok((*stream).get())
+	#[ion(get)]
+	pub fn get_body<'cx>(&mut self, cx: &Context) -> Result<*mut JSObject> {
+		Ok(match self.take_body()?.body {
+			FetchBodyInner::None => ReadableStream::from_bytes(cx, Bytes::from(vec![])).get(),
+			FetchBodyInner::Bytes(b) => ReadableStream::from_bytes(cx, b).get(),
+			FetchBodyInner::Stream(s) => s.get(),
+		})
 	}
 
 	#[ion(get, name = "bodyUsed")]
@@ -228,10 +238,8 @@ impl Response {
 	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |_| async move {
-				let mut response = Object::from(this.to_local());
-				let response = Response::get_mut_private(&mut response);
-				let bytes = response.take_body_bytes()?;
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let bytes = Self::take_body_bytes(&this, cx).await?;
 				Ok(ArrayBuffer::from(Vec::from(bytes)))
 			})
 		}
@@ -240,12 +248,7 @@ impl Response {
 	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |_| async move {
-				let mut response = Object::from(this.to_local());
-				let response = Response::get_mut_private(&mut response);
-				let result = response.take_body_text();
-				result
-			})
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move { Self::take_body_text(&this, cx).await })
 		}
 	}
 
@@ -253,9 +256,8 @@ impl Response {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let mut response = Object::from(this.to_local());
-				let response = Response::get_mut_private(&mut response);
-				let text = response.take_body_text()?;
+				let (cx, text) = cx.await_native_cx(|cx| Self::take_body_text(&this, cx)).await;
+				let text = text?;
 
 				let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
 					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
@@ -275,10 +277,11 @@ impl Response {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let (cx, bytes) = cx.await_native_cx(|cx| Self::take_body_bytes(&this, cx)).await;
+				let bytes = bytes?;
+
 				let mut response = Object::from(this.to_local());
 				let response = Response::get_mut_private(&mut response);
-
-				let bytes = response.take_body_bytes()?;
 
 				let headers = response.get_headers_object(&cx);
 				let content_type_string = ByteString::<_>::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();

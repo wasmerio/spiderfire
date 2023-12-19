@@ -9,23 +9,34 @@ use std::fmt::{Display, Formatter};
 
 use bytes::Bytes;
 use form_urlencoded::Serializer;
+use futures::StreamExt;
 use hyper::Body;
 use multipart::client::multipart;
-use mozjs::jsapi::Heap;
 use mozjs::jsval::JSVal;
 
-use ion::{Context, Error, ErrorKind, Result, Value};
+use ion::{Context, Error, ErrorKind, Result, Value, Heap, ReadableStream};
 use ion::conversions::FromValue;
 
 use crate::globals::file::{Blob, buffer_source_to_bytes};
 use crate::globals::form_data::{FormData, FormDataEntryValue};
 use crate::globals::url::URLSearchParams;
 
-#[derive(Debug, Clone, Traceable)]
+#[derive(Debug, Traceable)]
 #[non_exhaustive]
 pub enum FetchBodyInner {
 	None,
 	Bytes(#[ion(no_trace)] Bytes),
+	Stream(#[ion(no_trace)] ReadableStream),
+}
+
+impl Clone for FetchBodyInner {
+	fn clone(&self) -> Self {
+		match self {
+			Self::None => Self::None,
+			Self::Bytes(b) => Self::Bytes(b.clone()),
+			Self::Stream(s) => Self::Stream(ReadableStream::new(s.get()).unwrap()),
+		}
+	}
 }
 
 #[derive(Clone, Debug, Traceable)]
@@ -51,8 +62,15 @@ impl Display for FetchBodyKind {
 #[derive(Debug, Traceable)]
 pub struct FetchBody {
 	pub body: FetchBodyInner,
-	pub source: Option<Box<Heap<JSVal>>>,
+	pub source: Option<Heap<JSVal>>,
 	pub kind: Option<FetchBodyKind>,
+}
+
+#[derive(Debug)]
+pub enum FetchBodyLength {
+	None,
+	Known(usize),
+	Unknown,
 }
 
 impl FetchBody {
@@ -60,17 +78,11 @@ impl FetchBody {
 		matches!(&self.body, FetchBodyInner::None)
 	}
 
-	pub fn is_empty(&self) -> bool {
+	pub fn len(&self) -> FetchBodyLength {
 		match &self.body {
-			FetchBodyInner::None => true,
-			FetchBodyInner::Bytes(bytes) => bytes.is_empty(),
-		}
-	}
-
-	pub fn len(&self) -> Option<usize> {
-		match &self.body {
-			FetchBodyInner::None => None,
-			FetchBodyInner::Bytes(bytes) => Some(bytes.len()),
+			FetchBodyInner::None => FetchBodyLength::None,
+			FetchBodyInner::Bytes(bytes) => FetchBodyLength::Known(bytes.len()),
+			FetchBodyInner::Stream(_) => FetchBodyLength::Unknown,
 		}
 	}
 
@@ -78,24 +90,51 @@ impl FetchBody {
 		matches!(&self.body, FetchBodyInner::None | FetchBodyInner::Bytes(_))
 	}
 
-	pub fn to_http_body(&self) -> Body {
-		match &self.body {
-			FetchBodyInner::None => Body::empty(),
-			FetchBodyInner::Bytes(bytes) => Body::from(bytes.clone()),
-		}
-	}
-
-	pub fn to_bytes(&self) -> Option<&Bytes> {
-		match &self.body {
-			FetchBodyInner::Bytes(bytes) => Some(bytes),
-			FetchBodyInner::None => None,
-		}
-	}
-
-	pub fn into_bytes(self) -> Option<Bytes> {
+	// We're running on a single-threaded runtime, but hyper doesn't
+	// know this, so it requires any streams to be Send, which is
+	// impossible with anything SpiderMonkey-related. Instead, we have
+	// to use a channel body, and create a second future that reads
+	// the stream and queues the chunks to the channel.
+	pub fn into_http_body(self, cx: Context) -> Result<(Body, Option<impl std::future::Future<Output = ()>>)> {
 		match self.body {
-			FetchBodyInner::Bytes(bytes) => Some(bytes),
-			FetchBodyInner::None => None,
+			FetchBodyInner::None => Ok((Body::empty(), None)),
+			FetchBodyInner::Bytes(bytes) => Ok((Body::from(bytes), None)),
+			FetchBodyInner::Stream(stream) => {
+				let reader = stream.into_reader(&cx)?;
+				let mut stream = Box::pin(reader.into_rust_stream(cx));
+				let (mut sender, body) = Body::channel();
+				let future = async move {
+					loop {
+						let chunk = stream.next().await;
+						match chunk {
+							None => break,
+							Some(Ok(bytes)) => {
+								if let Err(_) = sender.send_data(Bytes::from(bytes)).await {
+									sender.abort();
+									break;
+								}
+							}
+							Some(Err(_)) => {
+								sender.abort();
+								break;
+							}
+						}
+					}
+				};
+				Ok((body, Some(future)))
+			}
+		}
+	}
+
+	pub async fn into_bytes(self, cx: Context) -> Result<Option<Bytes>> {
+		match self.body {
+			FetchBodyInner::None => Ok(None),
+			FetchBodyInner::Bytes(bytes) => Ok(Some(bytes)),
+			FetchBodyInner::Stream(stream) => {
+				let reader = stream.into_reader(&cx)?;
+				let bytes = reader.read_to_end(cx).await.map_err(|e| e.to_error())?;
+				Ok(Some(bytes.into()))
+			}
 		}
 	}
 }
@@ -104,7 +143,7 @@ impl Clone for FetchBody {
 	fn clone(&self) -> FetchBody {
 		FetchBody {
 			body: self.body.clone(),
-			source: self.source.as_ref().map(|s| Heap::boxed(s.get())),
+			source: self.source.as_ref().map(|s| Heap::new(s.get())),
 			kind: self.kind.clone(),
 		}
 	}
@@ -126,20 +165,27 @@ impl<'cx> FromValue<'cx> for FetchBody {
 		if value.handle().is_string() {
 			return Ok(FetchBody {
 				body: FetchBodyInner::Bytes(Bytes::from(String::from_value(cx, value, strict, ()).unwrap())),
-				source: Some(Heap::boxed(value.get())),
+				source: Some(Heap::new(value.get())),
 				kind: Some(FetchBodyKind::String),
 			});
 		} else if value.handle().is_object() {
+			if let Some(stream) = ReadableStream::from_local(&value.to_object(cx)) {
+				return Ok(FetchBody {
+					body: FetchBodyInner::Stream(stream),
+					source: Some(Heap::new(value.get())),
+					kind: None,
+				});
+			}
 			if let Ok(bytes) = buffer_source_to_bytes(&value.to_object(cx)) {
 				return Ok(FetchBody {
 					body: FetchBodyInner::Bytes(bytes),
-					source: Some(Heap::boxed(value.get())),
+					source: Some(Heap::new(value.get())),
 					kind: None,
 				});
 			} else if let Ok(blob) = <&Blob>::from_value(cx, value, strict, ()) {
 				return Ok(FetchBody {
 					body: FetchBodyInner::Bytes(blob.as_bytes().clone()),
-					source: Some(Heap::boxed(value.get())),
+					source: Some(Heap::new(value.get())),
 					kind: blob.kind().map(FetchBodyKind::Blob),
 				});
 			} else if let Ok(form_data) = <&FormData>::from_value(cx, value, strict, ()) {
@@ -162,7 +208,7 @@ impl<'cx> FromValue<'cx> for FetchBody {
 
 				return Ok(FetchBody {
 					body: FetchBodyInner::Bytes(bytes),
-					source: Some(Heap::boxed(value.handle().get())),
+					source: Some(Heap::new(value.handle().get())),
 					kind: Some(FetchBodyKind::FormData(content_type)),
 				});
 			} else if let Ok(search_params) = <&URLSearchParams>::from_value(cx, value, strict, ()) {
@@ -170,7 +216,7 @@ impl<'cx> FromValue<'cx> for FetchBody {
 					body: FetchBodyInner::Bytes(Bytes::from(
 						Serializer::new(String::new()).extend_pairs(search_params.pairs()).finish(),
 					)),
-					source: Some(Heap::boxed(value.get())),
+					source: Some(Heap::new(value.get())),
 					kind: Some(FetchBodyKind::URLSearchParams),
 				});
 			}

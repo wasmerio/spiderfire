@@ -6,13 +6,14 @@
 
 use std::str::FromStr;
 
+use bytes::Bytes;
 use http::{HeaderMap, HeaderValue};
 use http::header::CONTENT_TYPE;
 use hyper::Method;
-use ion::{Value, Local};
+use ion::{Value, TracedHeap, HeapPointer, Heap};
 use ion::string::byte::ByteString;
 use ion::typedarray::ArrayBuffer;
-use mozjs::jsapi::{Heap, JSObject};
+use mozjs::jsapi::JSObject;
 use url::Url;
 
 use ion::{ClassDefinition, Context, Error, ErrorKind, Result, Promise};
@@ -24,6 +25,9 @@ use crate::globals::fetch::body::FetchBody;
 use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
 use crate::globals::form_data::FormData;
+use crate::promise::future_to_promise;
+
+use super::FetchBodyInner;
 
 mod options;
 
@@ -41,7 +45,7 @@ pub struct Request {
 
 	#[ion(no_trace)]
 	pub(crate) method: Method,
-	pub(crate) headers: Box<Heap<*mut JSObject>>,
+	pub(crate) headers: Heap<*mut JSObject>,
 	pub(crate) body: Option<FetchBody>,
 	pub(crate) body_used: bool,
 
@@ -65,7 +69,7 @@ pub struct Request {
 	pub(crate) keepalive: bool,
 
 	pub(crate) client_window: bool,
-	pub(crate) signal_object: Box<Heap<*mut JSObject>>,
+	pub(crate) signal_object: Heap<*mut JSObject>,
 }
 
 impl Request {
@@ -76,17 +80,19 @@ impl Request {
 		}
 	}
 
-	pub fn take_and_use_body(&mut self) -> Result<FetchBody> {
+	pub fn take_body(&mut self) -> Result<FetchBody> {
 		match self.body.take() {
 			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
 			Some(body) => Ok(body),
 		}
 	}
 
-	fn text_impl(&mut self) -> Result<String> {
-		Ok(self
-			.take_and_use_body()?
-			.into_bytes()
+	async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
+		let this = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into());
+		Ok(this
+			.take_body()?
+			.into_bytes(cx)
+			.await?
 			.map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
 			.unwrap_or_else(|| String::new()))
 	}
@@ -112,7 +118,7 @@ impl Request {
 					reflector: Reflector::default(),
 
 					method: Method::GET,
-					headers: Box::default(),
+					headers: Heap::new(std::ptr::null_mut()),
 					body: Some(FetchBody::default()),
 					body_used: false,
 
@@ -133,7 +139,7 @@ impl Request {
 					keepalive: false,
 
 					client_window: true,
-					signal_object: Heap::boxed(AbortSignal::new_object(cx, Box::default())),
+					signal_object: Heap::new(AbortSignal::new_object(cx, Box::default())),
 				}
 			}
 		};
@@ -328,8 +334,12 @@ impl Request {
 
 	#[ion(get)]
 	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
-		let body = self.take_and_use_body()?;
-		let stream = ion::ReadableStream::from_bytes(cx, body.into_bytes().unwrap_or_else(|| vec![].into()));
+		let body = self.take_body()?;
+		let stream = match body.body {
+			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
+			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
+			FetchBodyInner::Stream(stream) => stream,
+		};
 		Ok((*stream).get())
 	}
 
@@ -339,45 +349,60 @@ impl Request {
 	}
 
 	#[ion(name = "arrayBuffer")]
-	pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
-		Promise::new_from_result(
-			cx,
-			self.take_and_use_body().map(|body| match body.into_bytes() {
-				Some(ref bytes) => ArrayBuffer::from(bytes.as_ref()),
-				None => ArrayBuffer::from(&b""[..]),
-			}),
-		)
+	pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let body = this.take_body()?;
+				Ok(match body.into_bytes(cx).await? {
+					Some(ref bytes) => ArrayBuffer::from(bytes.as_ref()),
+					None => ArrayBuffer::from(&b""[..]),
+				})
+			})
+		}
 	}
 
-	pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
-		Promise::new_from_result(cx, self.text_impl())
+	pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe { future_to_promise(cx, move |cx| async move { Self::take_body_text(&this, cx).await }) }
 	}
 
-	pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
-		Promise::new_from_result(
-			cx,
-			self.text_impl().and_then(|text| {
-				let Some(str) = ion::String::copy_from_str(cx, text.as_str()) else {
+	pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let (cx, text) = cx.await_native_cx(|cx| Self::take_body_text(&this, cx)).await;
+				let text = text?;
+
+				let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
 					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
 				};
-				let mut result = Value::undefined(cx);
-				if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) }
-				{
+				let mut result = Value::undefined(&cx);
+				if !mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) {
 					return Err(ion::Error::none());
 				}
 
-				Ok((*result.to_object(cx)).get())
-			}),
-		)
+				Ok((*result.to_object(&cx)).get())
+			})
+		}
 	}
 
 	#[ion(name = "formData")]
-	pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
-		Promise::new_from_result(
-			cx,
-			self.take_and_use_body().and_then(|body| {
+	pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let this_obj = Self::get_mut_private(&mut this.root(&cx).into());
+				let body = this_obj.take_body()?;
+				let (cx, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
+				let bytes = bytes?;
+				let bytes = bytes.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]);
+
+				let this_obj = Self::get_mut_private(&mut this.root(&cx).into());
+
 				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into()).unwrap();
-				let headers = Headers::get_private(&unsafe { Local::from_heap(&self.headers) }.into());
+				let headers = Headers::get_private(&this_obj.headers.to_local().into());
 				let Some(content_type) = headers.get(content_type_string).unwrap() else {
 					return Err(ion::Error::new(
 						"No content-type header, cannot decide form data format",
@@ -385,10 +410,6 @@ impl Request {
 					));
 				};
 				let content_type = content_type.to_string();
-
-				let bytes = body.into_bytes();
-
-				let bytes = bytes.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]);
 
 				if content_type.starts_with("application/x-www-form-urlencoded") {
 					let parsed = form_urlencoded::parse(bytes.as_ref());
@@ -398,7 +419,7 @@ impl Request {
 						form_data.append_native_string(key.into_owned(), val.into_owned());
 					}
 
-					Ok(FormData::new_object(cx, Box::new(form_data)))
+					Ok(FormData::new_object(&cx, Box::new(form_data)))
 				} else if content_type.starts_with("multipart/form-data") {
 					Err(ion::Error::new(
 						"multipart/form-data deserialization is not supported yet",
@@ -410,8 +431,8 @@ impl Request {
 						ion::ErrorKind::Type,
 					))
 				}
-			}),
-		)
+			})
+		}
 	}
 }
 
@@ -425,7 +446,7 @@ impl Clone for Request {
 			reflector: Reflector::default(),
 
 			method,
-			headers: Box::default(),
+			headers: Heap::new(std::ptr::null_mut()),
 			body: self.body.clone(),
 			body_used: self.body_used,
 
@@ -446,7 +467,7 @@ impl Clone for Request {
 			keepalive: self.keepalive,
 
 			client_window: self.client_window,
-			signal_object: Heap::boxed(self.signal_object.get()),
+			signal_object: Heap::new(self.signal_object.get()),
 		}
 	}
 }
