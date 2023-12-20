@@ -11,15 +11,25 @@ use bytes::Bytes;
 use form_urlencoded::Serializer;
 use futures::StreamExt;
 use hyper::Body;
+use hyper::body::HttpBody;
+use ion::class::NativeObject;
+use ion::typedarray::ArrayBuffer;
+use mozjs::c_str;
+use mozjs::jsapi::CheckReadableStreamControllerCanCloseOrEnqueue;
 use multipart::client::multipart;
 use mozjs::jsval::JSVal;
 
-use ion::{Context, Error, ErrorKind, Result, Value, Heap, ReadableStream};
-use ion::conversions::FromValue;
+use ion::{
+	Context, Error, ErrorKind, Result, Value, Heap, ReadableStream, Exception, Promise, TracedHeap, ClassDefinition,
+	Function,
+};
+use ion::conversions::{FromValue, ToValue};
 
 use crate::globals::file::{Blob, buffer_source_to_bytes};
 use crate::globals::form_data::{FormData, FormDataEntryValue};
+use crate::globals::streams::{NativeStreamSourceCallbacks, NativeStreamSource};
 use crate::globals::url::URLSearchParams;
+use crate::promise::future_to_promise;
 
 #[derive(Debug, Traceable)]
 #[non_exhaustive]
@@ -27,14 +37,23 @@ pub enum FetchBodyInner {
 	None,
 	Bytes(#[ion(no_trace)] Bytes),
 	Stream(#[ion(no_trace)] ReadableStream),
+	HyperBody(#[ion(no_trace)] hyper::Body),
 }
 
-impl Clone for FetchBodyInner {
-	fn clone(&self) -> Self {
+impl FetchBodyInner {
+	fn try_clone(&self) -> Result<Self> {
 		match self {
-			Self::None => Self::None,
-			Self::Bytes(b) => Self::Bytes(b.clone()),
-			Self::Stream(s) => Self::Stream(ReadableStream::new(s.get()).unwrap()),
+			Self::None => Ok(Self::None),
+			Self::Bytes(b) => Ok(Self::Bytes(b.clone())),
+			Self::Stream(s) => Ok(Self::Stream(ReadableStream::new(s.get()).unwrap())),
+
+			// Alternatively, we could read the entire body and turn both this
+			// and the other request's bodies into Self::Bytes variants. This
+			// would need a mutable reference though.
+			Self::HyperBody(_) => Err(Error::new(
+				"Native-backed requests cannot be duplicated",
+				ErrorKind::Type,
+			)),
 		}
 	}
 }
@@ -83,6 +102,7 @@ impl FetchBody {
 			FetchBodyInner::None => FetchBodyLength::None,
 			FetchBodyInner::Bytes(bytes) => FetchBodyLength::Known(bytes.len()),
 			FetchBodyInner::Stream(_) => FetchBodyLength::Unknown,
+			FetchBodyInner::HyperBody(_) => FetchBodyLength::Unknown,
 		}
 	}
 
@@ -99,9 +119,11 @@ impl FetchBody {
 		match self.body {
 			FetchBodyInner::None => Ok((Body::empty(), None)),
 			FetchBodyInner::Bytes(bytes) => Ok((Body::from(bytes), None)),
+			FetchBodyInner::HyperBody(body) => Ok((body, None)),
 			FetchBodyInner::Stream(stream) => {
 				let reader = stream.into_reader(&cx)?;
-				let mut stream = Box::pin(reader.into_rust_stream(cx));
+				let mut stream = Box::pin(reader.into_rust_stream(cx.duplicate()));
+				drop(cx);
 				let (mut sender, body) = Body::channel();
 				let future = async move {
 					loop {
@@ -135,17 +157,19 @@ impl FetchBody {
 				let bytes = reader.read_to_end(cx).await.map_err(|e| e.to_error())?;
 				Ok(Some(bytes.into()))
 			}
+			FetchBodyInner::HyperBody(body) => {
+				let bytes = hyper::body::to_bytes(body).await?;
+				Ok(Some(bytes))
+			}
 		}
 	}
-}
 
-impl Clone for FetchBody {
-	fn clone(&self) -> FetchBody {
-		FetchBody {
-			body: self.body.clone(),
+	pub fn try_clone(&self) -> Result<FetchBody> {
+		Ok(FetchBody {
+			body: self.body.try_clone()?,
 			source: self.source.as_ref().map(|s| Heap::new(s.get())),
 			kind: self.kind.clone(),
-		}
+		})
 	}
 }
 
@@ -222,5 +246,81 @@ impl<'cx> FromValue<'cx> for FetchBody {
 			}
 		}
 		Err(Error::new("Expected Valid Body", ErrorKind::Type))
+	}
+}
+
+pub fn hyper_body_to_stream(cx: &Context, body: Body) -> Option<ReadableStream> {
+	let source = HyperBodyStreamSource { body };
+	crate::globals::streams::readable_stream_from_callbacks(cx, Box::new(source))
+}
+
+struct HyperBodyStreamSource {
+	body: Body,
+}
+
+impl NativeStreamSourceCallbacks for HyperBodyStreamSource {
+	fn start<'cx>(
+		&self, _source: &'cx NativeStreamSource, cx: &'cx Context, _controller: ion::Object<'cx>,
+	) -> ion::ResultExc<Value<'cx>> {
+		Ok(Value::undefined(cx))
+	}
+
+	fn pull<'cx>(
+		&self, source: &'cx NativeStreamSource, cx: &'cx Context, controller: ion::Object<'cx>,
+	) -> ion::ResultExc<ion::Promise> {
+		unsafe {
+			if !CheckReadableStreamControllerCanCloseOrEnqueue(
+				cx.as_ptr(),
+				controller.handle().into(),
+				c_str!("enqueue"),
+			) {
+				return Err(Exception::Error(Error::new(
+					"Readable stream is already closed",
+					ErrorKind::Type,
+				)));
+			}
+
+			let stream_source = TracedHeap::new(source.reflector().get());
+			let controller = TracedHeap::from_local(&controller);
+
+			Ok(future_to_promise(cx, move |cx| async move {
+				let (cx, chunk) = cx
+					.await_native(
+						NativeStreamSource::get_mut_private(&mut stream_source.to_local().into())
+							.get_typed_source_mut::<Self>()
+							.body
+							.data(),
+					)
+					.await;
+
+				let controller = ion::Object::from(controller.root(&cx));
+				match chunk {
+					None => {
+						let close_func =
+							Function::from_object(&cx, &controller.get(&cx, "close").unwrap().to_object(&cx)).unwrap();
+						close_func.call(&cx, &controller, &[]).map_err(|e| e.unwrap().exception)?;
+						ion::ResultExc::<_>::Ok(())
+					}
+
+					Some(chunk) => {
+						let chunk = chunk
+							.map_err(|_| Error::new("Failed to read request body from network", ErrorKind::Normal))?;
+						let array_buffer = ArrayBuffer::from(chunk.as_ref()).to_object(&cx)?.as_value(&cx);
+
+						let enqueue_func =
+							Function::from_object(&cx, &controller.get(&cx, "enqueue").unwrap().to_object(&cx))
+								.unwrap();
+						enqueue_func.call(&cx, &controller, &[array_buffer]).map_err(|e| e.unwrap().exception)?;
+						Ok(())
+					}
+				}
+			})
+			.expect("Future queue should be running"))
+		}
+	}
+
+	fn cancel<'cx>(self: Box<Self>, cx: &'cx Context, _reason: Value) -> ion::ResultExc<ion::Promise> {
+		drop(self.body);
+		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
 	}
 }

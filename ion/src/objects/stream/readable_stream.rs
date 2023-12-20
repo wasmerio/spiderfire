@@ -3,13 +3,15 @@ use std::ops::{Deref, DerefMut};
 use bytes::Bytes;
 use mozjs::jsapi::{
 	JSObject, ReadableStreamIsLocked, ReadableStreamIsDisturbed, ReadableStreamGetReader, ReadableStreamReaderMode,
-	ReadableStreamReaderReleaseLock, ReadableStreamDefaultReaderRead, AutoRequireNoGC, IsReadableStream,
+	ReadableStreamReaderReleaseLock, ReadableStreamDefaultReaderRead, AutoRequireNoGC, IsReadableStream, ToStringSlow,
+	IsArrayBufferObject, GetArrayBufferByteLength, GetArrayBufferData,
 };
 use mozjs_sys::jsapi::{JS_IsArrayBufferViewObject, JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewData};
 
 use crate::{
 	Context, Error, ErrorKind, Object, Promise, TracedHeap, PromiseFuture, ResultExc, Exception,
-	conversions::FromValue, Local,
+	conversions::{FromValue, ToValue},
+	Local,
 };
 
 #[derive(Debug)]
@@ -87,16 +89,16 @@ impl ReadableStream {
 		}
 
 		let reader = unsafe {
-			cx.root_object(ReadableStreamGetReader(
+			ReadableStreamGetReader(
 				cx.as_ptr(),
 				self.stream.root(cx).handle().into(),
 				ReadableStreamReaderMode::Default,
-			))
+			)
 		};
 
 		Ok(ReadableStreamReader {
 			stream: self.stream,
-			reader: TracedHeap::from_local(&reader),
+			reader: TracedHeap::new(reader),
 		})
 	}
 }
@@ -190,11 +192,25 @@ impl ReadableStreamReader {
 		let obj = chunk.get(&cx, "value").expect("Chunk must have a done property").to_object(&cx);
 		let obj_ptr = (*obj).get();
 		unsafe {
-			assert!(JS_IsArrayBufferViewObject(obj_ptr));
-			let length = JS_GetArrayBufferViewByteLength(obj_ptr);
-			let mut is_shared_memory = false;
-			let data_ptr = JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
-			Ok(Some(std::slice::from_raw_parts(data_ptr as *const _, length)))
+			if IsArrayBufferObject(obj_ptr) {
+				let length = GetArrayBufferByteLength(obj_ptr);
+				let mut is_shared_memory = false;
+				let data_ptr = GetArrayBufferData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+				Ok(Some(std::slice::from_raw_parts(data_ptr as *const _, length)))
+			} else if JS_IsArrayBufferViewObject(obj_ptr) {
+				let length = JS_GetArrayBufferViewByteLength(obj_ptr);
+				let mut is_shared_memory = false;
+				let data_ptr =
+					JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+				Ok(Some(std::slice::from_raw_parts(data_ptr as *const _, length)))
+			} else {
+				let obj_str =
+					crate::String::from(cx.root_string(ToStringSlow(cx.as_ptr(), obj.as_value(&cx).handle().into())));
+				Err(Exception::Error(Error::new(
+					format!("Cannot process chunk with unknown type: {}", obj_str.to_owned(&cx)).as_str(),
+					ErrorKind::Type,
+				)))
+			}
 		}
 	}
 

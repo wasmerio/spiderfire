@@ -96,6 +96,40 @@ impl Request {
 			.map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
 			.unwrap_or_else(|| String::new()))
 	}
+
+	pub fn try_clone(&self) -> Result<Self> {
+		let method = self.method.clone();
+
+		let url = self.locations.last().unwrap().clone();
+
+		Ok(Request {
+			reflector: Reflector::default(),
+
+			method,
+			headers: Heap::new(std::ptr::null_mut()),
+			body: self.body.as_ref().map(|b| b.try_clone()).transpose()?,
+			body_used: self.body_used,
+
+			url: url.clone(),
+			locations: vec![url],
+
+			referrer: self.referrer.clone(),
+			referrer_policy: self.referrer_policy,
+
+			mode: self.mode,
+			credentials: self.credentials,
+			cache: self.cache,
+			redirect: self.redirect,
+
+			integrity: self.integrity.clone(),
+
+			unsafe_request: true,
+			keepalive: self.keepalive,
+
+			client_window: self.client_window,
+			signal_object: Heap::new(self.signal_object.get()),
+		})
+	}
 }
 
 #[js_class]
@@ -105,7 +139,7 @@ impl Request {
 		let mut fallback_cors = false;
 
 		let mut request = match info {
-			RequestInfo::Request(request) => request.clone(),
+			RequestInfo::Request(request) => request.try_clone()?,
 			RequestInfo::String(url) => {
 				let url = Url::from_str(&url)?;
 				if url.username() != "" || url.password().is_some() {
@@ -339,6 +373,9 @@ impl Request {
 			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
 			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
 			FetchBodyInner::Stream(stream) => stream,
+			FetchBodyInner::HyperBody(body) => {
+				super::body::hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?
+			}
 		};
 		Ok((*stream).get())
 	}
@@ -432,42 +469,6 @@ impl Request {
 					))
 				}
 			})
-		}
-	}
-}
-
-impl Clone for Request {
-	fn clone(&self) -> Request {
-		let method = self.method.clone();
-
-		let url = self.locations.last().unwrap().clone();
-
-		Request {
-			reflector: Reflector::default(),
-
-			method,
-			headers: Heap::new(std::ptr::null_mut()),
-			body: self.body.clone(),
-			body_used: self.body_used,
-
-			url: url.clone(),
-			locations: vec![url],
-
-			referrer: self.referrer.clone(),
-			referrer_policy: self.referrer_policy,
-
-			mode: self.mode,
-			credentials: self.credentials,
-			cache: self.cache,
-			redirect: self.redirect,
-
-			integrity: self.integrity.clone(),
-
-			unsafe_request: true,
-			keepalive: self.keepalive,
-
-			client_window: self.client_window,
-			signal_object: Heap::new(self.signal_object.get()),
 		}
 	}
 }

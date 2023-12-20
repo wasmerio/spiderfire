@@ -2,9 +2,11 @@ use std::cell::RefCell;
 
 use ion::{
 	Context, Object, flags::PropertyFlags, js_fn, Function, TracedHeap, ReadableStream, Result, Error, ErrorKind,
-	Value, conversions::ToValue, Promise, objects::WritableStream,
+	Value, conversions::ToValue, Promise, objects::WritableStream, ClassDefinition,
 };
-use mozjs::jsapi::JSFunction;
+use mozjs::jsapi::{JSFunction, NewReadableDefaultStreamObject, HandleFunction, HandleObject};
+
+use super::{NativeStreamSourceCallbacks, NativeStreamSource};
 
 thread_local! {
 	static STREAM_PIPE_TO: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
@@ -121,4 +123,32 @@ pub(super) fn define(cx: &Context, global: &mut Object) -> bool {
 	readable_stream_prototype.define_method(cx, "pipeThrough", pipe_through, 1, PropertyFlags::ENUMERATE);
 
 	true
+}
+
+pub const NULL_FUNCTION: *mut JSFunction = 0 as *mut JSFunction;
+
+pub fn readable_stream_from_callbacks(
+	cx: &Context, callbacks: Box<dyn NativeStreamSourceCallbacks>,
+) -> Option<ReadableStream> {
+	let source_obj = cx.root_object(NativeStreamSource::new_object(
+		cx,
+		Box::new(NativeStreamSource::new(callbacks)),
+	));
+
+	let stream_obj = unsafe {
+		NewReadableDefaultStreamObject(
+			cx.as_ptr(),
+			source_obj.handle().into(),
+			HandleFunction::from_marked_location(&NULL_FUNCTION),
+			1.0,
+			HandleObject::null(),
+		)
+	};
+
+	if stream_obj.is_null() {
+		None
+	} else {
+		// This should always succeed
+		ReadableStream::new(stream_obj)
+	}
 }

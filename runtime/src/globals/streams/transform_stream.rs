@@ -12,7 +12,7 @@ use mozjs::{
 		JS_ClearPendingException, ReadableStreamGetStoredError, ReadableStreamClose, JS_ReportErrorLatin1,
 		ReadableStreamError, WritableStreamGetState, WritableStreamState, WritableStreamError,
 		ReadableStreamGetDesiredSize, NewWritableDefaultStreamObject, HandleObject, HandleFunction,
-		ReadableStreamIsErrored, NewReadableDefaultStreamObject,
+		ReadableStreamIsErrored,
 	},
 	c_str,
 	jsval::JSVal,
@@ -237,18 +237,22 @@ struct Source {
 }
 
 impl NativeStreamSourceCallbacks for Source {
-	fn start<'cx>(&self, cx: &'cx Context, _controller: Object<'cx>) -> ResultExc<Value<'cx>> {
+	fn start<'cx>(
+		&self, _source: &'cx NativeStreamSource, cx: &'cx Context, _controller: Object<'cx>,
+	) -> ResultExc<Value<'cx>> {
 		let mut res = Value::undefined(cx);
 		self.start_promise.to_value(cx, &mut res);
 		Ok(res)
 	}
 
-	fn pull<'cx>(&self, cx: &'cx Context, _controller: Object<'cx>) -> ResultExc<Promise> {
+	fn pull<'cx>(
+		&self, _source: &'cx NativeStreamSource, cx: &'cx Context, _controller: Object<'cx>,
+	) -> ResultExc<Promise> {
 		// todo: implement backpressure
 		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
 	}
 
-	fn cancel<'cx>(&self, cx: &'cx Context, reason: Value) -> ResultExc<Promise> {
+	fn cancel<'cx>(self: Box<Self>, cx: &'cx Context, reason: Value) -> ResultExc<Promise> {
 		let ts = TransformStream::from_heap(cx, &self.stream);
 		ts.error_writable_and_unblock_write(cx, &reason)?;
 		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
@@ -510,8 +514,6 @@ impl TransformStream {
 	}
 }
 
-const NULL_FUNCTION: *mut JSFunction = 0 as *mut JSFunction;
-
 #[js_class]
 impl TransformStream {
 	#[ion(constructor)]
@@ -557,7 +559,7 @@ impl TransformStream {
 			cx.root_object(NewWritableDefaultStreamObject(
 				cx.as_ptr(),
 				sink_obj.handle().into(),
-				HandleFunction::from_marked_location(&NULL_FUNCTION),
+				HandleFunction::from_marked_location(&super::readable_stream_extensions::NULL_FUNCTION),
 				1.0,
 				HandleObject::null(),
 			))
@@ -574,32 +576,21 @@ impl TransformStream {
 			stream: Heap::from_local(&this),
 			start_promise,
 		};
-		let source_obj = cx.root_object(NativeStreamSource::new_object(
-			cx,
-			Box::new(NativeStreamSource::new(Box::new(source))),
-		));
 
-		let readable = unsafe {
-			cx.root_object(NewReadableDefaultStreamObject(
-				cx.as_ptr(),
-				source_obj.handle().into(),
-				HandleFunction::from_marked_location(&NULL_FUNCTION),
-				1.0,
-				HandleObject::null(),
-			))
+		let readable = match super::readable_stream_extensions::readable_stream_from_callbacks(cx, Box::new(source)) {
+			Some(readable) => readable,
+			None => {
+				return Err(Error::new(
+					"Failed to create readable half of stream",
+					ErrorKind::Normal,
+				))
+			}
 		};
-
-		if readable.get().is_null() {
-			return Err(Error::new(
-				"Failed to create readable half of stream",
-				ErrorKind::Normal,
-			));
-		}
 
 		Ok(Self {
 			reflector: Default::default(),
 			controller: Heap::new(controller),
-			readable: Heap::from_local(&readable),
+			readable: Heap::new(readable.get()),
 			writable: Heap::from_local(&writable),
 		})
 	}

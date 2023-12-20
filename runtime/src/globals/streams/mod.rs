@@ -9,6 +9,7 @@ mod transform_stream;
 
 pub use native_stream_sink::{NativeStreamSink, NativeStreamSinkCallbacks};
 pub use native_stream_source::{NativeStreamSource, NativeStreamSourceCallbacks};
+pub use readable_stream_extensions::readable_stream_from_callbacks;
 pub use text_decoder_stream::TextDecoderStream;
 pub use text_encoder_stream::TextEncoderStream;
 pub use transform_stream::{TransformStream, TransformStreamDefaultController};

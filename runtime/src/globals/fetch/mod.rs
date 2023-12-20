@@ -430,7 +430,7 @@ async fn http_fetch(
 
 #[async_recursion(?Send)]
 async fn http_network_fetch(cx: Context, req: &Request, client: Client, is_new: bool) -> Result<Response> {
-	let mut request = req.clone();
+	let mut request = req.try_clone()?;
 	let mut headers = Object::from(req.headers.to_local());
 	let headers = Headers::get_mut_private(&mut headers);
 

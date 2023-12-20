@@ -226,6 +226,9 @@ impl Response {
 			FetchBodyInner::None => ReadableStream::from_bytes(cx, Bytes::from(vec![])).get(),
 			FetchBodyInner::Bytes(b) => ReadableStream::from_bytes(cx, b).get(),
 			FetchBodyInner::Stream(s) => s.get(),
+			FetchBodyInner::HyperBody(body) => {
+				super::body::hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?.get()
+			}
 		})
 	}
 
