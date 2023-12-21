@@ -5,10 +5,11 @@
  */
 
 use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_8};
-use mozjs::typedarray::ArrayBufferView;
 
 use ion::{Error, ErrorKind, Result};
 use ion::class::Reflector;
+
+use crate::globals::AllowSharedBufferSource;
 
 #[derive(Default, FromValue)]
 pub struct TextDecoderOptions {
@@ -76,7 +77,7 @@ impl TextDecoder {
 		})
 	}
 
-	pub fn decode(&mut self, buffer: ArrayBufferView, options: Option<TextDecodeOptions>) -> Result<String> {
+	pub fn decode(&mut self, buffer: AllowSharedBufferSource, options: Option<TextDecodeOptions>) -> Result<String> {
 		let mut string = String::with_capacity(self.decoder.max_utf8_buffer_length(buffer.len()).unwrap());
 		let stream = options.unwrap_or_default().stream;
 		if self.fatal {
