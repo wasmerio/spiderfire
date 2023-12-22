@@ -179,18 +179,8 @@ where
 	}
 }
 
-trait Private {}
-
-#[allow(private_bounds)]
-pub trait HeapPointer<T>: Private {
+pub trait HeapPointer<T> {
 	fn to_ptr(&self) -> T;
-}
-
-impl<T> Private for Heap<T>
-where
-	T: GCMethods + Copy + 'static,
-	JSHeap<T>: Traceable + Default,
-{
 }
 
 impl<T> HeapPointer<T> for Heap<T>
@@ -201,13 +191,6 @@ where
 	fn to_ptr(&self) -> T {
 		self.heap.get()
 	}
-}
-
-impl<T> Private for TracedHeap<T>
-where
-	T: GCMethods + Copy + 'static,
-	JSHeap<T>: Traceable + Default,
-{
 }
 
 impl<T> HeapPointer<T> for TracedHeap<T>
