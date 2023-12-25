@@ -234,11 +234,13 @@ impl ReadableStreamReader {
 		}
 	}
 
-	pub async fn read_to_end(&self, cx: Context) -> ResultExc<Vec<u8>> {
+	pub async fn read_to_end(&self, mut cx: Context) -> ResultExc<Vec<u8>> {
 		let mut result = vec![];
 
 		loop {
-			match unsafe { self.read_chunk(cx.duplicate()) }.await? {
+			let chunk;
+			(cx, chunk) = cx.await_native_cx(|cx| unsafe { self.read_chunk(cx) }).await;
+			match chunk? {
 				Some(slice) => result.extend_from_slice(slice),
 				None => break Ok(result),
 			}
