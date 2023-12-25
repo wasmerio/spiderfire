@@ -4,7 +4,7 @@ use bytes::Bytes;
 use mozjs::jsapi::{
 	JSObject, ReadableStreamIsLocked, ReadableStreamIsDisturbed, ReadableStreamGetReader, ReadableStreamReaderMode,
 	ReadableStreamReaderReleaseLock, ReadableStreamDefaultReaderRead, AutoRequireNoGC, IsReadableStream, ToStringSlow,
-	IsArrayBufferObject, GetArrayBufferByteLength, GetArrayBufferData,
+	IsArrayBufferObject, GetArrayBufferByteLength, GetArrayBufferData, ReadableStreamTee,
 };
 use mozjs_sys::jsapi::{JS_IsArrayBufferViewObject, JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewData};
 
@@ -100,6 +100,26 @@ impl ReadableStream {
 			stream: self.stream,
 			reader: TracedHeap::new(reader),
 		})
+	}
+
+	pub fn try_clone(&mut self, cx: &Context) -> crate::Result<Self> {
+		let stream = self.stream.root(cx).handle().into();
+		let mut branch1 = Object::null(cx);
+		let mut branch2 = Object::null(cx);
+
+		unsafe {
+			if !ReadableStreamTee(
+				cx.as_ptr(),
+				stream,
+				branch1.handle_mut().into(),
+				branch2.handle_mut().into(),
+			) {
+				return Err(Error::none());
+			}
+		}
+
+		self.stream = TracedHeap::from_local(&branch1);
+		Ok(Self::from_local(&branch2).unwrap())
 	}
 }
 

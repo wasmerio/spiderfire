@@ -17,7 +17,7 @@ use mozjs::jsapi::JSObject;
 use url::Url;
 
 use ion::{ClassDefinition, Context, Error, ErrorKind, Result, Promise};
-use ion::class::Reflector;
+use ion::class::{Reflector, NativeObject};
 pub use options::*;
 
 use crate::globals::abort::AbortSignal;
@@ -26,8 +26,6 @@ use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
 use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
-
-use super::FetchBodyInner;
 
 mod options;
 
@@ -97,7 +95,7 @@ impl Request {
 			.unwrap_or_else(|| String::new()))
 	}
 
-	pub fn try_clone(&self) -> Result<Self> {
+	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
 		let method = self.method.clone();
 
 		let url = self.locations.last().unwrap().clone();
@@ -107,7 +105,7 @@ impl Request {
 
 			method,
 			headers: Heap::new(std::ptr::null_mut()),
-			body: self.body.as_ref().map(|b| b.try_clone()).transpose()?,
+			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
 			body_used: self.body_used,
 
 			url: url.clone(),
@@ -139,7 +137,10 @@ impl Request {
 		let mut fallback_cors = false;
 
 		let mut request = match info {
-			RequestInfo::Request(request) => request.try_clone()?,
+			RequestInfo::Request(request) => {
+				let request = Request::get_mut_private(&mut cx.root_object(request.reflector().get()).into());
+				request.try_clone(cx)?
+			}
 			RequestInfo::String(url) => {
 				let url = Url::from_str(&url)?;
 				if url.username() != "" || url.password().is_some() {
@@ -370,12 +371,8 @@ impl Request {
 	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
 		let body = self.take_body()?;
 		let stream = match body.body {
-			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
-			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
-			FetchBodyInner::Stream(stream) => stream,
-			FetchBodyInner::HyperBody(body) => {
-				super::body::hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?
-			}
+			None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
+			Some(stream) => stream,
 		};
 		Ok((*stream).get())
 	}
@@ -470,5 +467,10 @@ impl Request {
 				}
 			})
 		}
+	}
+
+	pub fn clone(&mut self, cx: &Context) -> Result<*mut JSObject> {
+		let cloned = self.try_clone(cx)?;
+		Ok(Request::new_object(cx, Box::new(cloned)))
 	}
 }

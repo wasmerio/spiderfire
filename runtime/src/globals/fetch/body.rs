@@ -8,7 +8,6 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 
 use bytes::Bytes;
-use form_urlencoded::Serializer;
 use futures::StreamExt;
 use hyper::Body;
 use hyper::body::HttpBody;
@@ -31,33 +30,6 @@ use crate::globals::streams::{NativeStreamSourceCallbacks, NativeStreamSource};
 use crate::globals::url::URLSearchParams;
 use crate::promise::future_to_promise;
 
-#[derive(Debug, Traceable)]
-#[non_exhaustive]
-pub enum FetchBodyInner {
-	None,
-	Bytes(#[ion(no_trace)] Bytes),
-	Stream(#[ion(no_trace)] ReadableStream),
-	HyperBody(#[ion(no_trace)] hyper::Body),
-}
-
-impl FetchBodyInner {
-	fn try_clone(&self) -> Result<Self> {
-		match self {
-			Self::None => Ok(Self::None),
-			Self::Bytes(b) => Ok(Self::Bytes(b.clone())),
-			Self::Stream(s) => Ok(Self::Stream(ReadableStream::new(s.get()).unwrap())),
-
-			// Alternatively, we could read the entire body and turn both this
-			// and the other request's bodies into Self::Bytes variants. This
-			// would need a mutable reference though.
-			Self::HyperBody(_) => Err(Error::new(
-				"Native-backed requests cannot be duplicated",
-				ErrorKind::Type,
-			)),
-		}
-	}
-}
-
 #[derive(Clone, Debug, Traceable)]
 #[non_exhaustive]
 pub enum FetchBodyKind {
@@ -78,9 +50,11 @@ impl Display for FetchBodyKind {
 	}
 }
 
-#[derive(Debug, Traceable)]
+#[derive(Debug, Traceable, Default)]
 pub struct FetchBody {
-	pub body: FetchBodyInner,
+	#[ion(no_trace)]
+	pub body: Option<ReadableStream>,
+	pub length: Option<usize>,
 	pub source: Option<Heap<JSVal>>,
 	pub kind: Option<FetchBodyKind>,
 }
@@ -94,20 +68,15 @@ pub enum FetchBodyLength {
 
 impl FetchBody {
 	pub fn is_none(&self) -> bool {
-		matches!(&self.body, FetchBodyInner::None)
+		self.body.is_none()
 	}
 
 	pub fn len(&self) -> FetchBodyLength {
-		match &self.body {
-			FetchBodyInner::None => FetchBodyLength::None,
-			FetchBodyInner::Bytes(bytes) => FetchBodyLength::Known(bytes.len()),
-			FetchBodyInner::Stream(_) => FetchBodyLength::Unknown,
-			FetchBodyInner::HyperBody(_) => FetchBodyLength::Unknown,
+		match (&self.body, &self.length) {
+			(None, _) => FetchBodyLength::None,
+			(_, None) => FetchBodyLength::Unknown,
+			(_, Some(len)) => FetchBodyLength::Known(*len),
 		}
-	}
-
-	pub fn is_not_stream(&self) -> bool {
-		matches!(&self.body, FetchBodyInner::None | FetchBodyInner::Bytes(_))
 	}
 
 	// We're running on a single-threaded runtime, but hyper doesn't
@@ -117,10 +86,8 @@ impl FetchBody {
 	// the stream and queues the chunks to the channel.
 	pub fn into_http_body(self, cx: Context) -> Result<(Body, Option<impl std::future::Future<Output = ()>>)> {
 		match self.body {
-			FetchBodyInner::None => Ok((Body::empty(), None)),
-			FetchBodyInner::Bytes(bytes) => Ok((Body::from(bytes), None)),
-			FetchBodyInner::HyperBody(body) => Ok((body, None)),
-			FetchBodyInner::Stream(stream) => {
+			None => Ok((Body::empty(), None)),
+			Some(stream) => {
 				let reader = stream.into_reader(&cx)?;
 				let mut stream = Box::pin(reader.into_rust_stream(cx.duplicate()));
 				drop(cx);
@@ -150,36 +117,22 @@ impl FetchBody {
 
 	pub async fn into_bytes(self, cx: Context) -> Result<Option<Bytes>> {
 		match self.body {
-			FetchBodyInner::None => Ok(None),
-			FetchBodyInner::Bytes(bytes) => Ok(Some(bytes)),
-			FetchBodyInner::Stream(stream) => {
+			None => Ok(None),
+			Some(stream) => {
 				let reader = stream.into_reader(&cx)?;
 				let bytes = reader.read_to_end(cx).await.map_err(|e| e.to_error())?;
 				Ok(Some(bytes.into()))
 			}
-			FetchBodyInner::HyperBody(body) => {
-				let bytes = hyper::body::to_bytes(body).await?;
-				Ok(Some(bytes))
-			}
 		}
 	}
 
-	pub fn try_clone(&self) -> Result<FetchBody> {
-		Ok(FetchBody {
-			body: self.body.try_clone()?,
+	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
+		Ok(Self {
+			body: self.body.as_mut().map(|s| s.try_clone(cx)).transpose()?,
+			length: self.length.clone(),
 			source: self.source.as_ref().map(|s| Heap::new(s.get())),
 			kind: self.kind.clone(),
 		})
-	}
-}
-
-impl Default for FetchBody {
-	fn default() -> FetchBody {
-		FetchBody {
-			body: FetchBodyInner::None,
-			source: None,
-			kind: None,
-		}
 	}
 }
 
@@ -187,28 +140,34 @@ impl<'cx> FromValue<'cx> for FetchBody {
 	type Config = ();
 	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _: ()) -> Result<FetchBody> {
 		if value.handle().is_string() {
+			let bytes = Bytes::from(String::from_value(cx, value, strict, ()).unwrap());
 			return Ok(FetchBody {
-				body: FetchBodyInner::Bytes(Bytes::from(String::from_value(cx, value, strict, ()).unwrap())),
+				length: Some(bytes.len()),
+				body: Some(ReadableStream::from_bytes(cx, bytes)),
 				source: Some(Heap::new(value.get())),
 				kind: Some(FetchBodyKind::String),
 			});
 		} else if value.handle().is_object() {
 			if let Some(stream) = ReadableStream::from_local(&value.to_object(cx)) {
 				return Ok(FetchBody {
-					body: FetchBodyInner::Stream(stream),
+					body: Some(stream),
+					length: None,
 					source: Some(Heap::new(value.get())),
 					kind: None,
 				});
 			}
 			if let Ok(bytes) = buffer_source_to_bytes(&value.to_object(cx)) {
 				return Ok(FetchBody {
-					body: FetchBodyInner::Bytes(bytes),
+					length: Some(bytes.len()),
+					body: Some(ReadableStream::from_bytes(cx, bytes)),
 					source: Some(Heap::new(value.get())),
 					kind: None,
 				});
 			} else if let Ok(blob) = <&Blob>::from_value(cx, value, strict, ()) {
+				let bytes = blob.as_bytes().clone();
 				return Ok(FetchBody {
-					body: FetchBodyInner::Bytes(blob.as_bytes().clone()),
+					length: Some(bytes.len()),
+					body: Some(ReadableStream::from_bytes(cx, bytes)),
 					source: Some(Heap::new(value.get())),
 					kind: blob.kind().map(FetchBodyKind::Blob),
 				});
@@ -231,15 +190,20 @@ impl<'cx> FromValue<'cx> for FetchBody {
 				let bytes = futures::executor::block_on(hyper::body::to_bytes(req.into_body())).unwrap();
 
 				return Ok(FetchBody {
-					body: FetchBodyInner::Bytes(bytes),
+					length: Some(bytes.len()),
+					body: Some(ReadableStream::from_bytes(cx, bytes)),
 					source: Some(Heap::new(value.handle().get())),
 					kind: Some(FetchBodyKind::FormData(content_type)),
 				});
 			} else if let Ok(search_params) = <&URLSearchParams>::from_value(cx, value, strict, ()) {
+				let bytes = Bytes::from(
+					form_urlencoded::Serializer::new(String::new())
+						.extend_pairs(search_params.pairs())
+						.finish(),
+				);
 				return Ok(FetchBody {
-					body: FetchBodyInner::Bytes(Bytes::from(
-						Serializer::new(String::new()).extend_pairs(search_params.pairs()).finish(),
-					)),
+					length: Some(bytes.len()),
+					body: Some(ReadableStream::from_bytes(cx, bytes)),
 					source: Some(Heap::new(value.get())),
 					kind: Some(FetchBodyKind::URLSearchParams),
 				});

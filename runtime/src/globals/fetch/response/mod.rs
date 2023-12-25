@@ -26,7 +26,7 @@ use crate::globals::fetch::Headers;
 use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
 
-use super::FetchBodyInner;
+use super::body::hyper_body_to_stream;
 
 mod options;
 
@@ -50,7 +50,7 @@ pub struct Response {
 }
 
 impl Response {
-	pub async fn from_hyper_response(cx: &Context, mut response: hyper::Response<Body>, url: Url) -> Result<Response> {
+	pub fn from_hyper_response(cx: &Context, mut response: hyper::Response<Body>, url: Url) -> Result<Response> {
 		let status = response.status();
 		let status_text = if let Some(reason) = response.extensions().get::<ReasonPhrase>() {
 			Some(String::from_utf8(reason.as_bytes().to_vec()).unwrap())
@@ -64,16 +64,14 @@ impl Response {
 			kind: HeadersKind::Immutable,
 		};
 
-		// TODO: support hyper's Body directly, useful for streaming
 		let body = response.into_body();
-		let bytes = hyper::body::to_bytes(body).await?;
 
 		Ok(Response {
 			reflector: Reflector::default(),
 
 			headers: Heap::new(Headers::new_object(&cx, Box::new(headers))),
 			body: Some(FetchBody {
-				body: FetchBodyInner::Bytes(bytes),
+				body: Some(hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?),
 				..Default::default()
 			}),
 
@@ -88,13 +86,14 @@ impl Response {
 		})
 	}
 
-	pub fn new_from_bytes(bytes: Bytes, url: Url) -> Response {
+	pub fn new_from_bytes(cx: &Context, bytes: Bytes, url: Url) -> Response {
 		Response {
 			reflector: Reflector::default(),
 
 			headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
 			body: Some(FetchBody {
-				body: FetchBodyInner::Bytes(bytes),
+				length: Some(bytes.len()),
+				body: Some(ReadableStream::from_bytes(cx, bytes)),
 				..Default::default()
 			}),
 
@@ -132,6 +131,24 @@ impl Response {
 		let bytes = Self::take_body_bytes(this, cx).await?;
 		String::from_utf8(bytes.into()).map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), None))
 	}
+
+	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
+		Ok(Self {
+			reflector: Default::default(),
+
+			headers: self.headers.clone(),
+			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
+
+			kind: self.kind.clone(),
+			url: self.url.clone(),
+			redirected: self.redirected,
+
+			status: self.status.clone(),
+			status_text: self.status_text.clone(),
+
+			range_requested: self.range_requested,
+		})
+	}
 }
 
 #[js_class]
@@ -144,10 +161,7 @@ impl Response {
 			reflector: Reflector::default(),
 
 			headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
-			body: Some(FetchBody {
-				body: FetchBodyInner::None,
-				..Default::default()
-			}),
+			body: Some(FetchBody::default()),
 
 			kind: ResponseKind::default(),
 			url: None,
@@ -223,12 +237,8 @@ impl Response {
 	#[ion(get)]
 	pub fn get_body<'cx>(&mut self, cx: &Context) -> Result<*mut JSObject> {
 		Ok(match self.take_body()?.body {
-			FetchBodyInner::None => ReadableStream::from_bytes(cx, Bytes::from(vec![])).get(),
-			FetchBodyInner::Bytes(b) => ReadableStream::from_bytes(cx, b).get(),
-			FetchBodyInner::Stream(s) => s.get(),
-			FetchBodyInner::HyperBody(body) => {
-				super::body::hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?.get()
-			}
+			None => ReadableStream::from_bytes(cx, Bytes::from(vec![])).get(),
+			Some(s) => s.get(),
 		})
 	}
 
@@ -319,6 +329,11 @@ impl Response {
 			})
 		}
 	}
+
+	pub fn clone(&mut self, cx: &Context) -> Result<*mut JSObject> {
+		let cloned = self.try_clone(cx)?;
+		Ok(Response::new_object(cx, Box::new(cloned)))
+	}
 }
 
 pub fn network_error() -> Response {
@@ -326,10 +341,7 @@ pub fn network_error() -> Response {
 		reflector: Reflector::default(),
 
 		headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
-		body: Some(FetchBody {
-			body: FetchBodyInner::None,
-			..Default::default()
-		}),
+		body: Some(FetchBody::default()),
 
 		kind: ResponseKind::Error,
 		url: None,
