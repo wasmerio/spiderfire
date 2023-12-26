@@ -29,7 +29,7 @@ use crate::promise::future_to_promise;
 
 mod options;
 
-#[derive(FromValue)]
+#[derive(FromValue, Clone)]
 pub enum RequestInfo<'cx> {
 	#[ion(inherit)]
 	Request(&'cx Request),
@@ -71,6 +71,18 @@ pub struct Request {
 }
 
 impl Request {
+	pub fn url(&self) -> &Url {
+		&self.url
+	}
+
+	pub fn method(&self) -> &Method {
+		&self.method
+	}
+
+	pub fn headers<'cx>(&self, cx: &'cx Context) -> &'cx HeaderMap {
+		&Headers::get_private(&self.headers.root(cx).into()).headers
+	}
+
 	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
 		match &self.body {
 			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),

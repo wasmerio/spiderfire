@@ -108,6 +108,10 @@ impl Response {
 		}
 	}
 
+	pub fn headers<'cx>(&self, cx: &'cx Context) -> &'cx HeaderMap {
+		&Headers::get_private(&self.headers.root(cx).into()).headers
+	}
+
 	pub fn get_headers_object<'s, 'cx: 's>(&'s mut self, cx: &'cx Context) -> &'s Headers {
 		let obj = cx.root_object(self.headers.get()).into();
 		Headers::get_private(&obj)
@@ -148,6 +152,24 @@ impl Response {
 
 			range_requested: self.range_requested,
 		})
+	}
+
+	pub fn clone_with_body(&self, body: Option<FetchBody>) -> Self {
+		Self {
+			reflector: Default::default(),
+
+			headers: self.headers.clone(),
+			body,
+
+			kind: self.kind.clone(),
+			url: self.url.clone(),
+			redirected: self.redirected,
+
+			status: self.status.clone(),
+			status_text: self.status_text.clone(),
+
+			range_requested: self.range_requested,
+		}
 	}
 }
 

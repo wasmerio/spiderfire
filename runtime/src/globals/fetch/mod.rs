@@ -58,21 +58,17 @@ const DEFAULT_USER_AGENT: &str = concatcp!("Spiderfire/", VERSION);
 
 #[js_fn]
 fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>) -> Option<Promise> {
-	let promise = Promise::new(cx);
-
 	let request = match Request::constructor(cx, resource, init) {
 		Ok(request) => request,
 		Err(error) => {
-			promise.reject(cx, &error.as_value(cx));
-			return Some(promise);
+			return Some(Promise::new_rejected(cx, &error.as_value(cx)));
 		}
 	};
 
 	let signal = Object::from(request.signal_object.to_local());
 	let signal = AbortSignal::get_private(&signal);
 	if let Some(reason) = signal.get_reason() {
-		promise.reject(cx, &cx.root_value(reason).into());
-		return Some(promise);
+		return Some(Promise::new_rejected(cx, reason));
 	}
 
 	let mut headers = Object::from(request.headers.to_local());
@@ -106,7 +102,7 @@ fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>
 	}
 }
 
-async fn fetch_internal<'o>(cx: Context, request: &mut Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
+pub async fn fetch_internal<'o>(cx: Context, request: &mut Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
 	let request = Request::get_mut_private(request);
 	let signal = Object::from(request.signal_object.to_local());
 	let signal = AbortSignal::get_private(&signal).signal.clone().poll();
