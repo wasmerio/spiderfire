@@ -113,14 +113,17 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_host(&self) -> Option<String> {
-		self.url.host_str().map(|host| {
-			if let Some(port) = self.url.port() {
-				format!("{}:{}", host, port)
-			} else {
-				String::from(host)
-			}
-		})
+	pub fn get_host(&self) -> String {
+		self.url
+			.host_str()
+			.map(|host| {
+				if let Some(port) = self.url.port() {
+					format!("{}:{}", host, port)
+				} else {
+					String::from(host)
+				}
+			})
+			.unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -150,8 +153,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_hostname(&self) -> Option<String> {
-		self.url.host_str().map(String::from)
+	pub fn get_hostname(&self) -> String {
+		self.url.host_str().map(String::from).unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -198,8 +201,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_password(&self) -> Option<String> {
-		self.url.password().map(String::from)
+	pub fn get_password(&self) -> String {
+		self.url.password().map(String::from).unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -208,8 +211,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_search(&self) -> Option<String> {
-		self.url.query().map(String::from)
+	pub fn get_search(&self) -> String {
+		self.url.query().map(String::from).unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -218,8 +221,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_hash(&self) -> Option<String> {
-		self.url.fragment().map(String::from)
+	pub fn get_hash(&self) -> String {
+		self.url.fragment().map(String::from).unwrap_or_default()
 	}
 
 	#[ion(set)]
