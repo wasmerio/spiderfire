@@ -10,9 +10,9 @@ use std::task;
 use std::task::Poll;
 
 use futures::future::poll_fn;
-use mozjs::jsapi::{Handle, Heap, JSContext, JSObject, PromiseRejectionHandlingState};
+use mozjs::jsapi::{Handle, JSContext, JSObject, PromiseRejectionHandlingState};
 
-use ion::{Context, ErrorReport, Local, Promise};
+use ion::{Context, ErrorReport, Promise, TracedHeap};
 use ion::format::{Config, format_value};
 
 use crate::ContextExt;
@@ -29,7 +29,7 @@ pub struct EventLoop {
 	pub(crate) futures: Option<FutureQueue>,
 	pub(crate) microtasks: Option<MicrotaskQueue>,
 	pub(crate) macrotasks: Option<MacrotaskQueue>,
-	pub(crate) unhandled_rejections: VecDeque<Box<Heap<*mut JSObject>>>,
+	pub(crate) unhandled_rejections: VecDeque<TracedHeap<*mut JSObject>>,
 }
 
 impl EventLoop {
@@ -60,7 +60,7 @@ impl EventLoop {
 		}
 
 		while let Some(promise) = self.unhandled_rejections.pop_front() {
-			let promise = Promise::from(unsafe { Local::from_heap(&promise) }).unwrap();
+			let promise = Promise::from(promise.to_local()).unwrap();
 			let result = promise.result(cx);
 			eprintln!(
 				"Unhandled Promise Rejection: {}",
@@ -89,10 +89,9 @@ pub(crate) unsafe extern "C" fn promise_rejection_tracker_callback(
 	cx: *mut JSContext, _: bool, promise: Handle<*mut JSObject>, state: PromiseRejectionHandlingState, _: *mut c_void,
 ) {
 	let cx = unsafe { &Context::new_unchecked(cx) };
-	let promise = Promise::from(unsafe { Local::from_raw_handle(promise) }).unwrap();
-	let unhandled = unsafe { &mut cx.get_private().event_loop.unhandled_rejections };
+	let unhandled = &mut unsafe { cx.get_private() }.event_loop.unhandled_rejections;
 	match state {
-		PromiseRejectionHandlingState::Unhandled => unhandled.push_back(Heap::boxed(promise.get())),
+		PromiseRejectionHandlingState::Unhandled => unhandled.push_back(TracedHeap::new(promise.get())),
 		PromiseRejectionHandlingState::Handled => {
 			let idx = unhandled.iter().position(|unhandled| unhandled.get() == promise.get());
 			if let Some(idx) = idx {

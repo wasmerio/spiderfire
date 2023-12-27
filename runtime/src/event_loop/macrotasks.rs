@@ -14,7 +14,7 @@ use chrono::{DateTime, Duration, Utc};
 use mozjs::jsapi::JSFunction;
 use mozjs::jsval::JSVal;
 
-use ion::{Context, ErrorReport, Function, Object, Value};
+use ion::{Context, ErrorReport, Function, Object, Value, TracedHeap};
 
 pub struct SignalMacrotask {
 	callback: Box<dyn FnOnce()>,
@@ -43,8 +43,8 @@ impl Debug for SignalMacrotask {
 
 #[derive(Debug)]
 pub struct TimerMacrotask {
-	callback: *mut JSFunction,
-	arguments: Vec<JSVal>,
+	callback: TracedHeap<*mut JSFunction>,
+	arguments: Vec<TracedHeap<JSVal>>,
 	repeat: bool,
 	scheduled: DateTime<Utc>,
 	duration: Duration,
@@ -54,8 +54,8 @@ pub struct TimerMacrotask {
 impl TimerMacrotask {
 	pub fn new(callback: Function, arguments: Vec<JSVal>, repeat: bool, duration: Duration) -> TimerMacrotask {
 		TimerMacrotask {
-			callback: callback.get(),
-			arguments,
+			callback: TracedHeap::new(callback.get()),
+			arguments: arguments.into_iter().map(TracedHeap::new).collect(),
 			repeat,
 			duration,
 			scheduled: Utc::now(),
@@ -73,14 +73,14 @@ impl TimerMacrotask {
 
 #[derive(Debug)]
 pub struct UserMacrotask {
-	callback: *mut JSFunction,
+	callback: TracedHeap<*mut JSFunction>,
 	scheduled: DateTime<Utc>,
 }
 
 impl UserMacrotask {
 	pub fn new(callback: Function) -> UserMacrotask {
 		UserMacrotask {
-			callback: callback.get(),
+			callback: TracedHeap::new(callback.get()),
 			scheduled: Utc::now(),
 		}
 	}
@@ -108,13 +108,13 @@ impl Macrotask {
 			return Ok(None);
 		}
 		let (callback, args) = match &self {
-			Macrotask::Timer(timer) => (timer.callback, timer.arguments.clone()),
-			Macrotask::User(user) => (user.callback, Vec::new()),
+			Macrotask::Timer(timer) => (&timer.callback, timer.arguments.clone()),
+			Macrotask::User(user) => (&user.callback, Vec::new()),
 			_ => unreachable!(),
 		};
 
-		let callback = Function::from(cx.root_function(callback));
-		let args: Vec<_> = args.into_iter().map(|value| Value::from(cx.root_value(value))).collect();
+		let callback = Function::from(callback.root(cx));
+		let args: Vec<_> = args.into_iter().map(|value| Value::from(value.root(cx))).collect();
 
 		callback.call(cx, &Object::global(cx), args.as_slice()).map(|_| (Some(self)))
 	}
