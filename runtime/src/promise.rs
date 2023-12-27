@@ -8,7 +8,7 @@ use std::future::Future;
 
 use tokio::task::spawn_local;
 
-use ion::{Context, Promise};
+use ion::{Context, Promise, TracedHeap};
 use ion::conversions::{BoxedIntoValue, IntoValue};
 
 use crate::ContextExt;
@@ -46,7 +46,7 @@ where
 	E: for<'cx2> IntoValue<'cx2> + 'static,
 {
 	let promise = Promise::new(cx);
-	let object = promise.root(cx).handle().get();
+	let heap = TracedHeap::new(promise.get());
 	let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
 
 	let handle = spawn_local(async move {
@@ -54,7 +54,7 @@ where
 			Ok(o) => Ok(Box::new(o)),
 			Err(e) => Err(Box::new(e)),
 		};
-		(result, object)
+		(result, heap)
 	});
 
 	let event_loop = unsafe { &cx.get_private().event_loop };
