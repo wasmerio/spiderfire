@@ -27,6 +27,8 @@ use crate::globals::fetch::Headers;
 use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
 
+use super::body::FetchBodyInner;
+
 mod options;
 
 #[derive(FromValue, Clone)]
@@ -118,6 +120,45 @@ impl Request {
 			method,
 			headers: Heap::new(std::ptr::null_mut()),
 			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
+			body_used: self.body_used,
+
+			url: url.clone(),
+			locations: vec![url],
+
+			referrer: self.referrer.clone(),
+			referrer_policy: self.referrer_policy,
+
+			mode: self.mode,
+			credentials: self.credentials,
+			cache: self.cache,
+			redirect: self.redirect,
+
+			integrity: self.integrity.clone(),
+
+			unsafe_request: true,
+			keepalive: self.keepalive,
+
+			client_window: self.client_window,
+			signal_object: Heap::new(self.signal_object.get()),
+		})
+	}
+
+	pub async fn try_clone_with_cached_body(&mut self, cx: Context) -> Result<Self> {
+		let method = self.method.clone();
+
+		let url = self.locations.last().unwrap().clone();
+
+		let body = match &mut self.body {
+			None => None,
+			Some(body) => Some(body.try_clone_with_cached_body(cx).await?),
+		};
+
+		Ok(Request {
+			reflector: Reflector::default(),
+
+			method,
+			headers: Heap::new(std::ptr::null_mut()),
+			body,
 			body_used: self.body_used,
 
 			url: url.clone(),
@@ -383,10 +424,11 @@ impl Request {
 	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
 		let body = self.take_body()?;
 		let stream = match body.body {
-			None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
-			Some(stream) => stream,
+			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
+			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
+			FetchBodyInner::Stream(stream) => stream,
 		};
-		Ok((*stream).get())
+		Ok(stream.get())
 	}
 
 	#[ion(get, name = "bodyUsed")]

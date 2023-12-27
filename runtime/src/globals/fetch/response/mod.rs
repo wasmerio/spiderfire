@@ -13,9 +13,7 @@ use ion::string::byte::ByteString;
 use mozjs::jsapi::JSObject;
 use url::Url;
 
-use ion::{
-	ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap, HeapPointer, ReadableStream,
-};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap, HeapPointer};
 use ion::class::{NativeObject, Reflector};
 use ion::typedarray::ArrayBuffer;
 pub use options::*;
@@ -26,7 +24,7 @@ use crate::globals::fetch::Headers;
 use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
 
-use super::body::hyper_body_to_stream;
+use super::body::{hyper_body_to_stream, FetchBodyInner};
 
 mod options;
 
@@ -71,7 +69,7 @@ impl Response {
 
 			headers: Heap::new(Headers::new_object(&cx, Box::new(headers))),
 			body: Some(FetchBody {
-				body: Some(hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?),
+				body: FetchBodyInner::Stream(hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?),
 				..Default::default()
 			}),
 
@@ -86,14 +84,13 @@ impl Response {
 		})
 	}
 
-	pub fn new_from_bytes(cx: &Context, bytes: Bytes, url: Url) -> Response {
+	pub fn new_from_bytes(bytes: Bytes, url: Url) -> Response {
 		Response {
 			reflector: Reflector::default(),
 
 			headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
 			body: Some(FetchBody {
-				length: Some(bytes.len()),
-				body: Some(ReadableStream::from_bytes(cx, bytes)),
+				body: FetchBodyInner::Bytes(bytes),
 				..Default::default()
 			}),
 
@@ -142,6 +139,29 @@ impl Response {
 
 			headers: self.headers.clone(),
 			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
+
+			kind: self.kind.clone(),
+			url: self.url.clone(),
+			redirected: self.redirected,
+
+			status: self.status.clone(),
+			status_text: self.status_text.clone(),
+
+			range_requested: self.range_requested,
+		})
+	}
+
+	pub async fn try_clone_with_cached_body(&mut self, cx: Context) -> Result<Self> {
+		let body = match &mut self.body {
+			None => None,
+			Some(body) => Some(body.try_clone_with_cached_body(cx).await?),
+		};
+
+		Ok(Self {
+			reflector: Default::default(),
+
+			headers: self.headers.clone(),
+			body,
 
 			kind: self.kind.clone(),
 			url: self.url.clone(),
@@ -258,10 +278,12 @@ impl Response {
 
 	#[ion(get)]
 	pub fn get_body<'cx>(&mut self, cx: &Context) -> Result<*mut JSObject> {
-		Ok(match self.take_body()?.body {
-			None => ReadableStream::from_bytes(cx, Bytes::from(vec![])).get(),
-			Some(s) => s.get(),
-		})
+		let stream = match self.take_body()?.body {
+			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
+			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
+			FetchBodyInner::Stream(stream) => stream,
+		};
+		Ok(stream.get())
 	}
 
 	#[ion(get, name = "bodyUsed")]

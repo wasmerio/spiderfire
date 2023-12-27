@@ -24,7 +24,7 @@ use sys_locale::get_locales;
 use tokio::fs::read;
 use url::Url;
 
-pub use body::{FetchBody, FetchBodyKind, hyper_body_to_stream};
+pub use body::{FetchBody, FetchBodyInner, FetchBodyKind, FetchBodyLength, hyper_body_to_stream};
 pub use client::{default_client, GLOBAL_CLIENT};
 pub use header::{Headers, HeaderEntry, HeadersInit, HeadersObject};
 use ion::{ClassDefinition, Context, Error, ErrorKind, Exception, Object, Promise, ResultExc, TracedHeap, Result};
@@ -43,8 +43,6 @@ use crate::globals::fetch::request::{
 use crate::globals::fetch::response::{network_error, ResponseKind, ResponseTaint};
 use crate::promise::future_to_promise;
 use crate::VERSION;
-
-use self::body::FetchBodyLength;
 
 mod body;
 mod client;
@@ -352,7 +350,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Result<Response> {
 	match scheme {
 		"about" if url.path() == "blank" => {
-			let response = Response::new_from_bytes(&cx, Bytes::default(), url);
+			let response = Response::new_from_bytes(Bytes::default(), url);
 			let headers = Headers {
 				reflector: Reflector::default(),
 				headers: HeaderMap::from_iter(once((
@@ -378,7 +376,7 @@ async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Result<Response> {
 			let mime = data_url.mime_type();
 			let mime = format!("{}/{}", mime.type_, mime.subtype);
 
-			let response = Response::new_from_bytes(&cx, Bytes::from(body), url);
+			let response = Response::new_from_bytes(Bytes::from(body), url);
 			let headers = Headers {
 				reflector: Reflector::default(),
 				headers: HeaderMap::from_iter(once((CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap()))),
@@ -392,7 +390,7 @@ async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Result<Response> {
 			let (cx, read) = cx.await_native(read(path)).await;
 			match read {
 				Ok(bytes) => {
-					let response = Response::new_from_bytes(&cx, Bytes::from(bytes), url);
+					let response = Response::new_from_bytes(Bytes::from(bytes), url);
 					let headers = Headers::new(HeadersKind::Immutable);
 					response.headers.set(Headers::new_object(&cx, Box::new(headers)));
 					Ok(response)

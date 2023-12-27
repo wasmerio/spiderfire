@@ -30,6 +30,29 @@ use crate::globals::streams::{NativeStreamSourceCallbacks, NativeStreamSource};
 use crate::globals::url::URLSearchParams;
 use crate::promise::future_to_promise;
 
+#[derive(Debug)]
+pub enum FetchBodyInner {
+	None,
+	Bytes(Bytes),
+	Stream(ReadableStream),
+}
+
+impl FetchBodyInner {
+	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
+		Ok(match self {
+			Self::None => Self::None,
+			Self::Bytes(bytes) => Self::Bytes(bytes.clone()),
+			Self::Stream(stream) => Self::Stream(stream.try_clone(cx)?),
+		})
+	}
+}
+
+impl Default for FetchBodyInner {
+	fn default() -> Self {
+		Self::None
+	}
+}
+
 #[derive(Clone, Debug, Traceable)]
 #[non_exhaustive]
 pub enum FetchBodyKind {
@@ -53,8 +76,7 @@ impl Display for FetchBodyKind {
 #[derive(Debug, Traceable, Default)]
 pub struct FetchBody {
 	#[ion(no_trace)]
-	pub body: Option<ReadableStream>,
-	pub length: Option<usize>,
+	pub body: FetchBodyInner,
 	pub source: Option<Heap<JSVal>>,
 	pub kind: Option<FetchBodyKind>,
 }
@@ -68,14 +90,14 @@ pub enum FetchBodyLength {
 
 impl FetchBody {
 	pub fn is_none(&self) -> bool {
-		self.body.is_none()
+		matches!(self.body, FetchBodyInner::None)
 	}
 
 	pub fn len(&self) -> FetchBodyLength {
-		match (&self.body, &self.length) {
-			(None, _) => FetchBodyLength::None,
-			(_, None) => FetchBodyLength::Unknown,
-			(_, Some(len)) => FetchBodyLength::Known(*len),
+		match &self.body {
+			FetchBodyInner::None => FetchBodyLength::None,
+			FetchBodyInner::Bytes(bytes) => FetchBodyLength::Known(bytes.len()),
+			FetchBodyInner::Stream(_) => FetchBodyLength::Unknown,
 		}
 	}
 
@@ -86,8 +108,9 @@ impl FetchBody {
 	// the stream and queues the chunks to the channel.
 	pub fn into_http_body(self, cx: Context) -> Result<(Body, Option<impl std::future::Future<Output = ()>>)> {
 		match self.body {
-			None => Ok((Body::empty(), None)),
-			Some(stream) => {
+			FetchBodyInner::None => Ok((Body::empty(), None)),
+			FetchBodyInner::Bytes(bytes) => Ok((Body::from(bytes), None)),
+			FetchBodyInner::Stream(stream) => {
 				let reader = stream.into_reader(&cx)?;
 				let mut stream = Box::pin(reader.into_rust_stream(cx.duplicate()));
 				drop(cx);
@@ -117,19 +140,43 @@ impl FetchBody {
 
 	pub async fn into_bytes(self, cx: Context) -> Result<Option<Bytes>> {
 		match self.body {
-			None => Ok(None),
-			Some(stream) => {
+			FetchBodyInner::None => Ok(None),
+			FetchBodyInner::Bytes(bytes) => Ok(Some(bytes)),
+			FetchBodyInner::Stream(stream) => {
 				let reader = stream.into_reader(&cx)?;
-				let bytes = reader.read_to_end(cx).await.map_err(|e| e.to_error())?;
-				Ok(Some(bytes.into()))
+				let (_, bytes) = cx.await_native_cx(|cx| reader.read_to_end(cx)).await;
+				Ok(Some(bytes.map_err(|e| e.to_error())?.into()))
 			}
 		}
 	}
 
 	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
 		Ok(Self {
-			body: self.body.as_mut().map(|s| s.try_clone(cx)).transpose()?,
-			length: self.length.clone(),
+			body: self.body.try_clone(cx)?,
+			source: self.source.as_ref().map(|s| Heap::new(s.get())),
+			kind: self.kind.clone(),
+		})
+	}
+
+	pub async fn try_clone_with_cached_body(&mut self, cx: Context) -> Result<Self> {
+		// Can't move out of a reference. We need to instead swap the body out and then back in again.
+		let mut my_body = FetchBodyInner::None;
+		std::mem::swap(&mut self.body, &mut my_body);
+
+		let (mut my_body, cloned_body) = match my_body {
+			FetchBodyInner::None => (FetchBodyInner::None, FetchBodyInner::None),
+			FetchBodyInner::Bytes(bytes) => (FetchBodyInner::Bytes(bytes.clone()), FetchBodyInner::Bytes(bytes)),
+			FetchBodyInner::Stream(stream) => {
+				let reader = stream.into_reader(&cx)?;
+				let bytes: Bytes = reader.read_to_end(cx).await.map_err(|e| e.to_error())?.into();
+				(FetchBodyInner::Bytes(bytes.clone()), FetchBodyInner::Bytes(bytes))
+			}
+		};
+
+		std::mem::swap(&mut self.body, &mut my_body);
+
+		Ok(Self {
+			body: cloned_body,
 			source: self.source.as_ref().map(|s| Heap::new(s.get())),
 			kind: self.kind.clone(),
 		})
@@ -142,32 +189,28 @@ impl<'cx> FromValue<'cx> for FetchBody {
 		if value.handle().is_string() {
 			let bytes = Bytes::from(String::from_value(cx, value, strict, ()).unwrap());
 			return Ok(FetchBody {
-				length: Some(bytes.len()),
-				body: Some(ReadableStream::from_bytes(cx, bytes)),
+				body: FetchBodyInner::Bytes(bytes),
 				source: Some(Heap::new(value.get())),
 				kind: Some(FetchBodyKind::String),
 			});
 		} else if value.handle().is_object() {
 			if let Some(stream) = ReadableStream::from_local(&value.to_object(cx)) {
 				return Ok(FetchBody {
-					body: Some(stream),
-					length: None,
+					body: FetchBodyInner::Stream(stream),
 					source: Some(Heap::new(value.get())),
 					kind: None,
 				});
 			}
 			if let Ok(bytes) = buffer_source_to_bytes(&value.to_object(cx)) {
 				return Ok(FetchBody {
-					length: Some(bytes.len()),
-					body: Some(ReadableStream::from_bytes(cx, bytes)),
+					body: FetchBodyInner::Bytes(bytes),
 					source: Some(Heap::new(value.get())),
 					kind: None,
 				});
 			} else if let Ok(blob) = <&Blob>::from_value(cx, value, strict, ()) {
 				let bytes = blob.as_bytes().clone();
 				return Ok(FetchBody {
-					length: Some(bytes.len()),
-					body: Some(ReadableStream::from_bytes(cx, bytes)),
+					body: FetchBodyInner::Bytes(bytes),
 					source: Some(Heap::new(value.get())),
 					kind: blob.kind().map(FetchBodyKind::Blob),
 				});
@@ -190,8 +233,7 @@ impl<'cx> FromValue<'cx> for FetchBody {
 				let bytes = futures::executor::block_on(hyper::body::to_bytes(req.into_body())).unwrap();
 
 				return Ok(FetchBody {
-					length: Some(bytes.len()),
-					body: Some(ReadableStream::from_bytes(cx, bytes)),
+					body: FetchBodyInner::Bytes(bytes),
 					source: Some(Heap::new(value.handle().get())),
 					kind: Some(FetchBodyKind::FormData(content_type)),
 				});
@@ -202,8 +244,7 @@ impl<'cx> FromValue<'cx> for FetchBody {
 						.finish(),
 				);
 				return Ok(FetchBody {
-					length: Some(bytes.len()),
-					body: Some(ReadableStream::from_bytes(cx, bytes)),
+					body: FetchBodyInner::Bytes(bytes),
 					source: Some(Heap::new(value.get())),
 					kind: Some(FetchBodyKind::URLSearchParams),
 				});
