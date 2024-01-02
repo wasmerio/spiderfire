@@ -1,4 +1,7 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+	ops::{Deref, DerefMut},
+	borrow::Cow,
+};
 
 use bytes::Bytes;
 use mozjs::jsapi::{
@@ -178,7 +181,7 @@ impl ReadableStreamReader {
 
 	// Safety: The returned slice must be consumed before the next
 	// SpiderMonkey API call, which may cause GC to collect the chunk
-	pub async unsafe fn read_chunk<'cx>(&self, mut cx: Context) -> ResultExc<Option<&[u8]>> {
+	pub async unsafe fn read_chunk<'cx>(&self, mut cx: Context) -> ResultExc<Option<Cow<[u8]>>> {
 		let chunk = self.read_chunk_raw(&cx);
 		let chunk_val;
 		(cx, chunk_val) = PromiseFuture::new(cx, &chunk).await;
@@ -209,29 +212,40 @@ impl ReadableStreamReader {
 			return Ok(None);
 		}
 
-		let obj = chunk.get(&cx, "value").expect("Chunk must have a done property").to_object(&cx);
-		let obj_ptr = (*obj).get();
-		unsafe {
-			if IsArrayBufferObject(obj_ptr) {
-				let length = GetArrayBufferByteLength(obj_ptr);
-				let mut is_shared_memory = false;
-				let data_ptr = GetArrayBufferData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
-				Ok(Some(std::slice::from_raw_parts(data_ptr as *const _, length)))
-			} else if JS_IsArrayBufferViewObject(obj_ptr) {
-				let length = JS_GetArrayBufferViewByteLength(obj_ptr);
-				let mut is_shared_memory = false;
-				let data_ptr =
-					JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
-				Ok(Some(std::slice::from_raw_parts(data_ptr as *const _, length)))
-			} else {
-				let obj_str =
-					crate::String::from(cx.root_string(ToStringSlow(cx.as_ptr(), obj.as_value(&cx).handle().into())));
-				Err(Exception::Error(Error::new(
-					format!("Cannot process chunk with unknown type: {}", obj_str.to_owned(&cx)).as_str(),
-					ErrorKind::Type,
-				)))
+		let obj = chunk.get(&cx, "value").expect("Chunk must have a value property");
+		if obj.get().is_string() {
+			let str = crate::String::from(cx.root_string(obj.get().to_string()));
+			let str = str.to_owned(&cx);
+			return Ok(Some(Cow::Owned(str.into_bytes())));
+		} else if obj.get().is_object() {
+			unsafe {
+				let obj_ptr = (*obj.to_object(&cx)).get();
+				if IsArrayBufferObject(obj_ptr) {
+					let length = GetArrayBufferByteLength(obj_ptr);
+					let mut is_shared_memory = false;
+					let data_ptr = GetArrayBufferData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+					return Ok(Some(Cow::Borrowed(std::slice::from_raw_parts(
+						data_ptr as *const _,
+						length,
+					))));
+				} else if JS_IsArrayBufferViewObject(obj_ptr) {
+					let length = JS_GetArrayBufferViewByteLength(obj_ptr);
+					let mut is_shared_memory = false;
+					let data_ptr =
+						JS_GetArrayBufferViewData(obj_ptr, &mut is_shared_memory, &AutoRequireNoGC { _address: 0 });
+					return Ok(Some(Cow::Borrowed(std::slice::from_raw_parts(
+						data_ptr as *const _,
+						length,
+					))));
+				}
 			}
 		}
+
+		let obj_str = crate::String::from(cx.root_string(ToStringSlow(cx.as_ptr(), obj.as_value(&cx).handle().into())));
+		Err(Exception::Error(Error::new(
+			format!("Cannot process chunk with unknown type: {}", obj_str.to_owned(&cx)).as_str(),
+			ErrorKind::Type,
+		)))
 	}
 
 	pub async fn read_to_end(&self, mut cx: Context) -> ResultExc<Vec<u8>> {
@@ -241,7 +255,8 @@ impl ReadableStreamReader {
 			let chunk;
 			(cx, chunk) = cx.await_native_cx(|cx| unsafe { self.read_chunk(cx) }).await;
 			match chunk? {
-				Some(slice) => result.extend_from_slice(slice),
+				Some(Cow::Borrowed(slice)) => result.extend_from_slice(slice),
+				Some(Cow::Owned(v)) => result.extend_from_slice(&v),
 				None => break Ok(result),
 			}
 		}
