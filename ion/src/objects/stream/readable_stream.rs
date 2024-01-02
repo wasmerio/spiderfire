@@ -126,6 +126,19 @@ impl ReadableStream {
 	}
 }
 
+impl<'cx> FromValue<'cx> for ReadableStream {
+	type Config = ();
+
+	fn from_value(cx: &'cx Context, value: &crate::Value, _strict: bool, _config: Self::Config) -> crate::Result<Self> {
+		if !value.get().is_object() {
+			return Err(Error::new("Expected object for readable stream", ErrorKind::Type));
+		}
+
+		Self::new((*value.to_object(cx)).get())
+			.ok_or_else(|| Error::new("The given object is not a readable stream", ErrorKind::Type))
+	}
+}
+
 impl Deref for ReadableStream {
 	type Target = TracedHeap<*mut JSObject>;
 
