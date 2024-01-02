@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::marker::PhantomData;
+
 use mozjs::conversions::{ConversionResult, FromJSValConvertible};
 pub use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::{
@@ -29,6 +31,14 @@ pub trait FromValue<'cx>: Sized {
 	/// `strict` and `config` determine the strictness of the conversion and specify additional conversion constraints respectively.
 	/// Returns [Err] with the [error](Error) if conversion fails.
 	fn from_value(cx: &'cx Context, value: &Value, strict: bool, config: Self::Config) -> Result<Self>;
+}
+
+impl<'cx, T> FromValue<'cx> for PhantomData<T> {
+	type Config = ();
+
+	fn from_value(_cx: &'cx Context, _value: &Value, _strict: bool, _config: Self::Config) -> Result<Self> {
+		Ok(PhantomData)
+	}
 }
 
 impl<'cx> FromValue<'cx> for bool {
