@@ -164,6 +164,15 @@ impl Promise {
 		}
 	}
 
+	/// Creates a [Promise] from an object.
+	pub fn from_raw(object: *mut JSObject, cx: &'_ Context) -> Option<Promise> {
+		if Promise::is_promise_raw(cx, object) {
+			Some(Promise { promise: TracedHeap::new(object) })
+		} else {
+			None
+		}
+	}
+
 	/// Creates a [Promise] from aj object
 	///
 	/// ### Safety

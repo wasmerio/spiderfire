@@ -373,7 +373,7 @@ impl NativeStreamSinkCallbacks for Sink {
 										Err(e) => {
 											// ... if it failed, fail the entire process
 											let ts = TransformStream::from_heap(&cx, &stream);
-											ts.error(&cx, &cx.root_value(e).into())?;
+											ts.error(&cx, &e.root(&cx).into())?;
 
 											let readable = ts.readable.root(&cx);
 											let error =

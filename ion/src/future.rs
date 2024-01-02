@@ -15,10 +15,10 @@ use futures::Stream;
 use mozjs::jsval::JSVal;
 use mozjs_sys::jsapi::JSContext;
 
-use crate::{Context, Function, Promise, Value};
+use crate::{Context, Function, Promise, Value, TracedHeap};
 use crate::flags::PropertyFlags;
 
-pub struct PromiseFuture(*mut JSContext, Receiver<Result<JSVal, JSVal>>);
+pub struct PromiseFuture(*mut JSContext, Receiver<Result<TracedHeap<JSVal>, TracedHeap<JSVal>>>);
 
 impl PromiseFuture {
 	/// See documentation for [`runtime::promise::future_to_promise`].
@@ -34,7 +34,7 @@ impl PromiseFuture {
 				&cx,
 				"",
 				Box::new(move |args| {
-					let _ = tx1.try_send(Ok(args.value(0).unwrap().get()));
+					let _ = tx1.try_send(Ok(TracedHeap::new(args.value(0).unwrap().get())));
 					Ok(Value::undefined(args.cx()))
 				}),
 				1,
@@ -44,7 +44,7 @@ impl PromiseFuture {
 				&cx,
 				"",
 				Box::new(move |args| {
-					let _ = tx2.try_send(Err(args.value(0).unwrap().get()));
+					let _ = tx2.try_send(Err(TracedHeap::new(args.value(0).unwrap().get())));
 					Ok(Value::undefined(args.cx()))
 				}),
 				1,
@@ -60,7 +60,7 @@ impl PromiseFuture {
 }
 
 impl Future for PromiseFuture {
-	type Output = (Context, Result<JSVal, JSVal>);
+	type Output = (Context, Result<TracedHeap<JSVal>, TracedHeap<JSVal>>);
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
 		let result = Pin::new(&mut self.1);

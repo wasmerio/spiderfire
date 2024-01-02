@@ -182,13 +182,10 @@ impl ReadableStreamReader {
 		}
 	}
 
-	fn read_chunk_raw<'cx>(&self, cx: &'cx Context) -> Promise {
+	pub fn read_chunk_raw<'cx>(&self, cx: &'cx Context) -> Promise {
 		unsafe {
-			let promise = cx.root_object(ReadableStreamDefaultReaderRead(
-				cx.as_ptr(),
-				self.reader.root(cx).handle().into(),
-			));
-			Promise::from(promise).expect("ReadableStreamDefaultReaderRead should return a Promise")
+			let promise = ReadableStreamDefaultReaderRead(cx.as_ptr(), self.reader.root(cx).handle().into());
+			Promise::from_raw(promise, cx).expect("ReadableStreamDefaultReaderRead should return a Promise")
 		}
 	}
 
@@ -200,16 +197,16 @@ impl ReadableStreamReader {
 		(cx, chunk_val) = PromiseFuture::new(cx, &chunk).await;
 		let chunk = match chunk_val {
 			Ok(v) => {
-				if !v.is_object() {
+				if !v.get().is_object() {
 					return Err(Exception::Error(Error::new(
 						"ReadableStreamDefaultReader.read() should return an object",
 						ErrorKind::Type,
 					)));
 				}
-				Object::from(cx.root_object(v.to_object()))
+				Object::from(cx.root_object(v.get().to_object()))
 			}
 			Err(v) => {
-				return Err(Exception::Other(v));
+				return Err(Exception::Other(v.get()));
 			}
 		};
 
