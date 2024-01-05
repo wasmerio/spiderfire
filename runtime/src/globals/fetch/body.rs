@@ -14,7 +14,7 @@ use hyper::body::HttpBody;
 use ion::class::NativeObject;
 use ion::typedarray::ArrayBuffer;
 use mozjs::c_str;
-use mozjs::jsapi::CheckReadableStreamControllerCanCloseOrEnqueue;
+use mozjs::jsapi::{CheckReadableStreamControllerCanCloseOrEnqueue, JSObject};
 use multipart::client::multipart;
 use mozjs::jsval::JSVal;
 
@@ -29,6 +29,8 @@ use crate::globals::form_data::{FormData, FormDataEntryValue};
 use crate::globals::streams::{NativeStreamSourceCallbacks, NativeStreamSource};
 use crate::globals::url::URLSearchParams;
 use crate::promise::future_to_promise;
+
+use super::header::Header;
 
 #[derive(Debug)]
 pub enum FetchBodyInner {
@@ -147,6 +149,55 @@ impl FetchBody {
 				let (_, bytes) = cx.await_native_cx(|cx| reader.read_to_end(cx)).await;
 				Ok(Some(bytes.map_err(|e| e.to_error())?.into()))
 			}
+		}
+	}
+
+	pub async fn into_text(self, cx: Context) -> Result<String> {
+		let bytes = self.into_bytes(cx).await?;
+		String::from_utf8(bytes.unwrap_or_default().into())
+			.map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), ErrorKind::Normal))
+	}
+
+	pub async fn into_json(self, cx: Context) -> Result<*mut JSObject> {
+		let (cx, text) = cx.await_native_cx(|cx| self.into_text(cx)).await;
+		let text = text?;
+
+		let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
+			return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
+		};
+		let mut result = Value::undefined(&cx);
+		if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) } {
+			return Err(ion::Error::none());
+		}
+
+		Ok((*result.to_object(&cx)).get())
+	}
+
+	pub async fn into_form_data(self, cx: Context, content_type: Header) -> Result<*mut JSObject> {
+		let (cx, bytes) = cx.await_native_cx(|cx| self.into_bytes(cx)).await;
+		let bytes = bytes?.unwrap_or_default();
+
+		let content_type = content_type.to_string();
+
+		if content_type.starts_with("application/x-www-form-urlencoded") {
+			let parsed = form_urlencoded::parse(bytes.as_ref());
+			let mut form_data = FormData::constructor();
+
+			for (key, val) in parsed {
+				form_data.append_native_string(key.into_owned(), val.into_owned());
+			}
+
+			Ok(FormData::new_object(&cx, Box::new(form_data)))
+		} else if content_type.starts_with("multipart/form-data") {
+			Err(Error::new(
+				"multipart/form-data deserialization is not supported yet",
+				ErrorKind::Normal,
+			))
+		} else {
+			Err(Error::new(
+				"Invalid content-type, cannot decide form data format",
+				ErrorKind::Type,
+			))
 		}
 	}
 

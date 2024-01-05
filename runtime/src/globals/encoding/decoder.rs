@@ -94,6 +94,6 @@ impl TextDecoder {
 
 	#[ion(get)]
 	pub fn get_encoding(&self) -> String {
-		String::from(self.decoder.encoding().name())
+		String::from(self.decoder.encoding().name()).to_ascii_lowercase()
 	}
 }

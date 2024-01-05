@@ -21,7 +21,6 @@ pub use options::*;
 use crate::globals::fetch::body::FetchBody;
 use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
-use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
 
 use super::body::{hyper_body_to_stream, FetchBodyInner};
@@ -129,8 +128,8 @@ impl Response {
 	}
 
 	pub async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
-		let bytes = Self::take_body_bytes(this, cx).await?;
-		String::from_utf8(bytes.into()).map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), None))
+		let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+		body.into_text(cx).await
 	}
 
 	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
@@ -310,21 +309,11 @@ impl Response {
 	}
 
 	pub fn json<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = TracedHeap::new(self.reflector().get());
+		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let (cx, text) = cx.await_native_cx(|cx| Self::take_body_text(&this, cx)).await;
-				let text = text?;
-
-				let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
-					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
-				};
-				let mut result = ion::Value::undefined(&cx);
-				if !mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) {
-					return Err(ion::Error::new("Failed to deserialize JSON", ion::ErrorKind::Normal));
-				}
-
-				Ok((*result.to_object(&cx)).get())
+			future_to_promise(cx, move |cx| async move {
+				let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+				body.into_json(cx).await
 			})
 		}
 	}
@@ -334,42 +323,16 @@ impl Response {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let (cx, bytes) = cx.await_native_cx(|cx| Self::take_body_bytes(&this, cx)).await;
-				let bytes = bytes?;
-
-				let mut response = Object::from(this.to_local());
-				let response = Response::get_mut_private(&mut response);
-
-				let headers = response.get_headers_object(&cx);
-				let content_type_string = ByteString::<_>::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
+				let this = Self::get_mut_private(&mut Object::from(this.to_local()));
+				let headers = this.get_headers_object(&cx);
+				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
 				let Some(content_type) = headers.get(content_type_string)? else {
 					return Err(Error::new(
 						"No content-type header, cannot decide form data format",
 						ErrorKind::Type,
 					));
 				};
-				let content_type = content_type.to_string();
-
-				if content_type.starts_with("application/x-www-form-urlencoded") {
-					let parsed = form_urlencoded::parse(bytes.as_ref());
-					let mut form_data = FormData::constructor();
-
-					for (key, val) in parsed {
-						form_data.append_native_string(key.into_owned(), val.into_owned());
-					}
-
-					Ok(FormData::new_object(&cx, Box::new(form_data)))
-				} else if content_type.starts_with("multipart/form-data") {
-					Err(Error::new(
-						"multipart/form-data deserialization is not supported yet",
-						ErrorKind::Normal,
-					))
-				} else {
-					Err(Error::new(
-						"Invalid content-type, cannot decide form data format",
-						ErrorKind::Type,
-					))
-				}
+				this.take_body()?.into_form_data(cx, content_type).await
 			})
 		}
 	}

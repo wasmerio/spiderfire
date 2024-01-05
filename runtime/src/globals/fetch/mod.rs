@@ -275,7 +275,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 		|| response.status == Some(StatusCode::RESET_CONTENT)
 		|| response.status == Some(StatusCode::NOT_MODIFIED))
 	{
-		response.body = None;
+		response.body = Some(FetchBody::default());
 	}
 
 	if opaque_redirect {
@@ -283,7 +283,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 		response.url = None;
 		response.status = None;
 		response.status_text = None;
-		response.body = None;
+		response.body = Some(FetchBody::default());
 
 		headers.headers.clear();
 	} else {
@@ -337,7 +337,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 				response.url = None;
 				response.status = None;
 				response.status_text = None;
-				response.body = None;
+				response.body = Some(FetchBody::default());
 
 				headers.headers.clear();
 			}

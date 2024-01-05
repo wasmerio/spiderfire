@@ -10,8 +10,8 @@ use bytes::Bytes;
 use http::{HeaderMap, HeaderValue};
 use http::header::CONTENT_TYPE;
 use hyper::Method;
-use ion::{Value, TracedHeap, HeapPointer, Heap};
 use ion::string::byte::ByteString;
+use ion::{TracedHeap, HeapPointer, Heap, Object};
 use ion::typedarray::ArrayBuffer;
 use mozjs::jsapi::JSObject;
 use url::Url;
@@ -24,7 +24,6 @@ use crate::globals::abort::AbortSignal;
 use crate::globals::fetch::body::FetchBody;
 use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
-use crate::globals::form_data::FormData;
 use crate::promise::future_to_promise;
 
 use super::body::FetchBodyInner;
@@ -82,7 +81,11 @@ impl Request {
 	}
 
 	pub fn headers<'cx>(&self, cx: &'cx Context) -> &'cx HeaderMap {
-		&Headers::get_private(&self.headers.root(cx).into()).headers
+		&self.get_headers_object(cx).headers
+	}
+
+	pub fn get_headers_object<'cx>(&self, cx: &'cx Context) -> &'cx Headers {
+		&Headers::get_private(&self.headers.root(cx).into())
 	}
 
 	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
@@ -460,65 +463,27 @@ impl Request {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
-				let (cx, text) = cx.await_native_cx(|cx| Self::take_body_text(&this, cx)).await;
-				let text = text?;
-
-				let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
-					return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
-				};
-				let mut result = Value::undefined(&cx);
-				if !mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) {
-					return Err(ion::Error::none());
-				}
-
-				Ok((*result.to_object(&cx)).get())
+				let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+				body.into_json(cx).await
 			})
 		}
 	}
 
 	#[ion(name = "formData")]
 	pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
-		let this = TracedHeap::new(self.reflector.get());
+		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
-			future_to_promise(cx, move |cx| async move {
-				let this_obj = Self::get_mut_private(&mut this.root(&cx).into());
-				let body = this_obj.take_body()?;
-				let (cx, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
-				let bytes = bytes?;
-				let bytes = bytes.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]);
-
-				let this_obj = Self::get_mut_private(&mut this.root(&cx).into());
-
-				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into()).unwrap();
-				let headers = Headers::get_private(&this_obj.headers.to_local().into());
-				let Some(content_type) = headers.get(content_type_string).unwrap() else {
-					return Err(ion::Error::new(
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&mut Object::from(this.to_local()));
+				let headers = this.get_headers_object(&cx);
+				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
+				let Some(content_type) = headers.get(content_type_string)? else {
+					return Err(Error::new(
 						"No content-type header, cannot decide form data format",
-						ion::ErrorKind::Type,
+						ErrorKind::Type,
 					));
 				};
-				let content_type = content_type.to_string();
-
-				if content_type.starts_with("application/x-www-form-urlencoded") {
-					let parsed = form_urlencoded::parse(bytes.as_ref());
-					let mut form_data = FormData::constructor();
-
-					for (key, val) in parsed {
-						form_data.append_native_string(key.into_owned(), val.into_owned());
-					}
-
-					Ok(FormData::new_object(&cx, Box::new(form_data)))
-				} else if content_type.starts_with("multipart/form-data") {
-					Err(ion::Error::new(
-						"multipart/form-data deserialization is not supported yet",
-						ion::ErrorKind::Normal,
-					))
-				} else {
-					Err(ion::Error::new(
-						"Invalid content-type, cannot decide form data format",
-						ion::ErrorKind::Type,
-					))
-				}
+				this.take_body()?.into_form_data(cx, content_type).await
 			})
 		}
 	}

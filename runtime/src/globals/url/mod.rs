@@ -104,7 +104,7 @@ impl URL {
 
 	#[ion(get)]
 	pub fn get_protocol(&self) -> String {
-		String::from(self.url.scheme())
+		String::from(format!("{}:", self.url.scheme()))
 	}
 
 	#[ion(set)]
@@ -212,7 +212,7 @@ impl URL {
 
 	#[ion(get)]
 	pub fn get_search(&self) -> String {
-		self.url.query().map(String::from).unwrap_or_default()
+		format!("?{}", self.url.query().map(String::from).unwrap_or_default())
 	}
 
 	#[ion(set)]
@@ -222,7 +222,7 @@ impl URL {
 
 	#[ion(get)]
 	pub fn get_hash(&self) -> String {
-		self.url.fragment().map(String::from).unwrap_or_default()
+		format!("#{}", self.url.fragment().map(String::from).unwrap_or_default())
 	}
 
 	#[ion(set)]
