@@ -15,6 +15,7 @@ use mozjs::jsapi::{
 use mozjs::typedarray::CreateWith;
 use mozjs_sys::jsapi::JS::{NewArrayBufferWithContents, StealArrayBufferContents};
 
+use crate::conversions::FromValue;
 use crate::{Context, Error, ErrorKind, Local, Object, Result};
 use crate::utils::BoxExt;
 
@@ -89,6 +90,11 @@ impl<'ab> ArrayBuffer<'ab> {
 		let mut data = ptr::null_mut();
 		unsafe { GetArrayBufferLengthAndData(self.get(), &mut len, &mut shared, &mut data) };
 		(data, len)
+	}
+
+	/// Returns the length of the [ArrayBuffer].
+	pub fn len(&self) -> usize {
+		self.data().1
 	}
 
 	/// Returns a slice to the contents of the [ArrayBuffer].
@@ -177,5 +183,20 @@ impl<'ab> Deref for ArrayBuffer<'ab> {
 impl<'ab> DerefMut for ArrayBuffer<'ab> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.buffer
+	}
+}
+
+impl<'cx> FromValue<'cx> for ArrayBuffer<'cx> {
+	type Config = ();
+
+	fn from_value(cx: &'cx Context, value: &crate::Value, _strict: bool, _config: Self::Config) -> Result<Self> {
+		let value = value.handle();
+		if value.is_object() {
+			let object = value.to_object();
+			let local = cx.root_object(object);
+			Self::from(local).ok_or_else(|| Error::new("Expected Typed Array", ErrorKind::Type))
+		} else {
+			Err(Error::new("Expected Object", ErrorKind::Type))
+		}
 	}
 }
