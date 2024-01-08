@@ -59,7 +59,8 @@ impl<'cx> Runtime<'cx> {
 
 	pub async fn run_event_loop(&self) -> Result<(), Option<ErrorReport>> {
 		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
-		event_loop.run_event_loop(self.cx).await
+		let cx = self.cx.duplicate();
+		event_loop.run_event_loop(&cx).await
 	}
 }
 
