@@ -42,6 +42,7 @@ pub mod format;
 pub mod functions;
 mod future;
 mod heap;
+pub mod json;
 pub mod local;
 pub mod module;
 pub mod objects;
