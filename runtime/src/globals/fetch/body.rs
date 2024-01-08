@@ -161,16 +161,7 @@ impl FetchBody {
 	pub async fn into_json(self, cx: Context) -> Result<*mut JSObject> {
 		let (cx, text) = cx.await_native_cx(|cx| self.into_text(cx)).await;
 		let text = text?;
-
-		let Some(str) = ion::String::copy_from_str(&cx, text.as_str()) else {
-			return Err(ion::Error::new("Failed to allocate string", ion::ErrorKind::Normal));
-		};
-		let mut result = Value::undefined(&cx);
-		if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) } {
-			return Err(ion::Error::none());
-		}
-
-		Ok((*result.to_object(&cx)).get())
+		Ok((*ion::json::parse(&cx, text)?).get())
 	}
 
 	pub async fn into_blob(self, cx: Context, content_type: Option<Header>) -> Result<*mut JSObject> {

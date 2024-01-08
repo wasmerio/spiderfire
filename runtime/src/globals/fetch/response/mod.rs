@@ -6,10 +6,12 @@
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue};
-use http::header::CONTENT_TYPE;
+use http::header::{CONTENT_TYPE, LOCATION};
 use hyper::{Body, StatusCode};
 use hyper::ext::ReasonPhrase;
-use ion::string::byte::ByteString;
+use ion::conversions::ToValue;
+use ion::string::byte::{ByteString, VisibleAscii};
+use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::JSObject;
 use url::Url;
 
@@ -23,6 +25,7 @@ use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
 use crate::promise::future_to_promise;
 
+use super::HeadersInit;
 use super::body::{hyper_body_to_stream, FetchBodyInner};
 
 mod options;
@@ -238,6 +241,60 @@ impl Response {
 		response.headers.set(Headers::new_object(cx, Box::new(headers)));
 
 		Ok(response)
+	}
+
+	pub fn error(cx: &Context) -> *mut JSObject {
+		Response::new_object(cx, Box::new(network_error()))
+	}
+
+	#[ion(name = "json")]
+	pub fn static_json(cx: &Context, data: Object, options: Option<ResponseInit>) -> Result<*mut JSObject> {
+		let text = ion::json::stringify(cx, data.as_value(cx))?;
+		let text_bytes: Vec<_> = text.into();
+		let body = FetchBody {
+			body: FetchBodyInner::Bytes(text_bytes.into()),
+			..Default::default()
+		};
+
+		let mut options = options.unwrap_or_default();
+		let mut headers = options.headers.into_headers(HeaderMap::default(), HeadersKind::Response)?;
+		if !headers.headers.contains_key(CONTENT_TYPE) {
+			headers.headers.append(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+		}
+		options.headers = HeadersInit::Existing(&headers);
+
+		Ok(Response::new_object(
+			cx,
+			Box::new(Response::constructor(cx, Some(body), Some(options))?),
+		))
+	}
+
+	pub fn redirect(
+		cx: &Context, location: ByteString<VisibleAscii>,
+		#[ion(convert = ConversionBehavior::Clamp, strict)] status: Option<u16>,
+	) -> Result<*mut JSObject> {
+		let status = status.unwrap_or(302);
+		if ![301, 302, 303, 307, 308].contains(&status) {
+			return Err(Error::new("Invalid status code for redirect response", ErrorKind::Type));
+		}
+
+		let mut headers = Headers::new(HeadersKind::Response);
+		headers.headers.append(
+			LOCATION,
+			HeaderValue::from_bytes(location.as_bytes())
+				.map_err(|_| Error::new("Invalid Location header value", ErrorKind::Type))?,
+		);
+
+		let init = ResponseInit {
+			status: StatusCode::from_u16(status).unwrap(),
+			headers: HeadersInit::Existing(&headers),
+			..Default::default()
+		};
+
+		Ok(Response::new_object(
+			cx,
+			Box::new(Response::constructor(cx, None, Some(init))?),
+		))
 	}
 
 	#[ion(get)]
