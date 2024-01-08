@@ -454,6 +454,19 @@ impl Request {
 		}
 	}
 
+	pub fn blob(&mut self, cx: &Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let body = this.take_body()?;
+				let headers = this.get_headers_object(&cx);
+				let header = headers.get(ByteString::from(CONTENT_TYPE.to_string().into()).unwrap()).unwrap();
+				body.into_blob(cx, header).await
+			})
+		}
+	}
+
 	pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe { future_to_promise(cx, move |cx| async move { Self::take_body_text(&this, cx).await }) }

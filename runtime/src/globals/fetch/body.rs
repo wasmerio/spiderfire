@@ -173,6 +173,16 @@ impl FetchBody {
 		Ok((*result.to_object(&cx)).get())
 	}
 
+	pub async fn into_blob(self, cx: Context, content_type: Option<Header>) -> Result<*mut JSObject> {
+		let (cx, bytes) = cx.await_native_cx(|cx| self.into_bytes(cx)).await;
+		let blob = match (content_type, bytes?) {
+			(Some(header), Some(bytes)) => Blob::new_with_kind(bytes, header.to_string()),
+			(None, Some(bytes)) => Blob::new(bytes),
+			(_, None) => Blob::new(Bytes::default()),
+		};
+		Ok(Blob::new_object(&cx, Box::new(blob)))
+	}
+
 	pub async fn into_form_data(self, cx: Context, content_type: Header) -> Result<*mut JSObject> {
 		let (cx, bytes) = cx.await_native_cx(|cx| self.into_bytes(cx)).await;
 		let bytes = bytes?.unwrap_or_default();

@@ -12,7 +12,7 @@ use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::JSObject;
 use mozjs::typedarray::{ArrayBuffer, ArrayBufferView};
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, Value};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, Value, ReadableStream};
 use ion::class::Reflector;
 use ion::conversions::FromValue;
 use ion::format::NEWLINE;
@@ -105,6 +105,14 @@ impl Blob {
 		}
 	}
 
+	pub fn new_with_kind(bytes: Bytes, kind: String) -> Self {
+		Self {
+			reflector: Default::default(),
+			bytes,
+			kind: Some(kind),
+		}
+	}
+
 	pub fn as_bytes(&self) -> &Bytes {
 		&self.bytes
 	}
@@ -114,6 +122,7 @@ impl Blob {
 	}
 }
 
+// TODO: can we get away with less cloning of the bytes?
 #[js_class]
 impl Blob {
 	#[ion(constructor)]
@@ -220,5 +229,9 @@ impl Blob {
 				Ok::<_, ()>(ion::typedarray::ArrayBuffer::from(bytes.to_vec()))
 			})
 		}
+	}
+
+	pub fn stream(&self, cx: &Context) -> ReadableStream {
+		ReadableStream::from_bytes(cx, self.bytes.clone())
 	}
 }

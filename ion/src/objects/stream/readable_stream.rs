@@ -139,6 +139,12 @@ impl<'cx> FromValue<'cx> for ReadableStream {
 	}
 }
 
+impl<'cx> ToValue<'cx> for ReadableStream {
+	fn to_value(&self, cx: &'cx Context, value: &mut crate::Value) {
+		self.stream.get().to_value(cx, value)
+	}
+}
+
 impl Deref for ReadableStream {
 	type Target = TracedHeap<*mut JSObject>;
 
