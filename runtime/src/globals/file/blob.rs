@@ -31,7 +31,7 @@ pub fn buffer_source_to_bytes(object: &Object) -> Result<Bytes> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct BlobPart(Bytes);
+pub struct BlobPart(pub Bytes);
 
 impl<'cx> FromValue<'cx> for BlobPart {
 	type Config = ();
@@ -83,9 +83,9 @@ impl<'cx> FromValue<'cx> for Endings {
 #[derive(Debug, Default, FromValue)]
 pub struct BlobOptions {
 	#[ion(name = "type")]
-	kind: Option<String>,
+	pub kind: Option<String>,
 	#[ion(default)]
-	endings: Endings,
+	pub endings: Endings,
 }
 
 #[js_class]

@@ -415,7 +415,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
- "http",
+ "http 0.2.11",
  "mime",
  "mime_guess",
  "rand",
@@ -812,13 +812,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "http"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b32afd38673a8016f7c9ae69e5af41a58f81b1d31689040f2f1959594ce194ea"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa",
+]
+
+[[package]]
 name = "http-body"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5f38f16d184e36f2408a55281cd658ecbd3ca05cce6d6510a176eca393e26d1"
 dependencies = [
  "bytes",
- "http",
+ "http 0.2.11",
  "pin-project-lite",
 ]
 
@@ -853,7 +864,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "http",
+ "http 0.2.11",
  "http-body",
  "httparse",
  "httpdate",
@@ -875,7 +886,7 @@ dependencies = [
  "bytes",
  "common-multipart-rfc7578",
  "futures-core",
- "http",
+ "http 0.2.11",
  "hyper",
 ]
 
@@ -886,7 +897,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
 dependencies = [
  "futures-util",
- "http",
+ "http 0.2.11",
  "hyper",
  "rustls",
  "tokio",
@@ -1190,6 +1201,24 @@ dependencies = [
  "libz-sys",
  "regex",
  "walkdir",
+]
+
+[[package]]
+name = "multer"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a15d522be0a9c3e46fd2632e272d178f56387bdb5c9fbb3a36c649062e9b5219"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http 1.0.0",
+ "httparse",
+ "log",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
 ]
 
 [[package]]
@@ -1544,7 +1573,7 @@ dependencies = [
  "encoding_rs",
  "form_urlencoded",
  "futures",
- "http",
+ "http 0.2.11",
  "hyper",
  "hyper-multipart-rfc7578",
  "hyper-rustls",
@@ -1553,6 +1582,7 @@ dependencies = [
  "ion",
  "mime",
  "mozjs",
+ "multer",
  "paste",
  "sha3",
  "sourcemap",

@@ -4,11 +4,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::convert::Infallible;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{StreamExt, stream};
 use hyper::Body;
 use hyper::body::HttpBody;
 use ion::class::NativeObject;
@@ -24,7 +25,7 @@ use ion::{
 };
 use ion::conversions::{FromValue, ToValue};
 
-use crate::globals::file::{Blob, buffer_source_to_bytes};
+use crate::globals::file::{Blob, buffer_source_to_bytes, File, BlobPart, FileOptions, BlobOptions};
 use crate::globals::form_data::{FormData, FormDataEntryValue};
 use crate::globals::streams::{NativeStreamSourceCallbacks, NativeStreamSource};
 use crate::globals::url::URLSearchParams;
@@ -190,10 +191,63 @@ impl FetchBody {
 
 			Ok(FormData::new_object(&cx, Box::new(form_data)))
 		} else if content_type.starts_with("multipart/form-data") {
-			Err(Error::new(
-				"multipart/form-data deserialization is not supported yet",
-				ErrorKind::Normal,
-			))
+			const MULTIPART_HEADER_WITH_BOUNDARY: &str = "multipart/form-data; boundary=";
+			if !content_type.starts_with(MULTIPART_HEADER_WITH_BOUNDARY) {
+				return Err(Error::new(
+					"multipart/form-data content without a boundary, cannot parse",
+					ErrorKind::Normal,
+				));
+			}
+
+			let boundary = &content_type.as_str()[MULTIPART_HEADER_WITH_BOUNDARY.len()..];
+
+			// TODO: read asynchronously from stream bodies. This is complicated by the fact
+			// that multer expects a `Send` stream, but we're running on a single-threaded
+			// runtime.
+			let mut parser = multer::Multipart::new(
+				stream::once(async { std::result::Result::<_, Infallible>::Ok(bytes) }),
+				boundary,
+			);
+
+			let mut form_data = FormData::constructor();
+			let mut cx = cx;
+
+			while let Some(next) = parser.next_field().await? {
+				let name = next.name().unwrap_or("").to_string();
+				let file_name = next.file_name().map(|f| f.to_string());
+				let content_type = next.content_type().map(|c| c.to_string());
+
+				let bytes;
+				(cx, bytes) = cx.await_native(next.bytes()).await;
+				let bytes = bytes.map_err(|_| Error::new("Failed to read form data from body", ErrorKind::Normal))?;
+
+				match file_name {
+					Some(file_name) => {
+						let file = File::constructor(
+							vec![BlobPart(bytes)],
+							file_name,
+							Some(FileOptions {
+								modified: None,
+								blob: BlobOptions {
+									endings: crate::globals::file::Endings::Transparent,
+									kind: content_type,
+								},
+							}),
+						);
+						let file = cx.root_object(File::new_object(&cx, Box::new(file))).into();
+
+						form_data.append_native_file(name, File::get_private(&file));
+					}
+
+					None => form_data.append_native_string(
+						name,
+						String::from_utf8(bytes.into())
+							.map_err(|_| Error::new("String contains invalid UTF-8 sequence", ErrorKind::Normal))?,
+					),
+				}
+			}
+
+			Ok(FormData::new_object(&cx, Box::new(form_data)))
 		} else {
 			Err(Error::new(
 				"Invalid content-type, cannot decide form data format",
@@ -271,9 +325,14 @@ impl<'cx> FromValue<'cx> for FetchBody {
 				for kv in form_data.all_pairs() {
 					match &kv.value {
 						FormDataEntryValue::String(str) => form.add_text(kv.key.as_str(), str),
-						FormDataEntryValue::File(bytes, name) => {
+						FormDataEntryValue::File(file) => {
 							// TODO: remove to_vec call
-							form.add_reader_file(kv.key.as_str(), std::io::Cursor::new(bytes.to_vec()), name.as_str())
+							let file = File::get_private(&file.root(cx).into());
+							form.add_reader_file(
+								kv.key.as_str(),
+								std::io::Cursor::new(file.blob.as_bytes().to_vec()),
+								&file.name,
+							)
 						}
 					}
 				}

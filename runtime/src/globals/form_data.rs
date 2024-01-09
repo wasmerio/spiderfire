@@ -1,19 +1,20 @@
-use bytes::Bytes;
 use ion::{
 	Context, Object,
 	conversions::{FromValue, ToValue},
 	ClassDefinition, Result, Error, ErrorKind, JSIterator,
 	symbol::WellKnownSymbolCode,
-	class::Reflector,
+	class::{Reflector, NativeObject},
+	TracedHeap,
 };
+use mozjs::jsapi::JSObject;
 
-use super::file::Blob;
+use super::file::{Blob, File, BlobPart, FileOptions, BlobOptions, Endings};
 
 // TODO: maintain the same File instance instead of Bytes
 #[derive(Clone)]
 pub enum FormDataEntryValue {
 	String(String),
-	File(Bytes, String),
+	File(TracedHeap<*mut JSObject>),
 }
 
 impl FormDataEntryValue {
@@ -22,17 +23,50 @@ impl FormDataEntryValue {
 	) -> Result<Self> {
 		if value.get().is_string() {
 			let str = String::from_value(cx, value, false, ())?;
-			match file_name {
-				None => Ok(Self::String(str)),
-				Some(file_name) => Ok(Self::File(str.into_bytes().into(), file_name)),
-			}
+			Ok(Self::String(str))
 		} else if value.get().is_object() && Blob::instance_of(cx, &value.to_object(cx), None) {
 			let obj = value.to_object(cx);
-			let blob = Blob::get_private(&obj);
-			Ok(Self::File(
-				blob.as_bytes().clone(),
-				file_name.unwrap_or_else(|| "blob".to_string()),
-			))
+			let file = if File::instance_of(cx, &obj, None) {
+				if let Some(name) = file_name {
+					let file = File::get_private(&obj);
+					cx.root_object(File::new_object(
+						cx,
+						Box::new(File::constructor(
+							vec![BlobPart(file.blob.as_bytes().clone())],
+							name,
+							Some(FileOptions {
+								modified: Some(file.get_last_modified()),
+								blob: BlobOptions {
+									kind: file.blob.kind(),
+									endings: Endings::Transparent,
+								},
+							}),
+						)),
+					))
+					.into()
+				} else {
+					obj
+				}
+			} else {
+				let name = file_name.unwrap_or("blob".to_string());
+				let blob = Blob::get_private(&obj);
+				cx.root_object(File::new_object(
+					cx,
+					Box::new(File::constructor(
+						vec![BlobPart(blob.as_bytes().clone())],
+						name,
+						Some(FileOptions {
+							modified: None,
+							blob: BlobOptions {
+								kind: blob.kind(),
+								endings: Endings::Transparent,
+							},
+						}),
+					)),
+				))
+				.into()
+			};
+			Ok(Self::File(TracedHeap::from_local(&file)))
 		} else {
 			Err(Error::new("FormData value must be a string or a Blob", ErrorKind::Type))
 		}
@@ -43,11 +77,7 @@ impl<'cx> ToValue<'cx> for FormDataEntryValue {
 	fn to_value(&self, cx: &'cx Context, value: &mut ion::Value) {
 		match self {
 			Self::String(s) => s.to_value(cx, value),
-			// TODO: this should return a file, not a blob
-			Self::File(bytes, _name) => {
-				let blob = Blob::new_object(cx, Box::new(Blob::new(bytes.clone())));
-				value.handle_mut().set(blob.as_value(cx).get());
-			}
+			Self::File(obj) => obj.get().to_value(cx, value),
 		}
 	}
 }
@@ -75,6 +105,13 @@ impl FormData {
 		self.kv_pairs.push(KvPair {
 			key,
 			value: FormDataEntryValue::String(value),
+		});
+	}
+
+	pub fn append_native_file(&mut self, key: String, value: &File) {
+		self.kv_pairs.push(KvPair {
+			key,
+			value: FormDataEntryValue::File(TracedHeap::new(value.reflector().get())),
 		});
 	}
 }

@@ -27,6 +27,7 @@ sourcemap.workspace = true
 url.workspace = true
 hyper-multipart-rfc7578 = "0.8.0"
 as-any = "0.3.1"
+multer = "3.0.0"
 
 [dependencies.async-recursion]
 version = "1.0.5"
