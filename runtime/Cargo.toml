@@ -22,8 +22,12 @@ dunce.workspace = true
 futures.workspace = true
 indent.workspace = true
 mozjs.workspace = true
+paste.workspace = true
 sourcemap.workspace = true
 url.workspace = true
+hyper-multipart-rfc7578 = "0.8.0"
+as-any = "0.3.1"
+multer = "3.0.0"
 
 [dependencies.async-recursion]
 version = "1.0.5"
@@ -38,12 +42,12 @@ version = "0.2.11"
 optional = true
 
 [dependencies.hyper]
-version = "0.14.28"
+version = "0.14.27"
 features = ["client", "http1", "tcp"]
 optional = true
 
 [dependencies.hyper-rustls]
-version = "0.24.2"
+version = "0.24.1"
 default-features = false
 features = ["http1", "tls12", "webpki-tokio"]
 optional = true
@@ -77,7 +81,7 @@ optional = true
 
 [dependencies.tokio]
 workspace = true
-features = ["sync"]
+features = ["sync", "rt", "fs"]
 
 [features]
 debugmozjs = ["ion/debugmozjs"]

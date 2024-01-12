@@ -7,12 +7,11 @@
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
-use mozjs::glue::JS_GetRegExpFlags;
+use mozjs::jsapi::GetRegExpFlags;
 use mozjs::jsapi::{
 	CheckRegExpSyntax, ExecuteRegExp, ExecuteRegExpNoStatics, GetRegExpSource, JSObject, NewUCRegExpObject,
 	ObjectIsRegExp,
 };
-use mozjs::jsapi::RegExpFlags as REFlags;
 
 use crate::{Context, Local, Object, Value};
 use crate::flags::RegExpFlags;
@@ -53,11 +52,7 @@ impl<'r> RegExp<'r> {
 	}
 
 	pub fn flags(&self, cx: &Context) -> RegExpFlags {
-		let mut flags = REFlags { flags_: 0 };
-		unsafe {
-			JS_GetRegExpFlags(cx.as_ptr(), self.handle().into(), &mut flags);
-		}
-		flags.into()
+		unsafe { RegExpFlags::from_bits_retain(GetRegExpFlags(cx.as_ptr(), self.handle().into()).flags_) }
 	}
 
 	pub fn to_string(&self, cx: &Context) -> String {

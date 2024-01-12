@@ -52,8 +52,8 @@ impl ToValue<'_> for Header {
 }
 
 pub struct HeaderEntry {
-	name: ByteString<VisibleAscii>,
-	value: ByteString<VisibleAscii>,
+	pub name: ByteString<VisibleAscii>,
+	pub value: ByteString<VisibleAscii>,
 }
 
 impl<'cx> FromValue<'cx> for HeaderEntry {
@@ -174,6 +174,10 @@ impl Headers {
 			kind,
 		})
 	}
+
+	pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &HeaderValue)> {
+		self.headers.iter()
+	}
 }
 
 #[js_class]
@@ -244,6 +248,10 @@ impl Headers {
 		self.headers.insert(name, value);
 		remove_privileged_no_cors_headers(&mut self.headers, self.kind);
 		Ok(())
+	}
+
+	pub fn entries<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
+		self.iterator(cx)
 	}
 
 	#[ion(name = WellKnownSymbolCode::Iterator)]

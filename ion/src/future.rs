@@ -13,36 +13,38 @@ use futures::channel::mpsc;
 use futures::channel::mpsc::Receiver;
 use futures::Stream;
 use mozjs::jsval::JSVal;
+use mozjs_sys::jsapi::JSContext;
 
-use crate::{Context, Function, Promise, Value};
+use crate::{Context, Function, Promise, Value, TracedHeap};
 use crate::flags::PropertyFlags;
 
-pub struct PromiseFuture(Receiver<Result<JSVal, JSVal>>);
+pub struct PromiseFuture(*mut JSContext, Receiver<Result<TracedHeap<JSVal>, TracedHeap<JSVal>>>);
 
 impl PromiseFuture {
-	pub fn new(cx: &Context, promise: &Promise) -> PromiseFuture {
-		let (rx, tx) = mpsc::channel(1);
+	/// See documentation for [`runtime::promise::future_to_promise`].
+	pub fn new(cx: Context, promise: &Promise) -> PromiseFuture {
+		let (tx, rx) = mpsc::channel(1);
 
-		let mut rx1 = rx;
-		let mut rx2 = rx1.clone();
+		let mut tx1 = tx;
+		let mut tx2 = tx1.clone();
 
 		promise.add_reactions(
-			cx,
+			&cx,
 			Some(Function::from_closure(
-				cx,
+				&cx,
 				"",
 				Box::new(move |args| {
-					let _ = rx1.try_send(Ok(args.value(0).unwrap().get()));
+					let _ = tx1.try_send(Ok(TracedHeap::new(args.value(0).unwrap().get())));
 					Ok(Value::undefined(args.cx()))
 				}),
 				1,
 				PropertyFlags::empty(),
 			)),
 			Some(Function::from_closure(
-				cx,
+				&cx,
 				"",
 				Box::new(move |args| {
-					let _ = rx2.try_send(Err(args.value(0).unwrap().get()));
+					let _ = tx2.try_send(Err(TracedHeap::new(args.value(0).unwrap().get())));
 					Ok(Value::undefined(args.cx()))
 				}),
 				1,
@@ -50,17 +52,20 @@ impl PromiseFuture {
 			)),
 		);
 
-		PromiseFuture(tx)
+		let cx_ptr = cx.as_ptr();
+		drop(cx);
+
+		PromiseFuture(cx_ptr, rx)
 	}
 }
 
 impl Future for PromiseFuture {
-	type Output = Result<JSVal, JSVal>;
+	type Output = (Context, Result<TracedHeap<JSVal>, TracedHeap<JSVal>>);
 
-	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Result<JSVal, JSVal>> {
-		let result = Pin::new(&mut self.0);
+	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+		let result = Pin::new(&mut self.1);
 		if let Poll::Ready(Some(val)) = result.poll_next(cx) {
-			Poll::Ready(val)
+			Poll::Ready((unsafe { Context::new_unchecked(self.0) }, val))
 		} else {
 			Poll::Pending
 		}

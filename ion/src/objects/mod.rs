@@ -22,6 +22,7 @@ pub use object::Object;
 pub use promise::Promise;
 pub use regexp::RegExp;
 pub use set::Set;
+pub use stream::{ReadableStream, ReadableStreamReader, WritableStream};
 
 use crate::Context;
 
@@ -35,6 +36,7 @@ mod object;
 mod promise;
 mod regexp;
 mod set;
+mod stream;
 pub mod typedarray;
 
 /// Returns the bit-masked representation of reserved slots for a class.

@@ -25,6 +25,12 @@ pub struct TextDecodeOptions {
 	stream: bool,
 }
 
+impl TextDecodeOptions {
+	pub fn new(stream: bool) -> Self {
+		Self { stream }
+	}
+}
+
 #[js_class]
 pub struct TextDecoder {
 	reflector: Reflector,
@@ -95,7 +101,7 @@ impl TextDecoder {
 
 	#[ion(get)]
 	pub fn get_encoding(&self) -> String {
-		String::from(self.decoder.encoding().name())
+		String::from(self.decoder.encoding().name()).to_ascii_lowercase()
 	}
 
 	#[ion(get)]

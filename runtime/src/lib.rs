@@ -9,6 +9,8 @@
 #[macro_use]
 extern crate ion;
 
+extern crate hyper_multipart_rfc7578 as multipart;
+
 pub use crate::runtime::*;
 
 pub mod cache;

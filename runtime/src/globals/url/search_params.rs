@@ -85,10 +85,6 @@ impl URLSearchParams {
 		}
 	}
 
-	pub(super) fn set_pairs(&mut self, pairs: Vec<(String, String)>) {
-		self.pairs = pairs;
-	}
-
 	#[ion(get)]
 	pub fn get_size(&self) -> i32 {
 		self.pairs.len() as i32

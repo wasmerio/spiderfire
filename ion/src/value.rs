@@ -79,12 +79,20 @@ impl<'v> Value<'v> {
 		Value::from(cx.root_value(NullValue()))
 	}
 
-	/// Converts a [Value] to an [Object].
+	/// Converts a [Value] to an [Object] that may not be null.
+	///
+	/// ### Panics
+	/// This panics if the [Value] is not an object or it is null.
+	pub fn to_object<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
+		cx.root_object(self.handle().to_object()).into()
+	}
+
+	/// Converts a [Value] to an [Object] that may be null.
 	///
 	/// ### Panics
 	/// This panics if the [Value] is not an object.
-	pub fn to_object<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
-		cx.root_object(self.handle().to_object()).into()
+	pub fn to_object_or_null<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
+		cx.root_object(self.handle().to_object_or_null()).into()
 	}
 
 	/// Compares two values for equality using the [SameValue algorithm](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-samevalue).
@@ -96,6 +104,10 @@ impl<'v> Value<'v> {
 
 	pub fn to_source<'cx>(&self, cx: &'cx Context) -> crate::String<'cx> {
 		crate::String::from(cx.root_string(unsafe { JS_ValueToSource(cx.as_ptr(), self.handle().into()) }))
+	}
+
+	pub fn into_local(self) -> Local<'v, JSVal> {
+		self.val
 	}
 }
 

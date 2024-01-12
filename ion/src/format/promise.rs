@@ -24,14 +24,14 @@ pub fn format_promise<'cx>(cx: &'cx Context, cfg: Config, promise: &'cx Promise)
 
 pub struct PromiseDisplay<'cx> {
 	cx: &'cx Context,
-	promise: &'cx Promise<'cx>,
+	promise: &'cx Promise,
 	cfg: Config,
 }
 
 impl Display for PromiseDisplay<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
 		let colour = self.cfg.colours.promise;
-		let state = self.promise.state();
+		let state = self.promise.state(self.cx);
 
 		let state = match state {
 			PromiseState::Pending => return write!(f, "{}", "Promise { <pending> }".color(colour)),

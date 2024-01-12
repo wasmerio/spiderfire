@@ -9,9 +9,9 @@ use std::ffi::c_void;
 use std::ops::{Deref, DerefMut};
 
 use mozjs::jsapi::{
-	ArrayBufferClone, ArrayBufferCopyData, DetachArrayBuffer, GetArrayBufferMaybeSharedLengthAndData,
-	IsArrayBufferObjectMaybeShared, IsDetachedArrayBufferObject, JSObject, NewArrayBufferWithContents,
-	NewExternalArrayBuffer, StealArrayBufferContents,
+	ArrayBufferClone, ArrayBufferCopyData, DetachArrayBuffer, IsDetachedArrayBufferObject, JSObject,
+	NewArrayBufferWithContents, NewExternalArrayBuffer, StealArrayBufferContents, GetArrayBufferLengthAndData,
+	IsArrayBufferObject,
 };
 use mozjs::typedarray::CreateWith;
 
@@ -87,8 +87,13 @@ impl<'ab> ArrayBuffer<'ab> {
 		let mut len = 0;
 		let mut shared = false;
 		let mut data = ptr::null_mut();
-		unsafe { GetArrayBufferMaybeSharedLengthAndData(self.get(), &mut len, &mut shared, &mut data) };
+		unsafe { GetArrayBufferLengthAndData(self.get(), &mut len, &mut shared, &mut data) };
 		(data, len, shared)
+	}
+
+	/// Returns the length of the [ArrayBuffer].
+	pub fn len(&self) -> usize {
+		self.data().1
 	}
 
 	/// Returns a slice to the contents of the [ArrayBuffer].
@@ -159,10 +164,14 @@ impl<'ab> ArrayBuffer<'ab> {
 		self.data().2
 	}
 
+	pub fn into_local(self) -> Local<'ab, *mut JSObject> {
+		self.buffer
+	}
+
 	/// Checks if an object is an array buffer.
 	#[allow(clippy::not_unsafe_ptr_arg_deref)]
 	pub fn is_array_buffer(object: *mut JSObject) -> bool {
-		unsafe { IsArrayBufferObjectMaybeShared(object) }
+		unsafe { IsArrayBufferObject(object) }
 	}
 }
 

@@ -11,11 +11,11 @@ use encoding_rs::UTF_8;
 use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::JSObject;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, Value};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, Value, ReadableStream};
 use ion::class::Reflector;
 use ion::conversions::FromValue;
 use ion::format::NEWLINE;
-use ion::typedarray::{ArrayBuffer, ArrayBufferView, ArrayBufferWrapper};
+use ion::typedarray::{ArrayBuffer, ArrayBufferView};
 
 use crate::promise::future_to_promise;
 
@@ -73,7 +73,7 @@ impl<'cx> FromValue<'cx> for BufferSource<'cx> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct BlobPart(Bytes);
+pub struct BlobPart(pub Bytes);
 
 impl<'cx> FromValue<'cx> for BlobPart {
 	type Config = ();
@@ -125,9 +125,9 @@ impl<'cx> FromValue<'cx> for Endings {
 #[derive(Debug, Default, FromValue)]
 pub struct BlobOptions {
 	#[ion(name = "type")]
-	kind: Option<String>,
+	pub kind: Option<String>,
 	#[ion(default)]
-	endings: Endings,
+	pub endings: Endings,
 }
 
 #[js_class]
@@ -139,6 +139,22 @@ pub struct Blob {
 }
 
 impl Blob {
+	pub fn new(bytes: Bytes) -> Self {
+		Self {
+			reflector: Default::default(),
+			bytes,
+			kind: None,
+		}
+	}
+
+	pub fn new_with_kind(bytes: Bytes, kind: String) -> Self {
+		Self {
+			reflector: Default::default(),
+			bytes,
+			kind: Some(kind),
+		}
+	}
+
 	pub fn as_bytes(&self) -> &Bytes {
 		&self.bytes
 	}
@@ -148,6 +164,7 @@ impl Blob {
 	}
 }
 
+// TODO: can we get away with less cloning of the bytes?
 #[js_class]
 impl Blob {
 	#[ion(constructor)]
@@ -241,14 +258,22 @@ impl Blob {
 		Blob::new_object(cx, Box::new(blob))
 	}
 
-	pub fn text<'cx>(&self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn text<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
-		future_to_promise(cx, async move { Ok::<_, ()>(UTF_8.decode(&bytes).0.into_owned()) })
+		unsafe { future_to_promise(cx, |_| async move { Ok::<_, ()>(UTF_8.decode(&bytes).0.into_owned()) }) }
 	}
 
 	#[ion(name = "arrayBuffer")]
-	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise<'cx>> {
+	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
-		future_to_promise(cx, async move { Ok::<_, ()>(ArrayBufferWrapper::from(bytes.to_vec())) })
+		unsafe {
+			future_to_promise(cx, |_| async move {
+				Ok::<_, ()>(ion::typedarray::ArrayBufferWrapper::from(bytes.to_vec()))
+			})
+		}
+	}
+
+	pub fn stream(&self, cx: &Context) -> ReadableStream {
+		ReadableStream::from_bytes(cx, self.bytes.clone())
 	}
 }

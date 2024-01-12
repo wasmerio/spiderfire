@@ -10,14 +10,14 @@ use std::ffi::c_void;
 use mozjs::glue::JobQueueTraps;
 use mozjs::jsapi::{CurrentGlobalOrNull, Handle, JobQueueIsEmpty, JobQueueMayNotBeEmpty, JSContext, JSFunction, JSObject};
 
-use ion::{Context, ErrorReport, Function, Object};
+use ion::{Context, ErrorReport, Function, Object, TracedHeap};
 
 use crate::ContextExt;
 
 #[derive(Clone, Debug)]
 pub enum Microtask {
-	Promise(*mut JSObject),
-	User(*mut JSFunction),
+	Promise(TracedHeap<*mut JSObject>),
+	User(TracedHeap<*mut JSFunction>),
 	None,
 }
 
@@ -31,13 +31,13 @@ impl Microtask {
 	pub fn run(&self, cx: &Context) -> Result<(), Option<ErrorReport>> {
 		match self {
 			Microtask::Promise(job) => {
-				let object = cx.root_object(*job);
+				let object = job.root(cx);
 				let function = Function::from_object(cx, &object).unwrap();
 
 				function.call(cx, &Object::null(cx), &[]).map(|_| ())
 			}
 			Microtask::User(callback) => {
-				let callback = Function::from(cx.root_function(*callback));
+				let callback = Function::from(callback.root(cx));
 				callback.call(cx, &Object::global(cx), &[]).map(|_| ())
 			}
 			Microtask::None => Ok(()),
@@ -85,7 +85,7 @@ unsafe extern "C" fn enqueue_promise_job(
 	let event_loop = unsafe { &mut cx.get_private().event_loop };
 	let microtasks = event_loop.microtasks.as_mut().unwrap();
 	if !job.is_null() {
-		microtasks.enqueue(cx, Microtask::Promise(job.get()))
+		microtasks.enqueue(cx, Microtask::Promise(TracedHeap::new(job.get())))
 	} else {
 		microtasks.enqueue(cx, Microtask::None)
 	};

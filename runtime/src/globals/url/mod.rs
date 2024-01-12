@@ -6,11 +6,10 @@
 
 use std::cmp::Ordering;
 
-use mozjs::conversions::ConversionBehavior::EnforceRange;
 use mozjs::jsapi::{Heap, JSObject};
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, Local, Object, Result};
+use ion::{ClassDefinition, Context, Object, Result, Error, conversions::ConversionBehavior};
 use ion::class::Reflector;
 pub use search_params::URLSearchParams;
 
@@ -90,12 +89,12 @@ impl URL {
 	}
 
 	#[ion(set)]
-	pub fn set_href(&mut self, input: String) -> Result<()> {
-		match Url::parse(&input) {
+	pub fn set_href(&mut self, cx: &Context, input: String) -> Result<()> {
+		match url::Url::parse(&input) {
 			Ok(url) => {
-				let mut search_params = Object::from(unsafe { Local::from_heap(&self.search_params) });
-				let search_params = URLSearchParams::get_mut_private(&mut search_params);
-				search_params.set_pairs(url.query_pairs().into_owned().collect());
+				let search_params = Box::new(URLSearchParams::new(url.query_pairs().into_owned().collect()));
+				search_params.url.as_ref().unwrap().set(self.reflector.get());
+				self.search_params = Heap::boxed(URLSearchParams::new_object(cx, search_params));
 				self.url = url;
 				Ok(())
 			}
@@ -105,7 +104,7 @@ impl URL {
 
 	#[ion(get)]
 	pub fn get_protocol(&self) -> String {
-		String::from(self.url.scheme())
+		String::from(format!("{}:", self.url.scheme()))
 	}
 
 	#[ion(set)]
@@ -114,14 +113,17 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_host(&self) -> Option<String> {
-		self.url.host_str().map(|host| {
-			if let Some(port) = self.url.port() {
-				format!("{}:{}", host, port)
-			} else {
-				String::from(host)
-			}
-		})
+	pub fn get_host(&self) -> String {
+		self.url
+			.host_str()
+			.map(|host| {
+				if let Some(port) = self.url.port() {
+					format!("{}:{}", host, port)
+				} else {
+					String::from(host)
+				}
+			})
+			.unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -151,8 +153,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_hostname(&self) -> Option<String> {
-		self.url.host_str().map(String::from)
+	pub fn get_hostname(&self) -> String {
+		self.url.host_str().map(String::from).unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -173,7 +175,7 @@ impl URL {
 	}
 
 	#[ion(set)]
-	pub fn set_port(&mut self, #[ion(convert = EnforceRange)] port: Option<u16>) -> Result<()> {
+	pub fn set_port(&mut self, #[ion(convert = ConversionBehavior::EnforceRange)] port: Option<u16>) -> Result<()> {
 		self.url.set_port(port).map_err(|_| Error::new("Invalid Port", None))
 	}
 
@@ -199,8 +201,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_password(&self) -> Option<String> {
-		self.url.password().map(String::from)
+	pub fn get_password(&self) -> String {
+		self.url.password().map(String::from).unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -209,8 +211,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_search(&self) -> Option<String> {
-		self.url.query().map(String::from)
+	pub fn get_search(&self) -> String {
+		format!("?{}", self.url.query().map(String::from).unwrap_or_default())
 	}
 
 	#[ion(set)]
@@ -219,8 +221,8 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_hash(&self) -> Option<String> {
-		self.url.fragment().map(String::from)
+	pub fn get_hash(&self) -> String {
+		format!("#{}", self.url.fragment().map(String::from).unwrap_or_default())
 	}
 
 	#[ion(set)]

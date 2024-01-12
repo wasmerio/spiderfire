@@ -11,17 +11,17 @@ use std::mem::size_of;
 use std::ops::{Deref, DerefMut};
 
 use mozjs::jsapi::{
-	GetArrayBufferViewLengthAndData, HandleObject, IsArrayBufferViewShared, IsLargeArrayBufferView,
-	JS_GetArrayBufferViewBuffer, JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewByteOffset,
-	JS_GetArrayBufferViewType, JS_IsArrayBufferViewObject, JS_NewFloat32ArrayWithBuffer, JS_NewFloat64ArrayWithBuffer,
-	JS_NewInt16ArrayWithBuffer, JS_NewInt32ArrayWithBuffer, JS_NewInt8ArrayWithBuffer, JS_NewUint16ArrayWithBuffer,
-	JS_NewUint32ArrayWithBuffer, JS_NewUint8ArrayWithBuffer, JS_NewUint8ClampedArrayWithBuffer, JSContext, JSObject,
-	NewExternalArrayBuffer, Type,
+	GetArrayBufferViewLengthAndData, HandleObject, IsLargeArrayBufferView, JS_GetArrayBufferViewBuffer,
+	JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewByteOffset, JS_GetArrayBufferViewType,
+	JS_IsArrayBufferViewObject, JS_NewFloat32ArrayWithBuffer, JS_NewFloat64ArrayWithBuffer, JS_NewInt16ArrayWithBuffer,
+	JS_NewInt32ArrayWithBuffer, JS_NewInt8ArrayWithBuffer, JS_NewUint16ArrayWithBuffer, JS_NewUint32ArrayWithBuffer,
+	JS_NewUint8ArrayWithBuffer, JS_NewUint8ClampedArrayWithBuffer, JSContext, JSObject, NewExternalArrayBuffer, Type,
 };
 use mozjs::typedarray as jsta;
 use mozjs::typedarray::{
 	ArrayBufferViewU8, ClampedU8, CreateWith, Float32, Float64, Int16, Int32, Int8, Uint16, Uint32, Uint8,
 };
+use mozjs_sys::jsapi::JS_GetTypedArraySharedness;
 
 use crate::{Context, Local, Object};
 use crate::typedarray::buffer::ArrayBuffer;
@@ -216,7 +216,7 @@ impl<'bv, T: TypedArrayElement> TypedArray<'bv, T> {
 
 	/// Checks if the underlying [ArrayBuffer] is shared.
 	pub fn is_shared(&self) -> bool {
-		unsafe { IsArrayBufferViewShared(self.get()) }
+		unsafe { JS_GetTypedArraySharedness(self.get()) }
 	}
 
 	/// Returns the underlying [ArrayBuffer]. The buffer may be shared and/or detached.

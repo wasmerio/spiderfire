@@ -8,8 +8,8 @@ pub use decoder::TextDecoder;
 pub use encoder::TextEncoder;
 use ion::{ClassDefinition, Context, Object};
 
-mod decoder;
-mod encoder;
+pub(crate) mod decoder;
+pub(crate) mod encoder;
 
 pub fn define(cx: &Context, global: &mut Object) -> bool {
 	TextDecoder::init_class(cx, global).0 && TextEncoder::init_class(cx, global).0

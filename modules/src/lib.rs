@@ -5,6 +5,7 @@
  */
 
 #![allow(clippy::module_inception)]
+#![cfg_attr(target_os = "wasi", feature(wasi_ext))]
 
 #[macro_use]
 extern crate ion;

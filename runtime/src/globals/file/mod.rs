@@ -7,10 +7,9 @@
 use chrono::{DateTime, TimeZone, Utc};
 use mozjs::conversions::ConversionBehavior;
 
-pub use blob::{Blob, BufferSource};
+pub use blob::{Blob, BufferSource, BlobPart, BlobOptions, Endings};
 use ion::{ClassDefinition, Context, Object};
 
-use crate::globals::file::blob::{BlobOptions, BlobPart};
 use crate::globals::file::reader::{FileReader, FileReaderSync};
 
 mod blob;
@@ -19,17 +18,17 @@ mod reader;
 #[derive(Debug, Default, FromValue)]
 pub struct FileOptions {
 	#[ion(inherit)]
-	blob: BlobOptions,
+	pub blob: BlobOptions,
 	#[ion(convert = ConversionBehavior::Default)]
-	modified: Option<i64>,
+	pub modified: Option<i64>,
 }
 
 #[js_class]
 pub struct File {
-	blob: Blob,
-	name: String,
+	pub blob: Blob,
+	pub name: String,
 	#[trace(no_trace)]
-	modified: DateTime<Utc>,
+	pub modified: DateTime<Utc>,
 }
 
 #[js_class]

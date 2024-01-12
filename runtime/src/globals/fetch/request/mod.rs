@@ -6,24 +6,31 @@
 
 use std::str::FromStr;
 
+use bytes::Bytes;
 use http::{HeaderMap, HeaderValue};
 use http::header::CONTENT_TYPE;
-use hyper::{Body, Method, Uri};
-use mozjs::jsapi::{Heap, JSObject};
+use hyper::Method;
+use ion::string::byte::ByteString;
+use ion::{TracedHeap, HeapPointer, Heap, Object};
+use ion::typedarray::ArrayBuffer;
+use mozjs::jsapi::JSObject;
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Result};
-use ion::class::Reflector;
+use ion::{ClassDefinition, Context, Error, ErrorKind, Result, Promise};
+use ion::class::{Reflector, NativeObject};
 pub use options::*;
 
 use crate::globals::abort::AbortSignal;
 use crate::globals::fetch::body::FetchBody;
 use crate::globals::fetch::header::HeadersKind;
 use crate::globals::fetch::Headers;
+use crate::promise::future_to_promise;
+
+use super::body::FetchBodyInner;
 
 mod options;
 
-#[derive(FromValue)]
+#[derive(FromValue, Clone)]
 pub enum RequestInfo<'cx> {
 	#[ion(inherit)]
 	Request(&'cx Request),
@@ -36,9 +43,9 @@ pub struct Request {
 	reflector: Reflector,
 
 	#[trace(no_trace)]
-	pub(crate) request: hyper::Request<Body>,
-	pub(crate) headers: Box<Heap<*mut JSObject>>,
-	pub(crate) body: FetchBody,
+	pub(crate) method: Method,
+	pub(crate) headers: Heap<*mut JSObject>,
+	pub(crate) body: Option<FetchBody>,
 	pub(crate) body_used: bool,
 
 	#[trace(no_trace)]
@@ -61,7 +68,122 @@ pub struct Request {
 	pub(crate) keepalive: bool,
 
 	pub(crate) client_window: bool,
-	pub(crate) signal_object: Box<Heap<*mut JSObject>>,
+	pub(crate) signal_object: Heap<*mut JSObject>,
+}
+
+impl Request {
+	pub fn url(&self) -> &Url {
+		&self.url
+	}
+
+	pub fn method(&self) -> &Method {
+		&self.method
+	}
+
+	pub fn headers<'cx>(&self, cx: &'cx Context) -> &'cx HeaderMap {
+		&self.get_headers_object(cx).headers
+	}
+
+	pub fn get_headers_object<'cx>(&self, cx: &'cx Context) -> &'cx Headers {
+		&Headers::get_private(&self.headers.root(cx).into())
+	}
+
+	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
+		match &self.body {
+			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
+			Some(body) => Ok(body),
+		}
+	}
+
+	pub fn take_body(&mut self) -> Result<FetchBody> {
+		match self.body.take() {
+			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
+			Some(body) => Ok(body),
+		}
+	}
+
+	async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
+		let this = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into());
+		Ok(this
+			.take_body()?
+			.into_bytes(cx)
+			.await?
+			.map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
+			.unwrap_or_else(|| String::new()))
+	}
+
+	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
+		let method = self.method.clone();
+
+		let url = self.locations.last().unwrap().clone();
+
+		Ok(Request {
+			reflector: Reflector::default(),
+
+			method,
+			headers: Heap::new(std::ptr::null_mut()),
+			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
+			body_used: self.body_used,
+
+			url: url.clone(),
+			locations: vec![url],
+
+			referrer: self.referrer.clone(),
+			referrer_policy: self.referrer_policy,
+
+			mode: self.mode,
+			credentials: self.credentials,
+			cache: self.cache,
+			redirect: self.redirect,
+
+			integrity: self.integrity.clone(),
+
+			unsafe_request: true,
+			keepalive: self.keepalive,
+
+			client_window: self.client_window,
+			signal_object: Heap::new(self.signal_object.get()),
+		})
+	}
+
+	pub async fn try_clone_with_cached_body(&mut self, cx: Context) -> Result<Self> {
+		let method = self.method.clone();
+
+		let url = self.locations.last().unwrap().clone();
+
+		let body = match &mut self.body {
+			None => None,
+			Some(body) => Some(body.try_clone_with_cached_body(cx).await?),
+		};
+
+		Ok(Request {
+			reflector: Reflector::default(),
+
+			method,
+			headers: Heap::new(std::ptr::null_mut()),
+			body,
+			body_used: self.body_used,
+
+			url: url.clone(),
+			locations: vec![url],
+
+			referrer: self.referrer.clone(),
+			referrer_policy: self.referrer_policy,
+
+			mode: self.mode,
+			credentials: self.credentials,
+			cache: self.cache,
+			redirect: self.redirect,
+
+			integrity: self.integrity.clone(),
+
+			unsafe_request: true,
+			keepalive: self.keepalive,
+
+			client_window: self.client_window,
+			signal_object: Heap::new(self.signal_object.get()),
+		})
+	}
 }
 
 #[js_class]
@@ -71,23 +193,24 @@ impl Request {
 		let mut fallback_cors = false;
 
 		let mut request = match info {
-			RequestInfo::Request(request) => request.clone(),
+			RequestInfo::Request(request) => {
+				let request = Request::get_mut_private(&mut cx.root_object(request.reflector().get()).into());
+				request.try_clone(cx)?
+			}
 			RequestInfo::String(url) => {
-				let uri = Uri::from_str(&url)?;
 				let url = Url::from_str(&url)?;
 				if url.username() != "" || url.password().is_some() {
 					return Err(Error::new("Received URL with embedded credentials", ErrorKind::Type));
 				}
-				let request = hyper::Request::builder().uri(uri).body(Body::empty())?;
 
 				fallback_cors = true;
 
 				Request {
 					reflector: Reflector::default(),
 
-					request,
-					headers: Box::default(),
-					body: FetchBody::default(),
+					method: Method::GET,
+					headers: Heap::new(std::ptr::null_mut()),
+					body: Some(FetchBody::default()),
 					body_used: false,
 
 					url: url.clone(),
@@ -107,7 +230,7 @@ impl Request {
 					keepalive: false,
 
 					client_window: true,
-					signal_object: Heap::boxed(AbortSignal::new_object(cx, Box::default())),
+					signal_object: Heap::new(AbortSignal::new_object(cx, Box::default())),
 				}
 			}
 		};
@@ -169,7 +292,7 @@ impl Request {
 				if method == Method::CONNECT || method == Method::TRACE {
 					return Err(Error::new("Received invalid request method", ErrorKind::Type));
 				}
-				*request.request.method_mut() = method;
+				request.method = method;
 			}
 
 			headers = init.headers;
@@ -184,7 +307,7 @@ impl Request {
 		}
 
 		if request.mode == RequestMode::NoCors {
-			let method = request.request.method();
+			let method = &request.method;
 			if method != Method::GET && method != Method::HEAD && method != Method::POST {
 				return Err(Error::new("Invalid request method", ErrorKind::Type));
 			}
@@ -213,7 +336,7 @@ impl Request {
 				}
 			}
 
-			request.body = body;
+			request.body = Some(body);
 		}
 		request.headers.set(Headers::new_object(cx, Box::new(headers)));
 
@@ -222,12 +345,12 @@ impl Request {
 
 	#[ion(get)]
 	pub fn get_method(&self) -> String {
-		self.request.method().to_string()
+		self.method.to_string()
 	}
 
 	#[ion(get)]
 	pub fn get_url(&self) -> String {
-		self.request.uri().to_string()
+		self.url.to_string()
 	}
 
 	#[ion(get)]
@@ -299,43 +422,91 @@ impl Request {
 	pub fn get_duplex(&self) -> String {
 		String::from("half")
 	}
-}
 
-impl Clone for Request {
-	fn clone(&self) -> Request {
-		let method = self.request.method().clone();
-		let uri = self.request.uri().clone();
+	#[ion(get)]
+	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
+		let body = self.take_body()?;
+		let stream = match body.body {
+			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
+			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
+			FetchBodyInner::Stream(stream) => stream,
+		};
+		Ok(stream.get())
+	}
 
-		let request = hyper::Request::builder().method(method).uri(uri);
-		let request = request.body(Body::empty()).unwrap();
-		let url = self.locations.last().unwrap().clone();
+	#[ion(get, name = "bodyUsed")]
+	pub fn get_body_used(&self) -> bool {
+		self.body.is_none()
+	}
 
-		Request {
-			reflector: Reflector::default(),
-
-			request,
-			headers: Box::default(),
-			body: self.body.clone(),
-			body_used: self.body_used,
-
-			url: url.clone(),
-			locations: vec![url],
-
-			referrer: self.referrer.clone(),
-			referrer_policy: self.referrer_policy,
-
-			mode: self.mode,
-			credentials: self.credentials,
-			cache: self.cache,
-			redirect: self.redirect,
-
-			integrity: self.integrity.clone(),
-
-			unsafe_request: true,
-			keepalive: self.keepalive,
-
-			client_window: self.client_window,
-			signal_object: Heap::boxed(self.signal_object.get()),
+	#[ion(name = "arrayBuffer")]
+	pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let body = this.take_body()?;
+				let (cx, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
+				let array = match bytes? {
+					Some(ref bytes) => ArrayBuffer::copy_from_bytes(&cx, bytes.as_ref())
+						.ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?,
+					None => ArrayBuffer::copy_from_bytes(&cx, b"")
+						.ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?,
+				};
+				Ok(array.get())
+			})
 		}
+	}
+
+	pub fn blob(&mut self, cx: &Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let body = this.take_body()?;
+				let headers = this.get_headers_object(&cx);
+				let header = headers.get(ByteString::from(CONTENT_TYPE.to_string().into()).unwrap()).unwrap();
+				body.into_blob(cx, header).await
+			})
+		}
+	}
+
+	pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe { future_to_promise(cx, move |cx| async move { Self::take_body_text(&this, cx).await }) }
+	}
+
+	pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise(cx, move |cx| async move {
+				let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+				body.into_json(cx).await
+			})
+		}
+	}
+
+	#[ion(name = "formData")]
+	pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector().get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&mut Object::from(this.to_local()));
+				let headers = this.get_headers_object(&cx);
+				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
+				let Some(content_type) = headers.get(content_type_string)? else {
+					return Err(Error::new(
+						"No content-type header, cannot decide form data format",
+						ErrorKind::Type,
+					));
+				};
+				this.take_body()?.into_form_data(cx, content_type).await
+			})
+		}
+	}
+
+	pub fn clone(&mut self, cx: &Context) -> Result<*mut JSObject> {
+		let cloned = self.try_clone(cx)?;
+		Ok(Request::new_object(cx, Box::new(cloned)))
 	}
 }

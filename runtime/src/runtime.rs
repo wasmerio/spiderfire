@@ -7,11 +7,12 @@
 use std::ptr;
 
 use mozjs::glue::CreateJobQueue;
-use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm, SetJobQueue, SetPromiseRejectionTrackerCallback};
+use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm, SetJobQueue, SetPromiseRejectionTrackerCallback, OnNewGlobalHookOption};
 
 use ion::{Context, ErrorReport, Object};
 use ion::module::{init_module_loader, ModuleLoader};
-use ion::objects::default_new_global;
+use ion::objects::new_global;
+use mozjs::rust::{RealmOptions, SIMPLE_GLOBAL_CLASS};
 
 use crate::event_loop::{EventLoop, promise_rejection_tracker_callback};
 use crate::event_loop::future::FutureQueue;
@@ -58,7 +59,8 @@ impl<'cx> Runtime<'cx> {
 
 	pub async fn run_event_loop(&self) -> Result<(), Option<ErrorReport>> {
 		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
-		event_loop.run_event_loop(self.cx).await
+		let cx = self.cx.duplicate();
+		event_loop.run_event_loop(&cx).await
 	}
 }
 
@@ -69,12 +71,13 @@ impl Drop for Runtime<'_> {
 	}
 }
 
-#[derive(Copy, Clone, Debug)]
 pub struct RuntimeBuilder<ML: ModuleLoader + 'static = (), Std: StandardModules + 'static = ()> {
 	microtask_queue: bool,
 	macrotask_queue: bool,
 	modules: Option<ML>,
 	standard_modules: Option<Std>,
+	hook_option: Option<OnNewGlobalHookOption>,
+	realm_options: Option<RealmOptions>,
 }
 
 impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<ML, Std> {
@@ -102,8 +105,24 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 		self
 	}
 
-	pub fn build(self, cx: &mut Context) -> Runtime {
-		let mut global = default_new_global(cx);
+	pub fn hook_option(mut self, hook_option: OnNewGlobalHookOption) -> RuntimeBuilder<ML, Std> {
+		self.hook_option = Some(hook_option);
+		self
+	}
+
+	pub fn realm_options(mut self, realm_options: RealmOptions) -> RuntimeBuilder<ML, Std> {
+		self.realm_options = Some(realm_options);
+		self
+	}
+
+	pub fn build<'cx>(self, cx: &'cx mut Context) -> Runtime<'cx> {
+		let mut global = new_global(
+			cx,
+			&SIMPLE_GLOBAL_CLASS,
+			None,
+			self.hook_option.unwrap_or(OnNewGlobalHookOption::FireOnNewGlobalHook),
+			self.realm_options,
+		);
 		let realm = JSAutoRealm::new(cx.as_ptr(), global.handle().get());
 
 		let global_obj = global.handle().get();
@@ -165,6 +184,8 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> Default for Run
 			macrotask_queue: false,
 			modules: None,
 			standard_modules: None,
+			hook_option: None,
+			realm_options: None,
 		}
 	}
 }

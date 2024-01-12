@@ -174,9 +174,9 @@ impl<'cx> ToValue<'cx> for Date<'cx> {
 	}
 }
 
-impl<'cx> ToValue<'cx> for Promise<'cx> {
+impl<'cx> ToValue<'cx> for Promise {
 	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
-		self.handle().to_value(cx, value);
+		self.root(cx).handle().to_value(cx, value);
 	}
 }
 

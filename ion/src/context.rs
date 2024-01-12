@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::NonNull;
 
+use futures::Future;
 use mozjs::gc::{GCMethods, RootedTraceableSet};
 use mozjs::jsapi::{
 	BigInt, Heap, JS_GetContextPrivate, JS_SetContextPrivate, JSContext, JSFunction, JSObject, JSScript, JSString,
@@ -103,6 +104,10 @@ impl Context {
 		}
 	}
 
+	pub fn duplicate(&self) -> Self {
+		unsafe { Self::new_unchecked(self.as_ptr()) }
+	}
+
 	pub fn as_ptr(&self) -> *mut JSContext {
 		self.context.as_ptr()
 	}
@@ -120,6 +125,33 @@ impl Context {
 		let inner_private = self.get_inner_data();
 		unsafe {
 			(*inner_private.as_ptr()).private = Some(private);
+		}
+	}
+
+	/// See documentation for [`runtime::promise::future_to_promise`].
+	pub async fn await_native<Fut: Future>(self, future: Fut) -> (Self, <Fut as Future>::Output) {
+		unsafe {
+			let cx_ptr = self.as_ptr();
+			drop(self);
+
+			let result = future.await;
+
+			(Context::new_unchecked(cx_ptr), result)
+		}
+	}
+
+	/// See documentation for [runtime::promise::future_to_promise].
+	///
+	/// This variation also provides a [`Context`] for use by the future.
+	pub async fn await_native_cx<F: FnOnce(Context) -> Fut, Fut: Future>(
+		self, future: F,
+	) -> (Self, <Fut as Future>::Output) {
+		unsafe {
+			let cx_ptr = self.as_ptr();
+
+			let result = future(self).await;
+
+			(Context::new_unchecked(cx_ptr), result)
 		}
 	}
 }

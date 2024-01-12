@@ -6,7 +6,7 @@
 
 use mozjs::jsapi::JSFunctionSpec;
 
-use ion::{Context, Error, Function, Object, Result};
+use ion::{Context, Error, Function, Object, Result, TracedHeap};
 use ion::flags::PropertyFlags;
 
 use crate::ContextExt;
@@ -16,7 +16,7 @@ use crate::event_loop::microtasks::Microtask;
 fn queueMicrotask(cx: &Context, callback: Function) -> Result<()> {
 	let event_loop = unsafe { &mut cx.get_private().event_loop };
 	if let Some(queue) = &mut event_loop.microtasks {
-		queue.enqueue(cx, Microtask::User(callback.get()));
+		queue.enqueue(cx, Microtask::User(TracedHeap::new(callback.get())));
 		Ok(())
 	} else {
 		Err(Error::new("Microtask Queue has not been initialised.", None))

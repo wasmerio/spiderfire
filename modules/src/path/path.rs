@@ -15,12 +15,12 @@ use runtime::modules::NativeModule;
 
 #[cfg(windows)]
 const SEPARATOR: &str = "\\\0";
-#[cfg(unix)]
+#[cfg(any(unix, target_family = "wasm"))]
 const SEPARATOR: &str = "/\0";
 
 #[cfg(windows)]
 const DELIMITER: &str = ";\0";
-#[cfg(unix)]
+#[cfg(any(unix, target_family = "wasm"))]
 const DELIMITER: &str = ":\0";
 
 #[js_fn]
