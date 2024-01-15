@@ -212,17 +212,35 @@ impl URL {
 
 	#[ion(get)]
 	pub fn get_search(&self) -> String {
-		format!("?{}", self.url.query().map(String::from).unwrap_or_default())
+		let search = self.url.query().map(String::from).unwrap_or_default();
+		if search.is_empty() {
+			search
+		} else {
+			format!("?{}", search)
+		}
 	}
 
 	#[ion(set)]
-	pub fn set_search(&mut self, search: Option<String>) {
+	pub fn set_search(&mut self, cx: &Context, search: Option<String>) {
+		let search = if matches!(search, Some(ref s) if s.as_str() == "?") {
+			None
+		} else {
+			search
+		};
+
 		self.url.set_query(search.as_deref());
+		URLSearchParams::get_mut_private(&mut cx.root_object(self.search_params.get()).into())
+			.set_pairs(self.url.query_pairs().into_owned().collect())
 	}
 
 	#[ion(get)]
 	pub fn get_hash(&self) -> String {
-		format!("#{}", self.url.fragment().map(String::from).unwrap_or_default())
+		let hash = self.url.fragment().map(String::from).unwrap_or_default();
+		if hash.is_empty() {
+			hash
+		} else {
+			format!("#{}", hash)
+		}
 	}
 
 	#[ion(set)]

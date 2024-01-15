@@ -6,7 +6,7 @@
 use form_urlencoded::{parse, Serializer};
 use mozjs::jsapi::{Heap, JSObject};
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, JSIterator, Local, Object, OwnedKey, Result, Value};
+use ion::{ClassDefinition, Context, Error, ErrorKind, JSIterator, Local, Object, OwnedKey, Result, Value, Function};
 use ion::class::Reflector;
 use ion::conversions::{FromValue, ToValue};
 use ion::symbol::WellKnownSymbolCode;
@@ -45,7 +45,12 @@ impl<'cx> FromValue<'cx> for URLSearchParamsInit {
 				.collect::<Result<_>>()?;
 			Ok(URLSearchParamsInit(vec))
 		} else if let Ok(string) = String::from_value(cx, value, strict, ()) {
-			Ok(URLSearchParamsInit(parse(string.as_bytes()).into_owned().collect()))
+			let str = if string.starts_with('?') {
+				&string[1..]
+			} else {
+				string.as_str()
+			};
+			Ok(URLSearchParamsInit(parse(str.as_bytes()).into_owned().collect()))
 		} else {
 			Err(Error::new("Invalid Search Params Initialiser", ErrorKind::Type))
 		}
@@ -62,6 +67,10 @@ pub struct URLSearchParams {
 impl URLSearchParams {
 	pub fn pairs(&self) -> &[(String, String)] {
 		&self.pairs
+	}
+
+	pub fn set_pairs(&mut self, pairs: Vec<(String, String)>) {
+		self.pairs = pairs;
 	}
 }
 
@@ -97,7 +106,7 @@ impl URLSearchParams {
 
 	pub fn delete(&mut self, name: String, value: Option<String>) {
 		if let Some(value) = value {
-			self.pairs.retain(|(k, v)| k != &name && v != &value)
+			self.pairs.retain(|(k, v)| k != &name || v != &value)
 		} else {
 			self.pairs.retain(|(k, _)| k != &name)
 		}
@@ -167,6 +176,14 @@ impl URLSearchParams {
 				url.url.query_pairs_mut().clear().extend_pairs(&self.pairs);
 			}
 		}
+	}
+
+	pub fn for_each(&self, cx: &Context, f: Function) -> Result<()> {
+		let this = Object::null(cx);
+		for (k, v) in &self.pairs {
+			f.call(cx, &this, &[v.as_value(cx), k.as_value(cx)]).map_err(|_| Error::none())?;
+		}
+		Ok(())
 	}
 
 	#[ion(name = WellKnownSymbolCode::Iterator)]
