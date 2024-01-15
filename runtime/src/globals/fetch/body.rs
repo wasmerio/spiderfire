@@ -228,7 +228,7 @@ impl FetchBody {
 							vec![BlobPart(bytes)],
 							file_name,
 							Some(FileOptions {
-								modified: None,
+								last_modified: None,
 								blob: BlobOptions {
 									endings: crate::globals::file::Endings::Transparent,
 									kind: content_type,

@@ -1,12 +1,12 @@
 use ion::{
 	Context, Object,
 	conversions::{FromValue, ToValue},
-	ClassDefinition, Result, Error, ErrorKind, JSIterator,
+	ClassDefinition, Result, JSIterator,
 	symbol::WellKnownSymbolCode,
 	class::{Reflector, NativeObject},
 	TracedHeap,
 };
-use mozjs::jsapi::JSObject;
+use mozjs::jsapi::{JSObject, ToStringSlow};
 
 use super::file::{Blob, File, BlobPart, FileOptions, BlobOptions, Endings};
 
@@ -24,7 +24,9 @@ impl FormDataEntryValue {
 		if value.get().is_string() {
 			let str = String::from_value(cx, value, false, ())?;
 			Ok(Self::String(str))
-		} else if value.get().is_object() && Blob::instance_of(cx, &value.to_object(cx), None) {
+		} else if value.get().is_object()
+			&& (Blob::instance_of(cx, &value.to_object(cx), None) || File::instance_of(cx, &value.to_object(cx), None))
+		{
 			let obj = value.to_object(cx);
 			let file = if File::instance_of(cx, &obj, None) {
 				if let Some(name) = file_name {
@@ -35,7 +37,7 @@ impl FormDataEntryValue {
 							vec![BlobPart(file.blob.as_bytes().clone())],
 							name,
 							Some(FileOptions {
-								modified: Some(file.get_last_modified()),
+								last_modified: Some(file.get_last_modified()),
 								blob: BlobOptions {
 									kind: file.blob.kind(),
 									endings: Endings::Transparent,
@@ -56,7 +58,7 @@ impl FormDataEntryValue {
 						vec![BlobPart(blob.as_bytes().clone())],
 						name,
 						Some(FileOptions {
-							modified: None,
+							last_modified: None,
 							blob: BlobOptions {
 								kind: blob.kind(),
 								endings: Endings::Transparent,
@@ -68,7 +70,9 @@ impl FormDataEntryValue {
 			};
 			Ok(Self::File(TracedHeap::from_local(&file)))
 		} else {
-			Err(Error::new("FormData value must be a string or a Blob", ErrorKind::Type))
+			let str = unsafe { ToStringSlow(cx.as_ptr(), value.handle().into()) };
+			let str = ion::String::from(cx.root_string(str));
+			Ok(Self::String(str.to_owned(cx)))
 		}
 	}
 }
@@ -113,6 +117,11 @@ impl FormData {
 			key,
 			value: FormDataEntryValue::File(TracedHeap::new(value.reflector().get())),
 		});
+	}
+
+	fn make_iterator(&self, cx: &Context, mode: FormDataIteratorMode) -> ion::Iterator {
+		let this = self.reflector.get().as_value(cx);
+		ion::Iterator::new(FormDataIterator { index: 0, mode }, &this)
 	}
 }
 
@@ -181,13 +190,31 @@ impl FormData {
 
 	#[ion(name = WellKnownSymbolCode::Iterator)]
 	pub fn iterator<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
-		let this = self.reflector.get().as_value(cx);
-		ion::Iterator::new(FormDataIterator { index: 0 }, &this)
+		self.make_iterator(cx, FormDataIteratorMode::Both)
 	}
+
+	pub fn entries<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
+		self.make_iterator(cx, FormDataIteratorMode::Both)
+	}
+
+	pub fn keys<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
+		self.make_iterator(cx, FormDataIteratorMode::Keys)
+	}
+
+	pub fn values<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
+		self.make_iterator(cx, FormDataIteratorMode::Values)
+	}
+}
+
+enum FormDataIteratorMode {
+	Keys,
+	Values,
+	Both,
 }
 
 struct FormDataIterator {
 	index: usize,
+	mode: FormDataIteratorMode,
 }
 
 impl JSIterator for FormDataIterator {
@@ -198,11 +225,18 @@ impl JSIterator for FormDataIterator {
 			None
 		} else {
 			let kv = &form_data.kv_pairs[self.index];
-			let mut array = ion::Array::new_with_length(cx, 2);
-			array.set_as(cx, 0, kv.key.as_str());
-			array.set_as(cx, 1, &kv.value);
 			self.index += 1;
-			Some(array.as_value(cx))
+
+			match self.mode {
+				FormDataIteratorMode::Both => {
+					let mut array = ion::Array::new_with_length(cx, 2);
+					array.set_as(cx, 0, kv.key.as_str());
+					array.set_as(cx, 1, &kv.value);
+					Some(array.as_value(cx))
+				}
+				FormDataIteratorMode::Keys => Some(kv.key.as_value(cx)),
+				FormDataIteratorMode::Values => Some(kv.value.as_value(cx)),
+			}
 		}
 	}
 }

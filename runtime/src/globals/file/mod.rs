@@ -20,7 +20,7 @@ pub struct FileOptions {
 	#[ion(inherit)]
 	pub blob: BlobOptions,
 	#[ion(convert = ConversionBehavior::Default)]
-	pub modified: Option<i64>,
+	pub last_modified: Option<i64>,
 }
 
 #[js_class]
@@ -38,7 +38,7 @@ impl File {
 		let options = options.unwrap_or_default();
 		let blob = Blob::constructor(Some(parts), Some(options.blob));
 		let modified = options
-			.modified
+			.last_modified
 			.and_then(|d| Utc.timestamp_millis_opt(d).single())
 			.unwrap_or_else(Utc::now);
 
