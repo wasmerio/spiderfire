@@ -42,12 +42,12 @@ impl TextEncoder {
 		}
 	}
 
-	pub fn encode<'cx>(&mut self, cx: &'cx Context, input: Option<String>) -> Result<ArrayBuffer<'cx>> {
+	pub fn encode<'cx>(&mut self, cx: &'cx Context, input: Option<String>) -> Result<Uint8Array<'cx>> {
 		let input = input.unwrap_or_default();
 		let buf_len = self.encoder.max_buffer_length_from_utf8_if_no_unmappables(input.len()).unwrap();
 		let mut buf = Vec::with_capacity(buf_len);
 		let (_, _, _) = self.encoder.encode_from_utf8_to_vec(&input, &mut buf, true);
-		ArrayBuffer::copy_from_bytes(cx, buf.as_ref())
+		Uint8Array::copy_from_bytes(cx, buf.as_ref())
 			.ok_or_else(|| Error::new("Failed to allocate buffer", ErrorKind::Normal))
 	}
 
