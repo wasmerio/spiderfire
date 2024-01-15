@@ -1,10 +1,8 @@
 use ion::{
-	class::Reflector,
-	Heap, Result, ClassDefinition, Context, Error, ErrorKind, Object, Value,
-	conversions::{ToValue, FromValue},
+	class::Reflector, Heap, Result, ClassDefinition, Context, Error, ErrorKind, Object, conversions::ToValue,
 	typedarray::ArrayBuffer,
 };
-use mozjs::jsapi::{JSObject, JS_NewUint8Array};
+use mozjs::jsapi::JSObject;
 
 use crate::globals::{
 	encoding::{
@@ -60,16 +58,9 @@ impl TextDecoderStreamTransformer {
 
 	pub fn flush(&self, cx: &Context, controller: &TransformStreamDefaultController) -> Result<()> {
 		// Transform a final, empty chunk so we detect partial characters at the end of the stream
-		let empty_array = Value::object(cx, &cx.root_object(unsafe { JS_NewUint8Array(cx.as_ptr(), 0) }).into());
-		self.transform_chunk(
-			cx,
-			BufferSource::Buffer(
-				ArrayBuffer::from_value(cx, &empty_array, false, ())
-					.expect("ArrayBuffer should turn into ArrayBufferView"),
-			),
-			true,
-			controller,
-		)
+		let empty_array =
+			ArrayBuffer::new(cx, 0).ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?;
+		self.transform_chunk(cx, BufferSource::Buffer(empty_array), true, controller)
 	}
 }
 
