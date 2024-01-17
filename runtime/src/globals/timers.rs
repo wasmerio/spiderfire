@@ -88,10 +88,10 @@ fn queueMacrotask(cx: &Context, callback: Function) -> Result<()> {
 }
 
 const FUNCTIONS: &[JSFunctionSpec] = &[
-	function_spec!(setTimeout, 1),
-	function_spec!(setInterval, 1),
-	function_spec!(clearTimeout, 0),
-	function_spec!(clearInterval, 0),
+	function_spec!(setTimeout, 2),
+	function_spec!(setInterval, 2),
+	function_spec!(clearTimeout, 1),
+	function_spec!(clearInterval, 1),
 	function_spec!(queueMacrotask, 1),
 	JSFunctionSpec::ZERO,
 ];

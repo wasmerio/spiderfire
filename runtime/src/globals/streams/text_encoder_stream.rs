@@ -1,5 +1,5 @@
-use ion::{class::Reflector, Heap, Result, ClassDefinition, Context, Error, ErrorKind, Object, conversions::ToValue};
-use mozjs::jsapi::JSObject;
+use ion::{class::Reflector, Heap, Result, ClassDefinition, Context, Error, ErrorKind, Object, conversions::ToValue, Value};
+use mozjs::jsapi::{JSObject, ToStringSlow};
 
 use crate::globals::encoding::TextEncoder;
 
@@ -20,20 +20,17 @@ impl TextEncoderStreamTransformer {
 	}
 }
 
-// TODO: since we're transforming rust `String`s, we don't handle
-// surrogate pairs correctly. If a UTF-16 low surrogate character
-// comes in without its corresponding high surrogate character,
-// rust's `String` simply refuses the input. Correctly handling
-// this will be hard, since we'll have to directly work on the
-// UTF-16 data from Spidermonkey.
 impl TextEncoderStreamTransformer {
-	fn transform_chunk(
-		&self, cx: &Context, chunk: String, controller: &TransformStreamDefaultController,
-	) -> Result<()> {
+	fn transform_chunk(&self, cx: &Context, chunk: Value, controller: &TransformStreamDefaultController) -> Result<()> {
 		let stream = TextEncoderStream::get_private(&self.stream.root(cx).into());
 		let encoder = TextEncoder::get_mut_private(&mut stream.encoder.root(cx).into());
+		let chunk_str = unsafe { ToStringSlow(cx.as_ptr(), chunk.handle().into()) };
+		if chunk_str == std::ptr::null_mut() {
+			return Err(Error::none());
+		}
+		let chunk_str = ion::String::from(cx.root_string(chunk_str)).to_owned(cx);
 		controller
-			.enqueue(cx, encoder.encode(Some(chunk)).as_value(cx))
+			.enqueue(cx, encoder.encode(cx, Some(chunk_str))?.as_value(cx))
 			.map_err(|e| e.to_error())?;
 		Ok(())
 	}
@@ -46,12 +43,11 @@ impl TextEncoderStreamTransformer {
 		Err(Error::new("Cannot construct this type", ErrorKind::Type))
 	}
 
-	pub fn transform(&self, cx: &Context, chunk: String, controller: &TransformStreamDefaultController) -> Result<()> {
+	pub fn transform(&self, cx: &Context, chunk: Value, controller: &TransformStreamDefaultController) -> Result<()> {
 		self.transform_chunk(cx, chunk, controller)
 	}
 
 	pub fn flush(&self, _cx: &Context, _controller: &TransformStreamDefaultController) -> Result<()> {
-		// TODO: implement UTF-16 surrogate pair handling correctly, see comment above
 		Ok(())
 	}
 }

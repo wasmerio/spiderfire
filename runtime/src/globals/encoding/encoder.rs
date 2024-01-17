@@ -6,10 +6,10 @@
 
 use encoding_rs::{Encoder, UTF_8};
 
-use ion::{Context, Object, Value};
+use ion::{Context, Object, Value, Error, ErrorKind, Result};
 use ion::class::Reflector;
 use ion::conversions::ToValue;
-use ion::typedarray::{Uint8Array, Uint8ArrayWrapper};
+use ion::typedarray::{Uint8Array, ArrayBuffer};
 
 pub struct EncodeResult {
 	read: u64,
@@ -42,12 +42,13 @@ impl TextEncoder {
 		}
 	}
 
-	pub fn encode(&mut self, input: Option<String>) -> Uint8ArrayWrapper {
+	pub fn encode<'cx>(&mut self, cx: &'cx Context, input: Option<String>) -> Result<ArrayBuffer<'cx>> {
 		let input = input.unwrap_or_default();
 		let buf_len = self.encoder.max_buffer_length_from_utf8_if_no_unmappables(input.len()).unwrap();
 		let mut buf = Vec::with_capacity(buf_len);
 		let (_, _, _) = self.encoder.encode_from_utf8_to_vec(&input, &mut buf, true);
-		Uint8ArrayWrapper::from(buf)
+		ArrayBuffer::copy_from_bytes(cx, buf.as_ref())
+			.ok_or_else(|| Error::new("Failed to allocate buffer", ErrorKind::Normal))
 	}
 
 	#[ion(name = "encodeInto")]
