@@ -124,7 +124,12 @@ impl<'cx> FromValue<'cx> for *mut JSString {
 		if strict && !value.is_string() {
 			return Err(Error::new("Expected String in Strict Conversion", ErrorKind::Type));
 		}
-		Ok(unsafe { ToString(cx.as_ptr(), value) })
+		let ptr = unsafe { ToString(cx.as_ptr(), value) };
+		if ptr.is_null() {
+			Err(Error::new("Value cannot be converted to a string", ErrorKind::Type))
+		} else {
+			Ok(ptr)
+		}
 	}
 }
 
