@@ -167,7 +167,7 @@ impl MacrotaskQueue {
 		}
 
 		if let Macrotask::Timer(timer) = &mut macrotask {
-			self.nesting += 1;
+			self.nesting = self.nesting.saturating_add(1);
 			timer.nesting = self.nesting;
 		}
 
