@@ -260,8 +260,7 @@ impl NativeStreamSourceCallbacks for Source {
 }
 
 struct Sink {
-	// Note that this is not traced, since the sink can only exist if the owning stream is still alive
-	stream: Heap<*mut JSObject>,
+	stream: TracedHeap<*mut JSObject>,
 	start_promise: Promise,
 }
 
@@ -273,7 +272,7 @@ impl NativeStreamSinkCallbacks for Sink {
 	}
 
 	fn write<'cx>(&self, cx: &'cx Context, chunk: Value, _controller: Object) -> ResultExc<Promise> {
-		let ts = TransformStream::from_heap(cx, &self.stream);
+		let ts = TransformStream::from_traced_heap(cx, &self.stream);
 		let writable = ts.writable.root(cx);
 
 		if unsafe { WritableStreamGetState(cx.as_ptr(), writable.handle().into()) } != WritableStreamState::Writable {
@@ -327,7 +326,7 @@ impl NativeStreamSinkCallbacks for Sink {
 						Exception::Error(Error::new("Bad arguments to promise.reject", ErrorKind::Internal))
 					})??;
 
-					let ts = TransformStream::from_heap(args.cx(), &ts_heap);
+					let ts = TransformStream::from_traced_heap(args.cx(), &ts_heap);
 					ts.error(args.cx(), &reason)?;
 
 					Err(Exception::Other(reason.get()))
@@ -345,7 +344,7 @@ impl NativeStreamSinkCallbacks for Sink {
 
 		unsafe {
 			Ok(future_to_promise(cx, move |cx| async move {
-				let ts = TransformStream::from_heap(&cx, &stream);
+				let ts = TransformStream::from_traced_heap(&cx, &stream);
 				let controller_object = Object::from(ts.controller.root(&cx));
 				let controller = ts.get_controller(&cx);
 				let cx = match controller.transformer.flush_function(&cx) {
@@ -372,7 +371,7 @@ impl NativeStreamSinkCallbacks for Sink {
 									match promise_result {
 										Err(e) => {
 											// ... if it failed, fail the entire process
-											let ts = TransformStream::from_heap(&cx, &stream);
+											let ts = TransformStream::from_traced_heap(&cx, &stream);
 											ts.error(&cx, &e.root(&cx).into())?;
 
 											let readable = ts.readable.root(&cx);
@@ -390,7 +389,7 @@ impl NativeStreamSinkCallbacks for Sink {
 					}
 				};
 
-				let ts = TransformStream::from_heap(&cx, &stream);
+				let ts = TransformStream::from_traced_heap(&cx, &stream);
 
 				let controller = ts.get_controller_mut(&cx);
 				controller.clear_algorithms();
@@ -425,7 +424,7 @@ impl NativeStreamSinkCallbacks for Sink {
 	}
 
 	fn abort<'cx>(&self, cx: &'cx Context, reason: Value) -> ResultExc<Promise> {
-		let ts = TransformStream::from_heap(cx, &self.stream);
+		let ts = TransformStream::from_traced_heap(cx, &self.stream);
 		if let Err(e) = ts.error(cx, &reason) {
 			return Ok(Promise::new_rejected(cx, e));
 		}
@@ -459,6 +458,10 @@ pub struct TransformStream {
 
 impl TransformStream {
 	pub fn from_heap<'cx>(cx: &'cx Context, heap: &Heap<*mut JSObject>) -> &'cx Self {
+		<Self as ClassDefinition>::get_private(&heap.root(cx).into())
+	}
+
+	pub fn from_traced_heap<'cx>(cx: &'cx Context, heap: &TracedHeap<*mut JSObject>) -> &'cx Self {
 		<Self as ClassDefinition>::get_private(&heap.root(cx).into())
 	}
 
@@ -547,7 +550,7 @@ impl TransformStream {
 		};
 
 		let sink = Sink {
-			stream: Heap::from_local(&this),
+			stream: TracedHeap::from_local(&this),
 			start_promise: unsafe { Promise::from_unchecked(start_promise.root(cx)) },
 		};
 		let sink_obj = cx.root_object(NativeStreamSink::new_object(
