@@ -117,9 +117,15 @@ impl Response {
 	}
 
 	pub fn take_body(&mut self) -> Result<FetchBody> {
-		let body = self.body.take();
+		if matches!(self.body, Some(FetchBody { ref body, .. }) if matches!(body, FetchBodyInner::None)) {
+			return Ok(FetchBody {
+				body: FetchBodyInner::None,
+				source: None,
+				kind: None,
+			});
+		}
 
-		match body {
+		match self.body.take() {
 			None => Err(Error::new("Response body has already been used.", None)),
 			Some(body) => Ok(body),
 		}

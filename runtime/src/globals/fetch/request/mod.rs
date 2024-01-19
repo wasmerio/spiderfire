@@ -96,6 +96,13 @@ impl Request {
 	}
 
 	pub fn take_body(&mut self) -> Result<FetchBody> {
+		if matches!(self.body, Some(FetchBody { ref body, .. }) if matches!(body, FetchBodyInner::None)) {
+			return Ok(FetchBody {
+				body: FetchBodyInner::None,
+				source: None,
+				kind: None,
+			});
+		}
 		match self.body.take() {
 			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
 			Some(body) => Ok(body),
