@@ -24,7 +24,7 @@ static UNDERLYING_SOURCE_TRAPS: ReadableStreamUnderlyingSourceTraps = ReadableSt
 	finalize: Some(finalize),
 };
 
-pub fn new_memory_backed<'cx>(cx: &'cx Context, bytes: Bytes) -> TracedHeap<*mut JSObject> {
+pub fn new_memory_backed(cx: &Context, bytes: Bytes) -> TracedHeap<*mut JSObject> {
 	let available = bytes.len();
 
 	let source = Box::into_raw(Box::new(MemoryBackedReadableStream { bytes: RefCell::new(bytes) }));
@@ -107,7 +107,7 @@ impl MemoryBackedReadableStream {
 	fn write_into_buffer(&self, dest: &mut [u8]) {
 		let length = dest.len();
 		let mut bytes = self.bytes.borrow_mut();
-		assert!(bytes.len() >= length as usize);
+		assert!(bytes.len() >= length);
 		let mut chunk = bytes.split_off(length);
 		std::mem::swap(&mut chunk, &mut *bytes);
 		dest.copy_from_slice(chunk.as_ref());

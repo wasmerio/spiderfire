@@ -55,11 +55,11 @@ const DEFAULT_USER_AGENT: &str = concatcp!("Spiderfire/", VERSION);
 // TODO: replace all of the `network_error()`s with better errors
 
 #[js_fn]
-fn fetch<'cx>(cx: &'cx Context, resource: RequestInfo, init: Option<RequestInit>) -> Option<Promise> {
+fn fetch(cx: &Context, resource: RequestInfo, init: Option<RequestInit>) -> Option<Promise> {
 	let request = match Request::constructor(cx, resource, init) {
 		Ok(request) => request,
 		Err(error) => {
-			return Some(Promise::new_rejected(cx, &error.as_value(cx)));
+			return Some(Promise::new_rejected(cx, error.as_value(cx)));
 		}
 	};
 
@@ -215,31 +215,35 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 
 	let mut taint = ResponseTaint::default();
 	let mut opaque_redirect = false;
-	let mut response = {
+	let (cx, response) = {
 		if request.mode == RequestMode::SameOrigin {
-			Ok(network_error())
+			let response = network_error(&cx);
+			(cx, Ok(response))
 		} else if SCHEMES.contains(&scheme) {
-			scheme_fetch(cx, scheme, request.url.clone()).await
+			cx.await_native_cx(|cx| scheme_fetch(cx, scheme, request.url.clone())).await
 		} else if scheme == "https" || scheme == "http" {
 			if let Some(port) = request.url.port() {
 				if BAD_PORTS.contains(&port) {
-					return Ok(network_error());
+					return Ok(network_error(&cx));
 				}
 			}
 			if request.mode == RequestMode::NoCors {
 				if request.redirect != RequestRedirect::Follow {
-					return Ok(network_error());
+					return Ok(network_error(&cx));
 				}
 			} else {
 				taint = ResponseTaint::Cors;
 			}
-			let (response, opaque) = http_fetch(cx, request, client, taint, redirections).await;
+			let (cx, (response, opaque)) =
+				cx.await_native_cx(|cx| http_fetch(cx, request, client, taint, redirections)).await;
 			opaque_redirect = opaque;
-			response
+			(cx, response)
 		} else {
-			Ok(network_error())
+			let response = network_error(&cx);
+			(cx, Ok(response))
 		}
-	}?;
+	};
+	let mut response = response?;
 
 	let redirected = redirections > 0;
 	if redirected || response.kind == ResponseKind::Error {
@@ -259,7 +263,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 		&& !headers.headers.contains_key(RANGE)
 	{
 		let url = response.url.take().unwrap();
-		response = network_error();
+		response = network_error(&cx);
 		response.url = Some(url);
 
 		// TODO: do we need to keep constructing this network_error response further?
@@ -350,7 +354,7 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Result<Response> {
 	match scheme {
 		"about" if url.path() == "blank" => {
-			let response = Response::new_from_bytes(Bytes::default(), url);
+			let response = Response::new_from_bytes(&cx, Bytes::default(), url);
 			let headers = Headers {
 				reflector: Reflector::default(),
 				headers: HeaderMap::from_iter(once((
@@ -366,17 +370,17 @@ async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Result<Response> {
 		"data" => {
 			let data_url = match DataUrl::process(url.as_str()) {
 				Ok(data_url) => data_url,
-				Err(_) => return Ok(network_error()),
+				Err(_) => return Ok(network_error(&cx)),
 			};
 
 			let (body, _) = match data_url.decode_to_vec() {
 				Ok(decoded) => decoded,
-				Err(_) => return Ok(network_error()),
+				Err(_) => return Ok(network_error(&cx)),
 			};
 			let mime = data_url.mime_type();
 			let mime = format!("{}/{}", mime.type_, mime.subtype);
 
-			let response = Response::new_from_bytes(Bytes::from(body), url);
+			let response = Response::new_from_bytes(&cx, Bytes::from(body), url);
 			let headers = Headers {
 				reflector: Reflector::default(),
 				headers: HeaderMap::from_iter(once((CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap()))),
@@ -390,15 +394,15 @@ async fn scheme_fetch(cx: Context, scheme: &str, url: Url) -> Result<Response> {
 			let (cx, read) = cx.await_native(read(path)).await;
 			match read {
 				Ok(bytes) => {
-					let response = Response::new_from_bytes(Bytes::from(bytes), url);
+					let response = Response::new_from_bytes(&cx, Bytes::from(bytes), url);
 					let headers = Headers::new(HeadersKind::Immutable);
 					response.headers.set(Headers::new_object(&cx, Box::new(headers)));
 					Ok(response)
 				}
-				Err(_) => Ok(network_error()),
+				Err(_) => Ok(network_error(&cx)),
 			}
 		}
-		_ => Ok(network_error()),
+		_ => Ok(network_error(&cx)),
 	}
 }
 
@@ -415,7 +419,7 @@ async fn http_fetch(
 				http_redirect_fetch(cx, request, response, client, taint, redirections).await,
 				false,
 			),
-			RequestRedirect::Error => (Ok(network_error()), false),
+			RequestRedirect::Error => (Ok(network_error(&cx)), false),
 			RequestRedirect::Manual => (Ok(response), true),
 		},
 		_ => (Ok(response), false),
@@ -430,7 +434,7 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 
 	let mut request_builder = hyper::Request::builder().method(&request.method).uri(request.url.to_string());
 	let Some(request_headers) = request_builder.headers_mut() else {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	};
 	*request_headers = headers.headers.clone();
 	let headers = request_headers;
@@ -507,7 +511,7 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 	}
 
 	if request.cache == RequestCache::OnlyIfCached {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	}
 
 	let range_requested = headers.contains_key(RANGE);
@@ -516,7 +520,7 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 	let hyper_body = request.body.unwrap().into_http_body(cx.duplicate());
 	let (hyper_body, body_fut) = hyper_body?;
 	let Ok(hyper_request) = request_builder.body(hyper_body) else {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	};
 
 	let (cx, hyper_response) = match body_fut {
@@ -537,7 +541,7 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 	response.range_requested = range_requested;
 
 	if response.status == Some(StatusCode::PROXY_AUTHENTICATION_REQUIRED) && !req.client_window {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	}
 
 	if response.status == Some(StatusCode::MISDIRECTED_REQUEST) && !is_new {
@@ -555,7 +559,7 @@ async fn http_redirect_fetch(
 	let mut location = headers.headers.get_all(LOCATION).into_iter();
 	let location = match location.size_hint().1 {
 		Some(0) => return Ok(response),
-		None => return Ok(network_error()),
+		None => return Ok(network_error(&cx)),
 		_ => {
 			let location = location.next().unwrap();
 			match Url::options()
@@ -568,21 +572,21 @@ async fn http_redirect_fetch(
 					}
 					url
 				}
-				Err(_) => return Ok(network_error()),
+				Err(_) => return Ok(network_error(&cx)),
 			}
 		}
 	};
 
 	if !(location.scheme() == "https" || location.scheme() == "http") {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	}
 
 	if redirections >= 20 {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	}
 
 	if taint == ResponseTaint::Cors && (location.username() != "" || location.password().is_some()) {
-		return Ok(network_error());
+		return Ok(network_error(&cx));
 	}
 
 	if ((response.status == Some(StatusCode::MOVED_PERMANENTLY) || response.status == Some(StatusCode::FOUND))

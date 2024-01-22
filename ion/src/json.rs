@@ -8,15 +8,15 @@ use utf16string::WStr;
 use crate::{Context, Result, Value, Error, ErrorKind, Object};
 
 pub fn parse(cx: &Context, text: String) -> Result<Object> {
-	let Some(str) = crate::String::copy_from_str(&cx, text.as_str()) else {
+	let Some(str) = crate::String::copy_from_str(cx, text.as_str()) else {
 		return Err(Error::new("Failed to allocate string", ErrorKind::Normal));
 	};
-	let mut result = Value::undefined(&cx);
+	let mut result = Value::undefined(cx);
 	if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) } {
 		return Err(Error::none());
 	}
 
-	Ok(result.to_object(&cx).into())
+	Ok(result.to_object(cx))
 }
 
 pub fn stringify(cx: &Context, value: Value) -> Result<String> {

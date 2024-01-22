@@ -24,7 +24,7 @@ impl TextDecoderStreamTransformer {
 	fn new(stream: &Object) -> Self {
 		Self {
 			reflector: Default::default(),
-			stream: Heap::from_local(&stream),
+			stream: Heap::from_local(stream),
 		}
 	}
 }

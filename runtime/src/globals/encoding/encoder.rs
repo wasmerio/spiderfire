@@ -9,7 +9,7 @@ use encoding_rs::{Encoder, UTF_8};
 use ion::{Context, Object, Value, Error, ErrorKind, Result};
 use ion::class::Reflector;
 use ion::conversions::ToValue;
-use ion::typedarray::{Uint8Array, ArrayBuffer};
+use ion::typedarray::Uint8Array;
 
 pub struct EncodeResult {
 	read: u64,

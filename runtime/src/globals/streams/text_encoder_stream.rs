@@ -15,7 +15,7 @@ impl TextEncoderStreamTransformer {
 	fn new(stream: &Object) -> Self {
 		Self {
 			reflector: Default::default(),
-			stream: Heap::from_local(&stream),
+			stream: Heap::from_local(stream),
 		}
 	}
 }
@@ -25,7 +25,7 @@ impl TextEncoderStreamTransformer {
 		let stream = TextEncoderStream::get_private(&self.stream.root(cx).into());
 		let encoder = TextEncoder::get_mut_private(&mut stream.encoder.root(cx).into());
 		let chunk_str = unsafe { ToStringSlow(cx.as_ptr(), chunk.handle().into()) };
-		if chunk_str == std::ptr::null_mut() {
+		if chunk_str.is_null() {
 			return Err(Error::none());
 		}
 		let chunk_str = ion::String::from(cx.root_string(chunk_str)).to_owned(cx);

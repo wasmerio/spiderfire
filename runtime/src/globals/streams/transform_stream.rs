@@ -252,7 +252,7 @@ impl NativeStreamSourceCallbacks for Source {
 		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
 	}
 
-	fn cancel<'cx>(self: Box<Self>, cx: &'cx Context, reason: Value) -> ResultExc<Promise> {
+	fn cancel(self: Box<Self>, cx: &Context, reason: Value) -> ResultExc<Promise> {
 		let ts = TransformStream::from_heap(cx, &self.stream);
 		ts.error_writable_and_unblock_write(cx, &reason)?;
 		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
@@ -271,7 +271,7 @@ impl NativeStreamSinkCallbacks for Sink {
 		Ok(res)
 	}
 
-	fn write<'cx>(&self, cx: &'cx Context, chunk: Value, _controller: Object) -> ResultExc<Promise> {
+	fn write(&self, cx: &Context, chunk: Value, _controller: Object) -> ResultExc<Promise> {
 		let ts = TransformStream::from_traced_heap(cx, &self.stream);
 		let writable = ts.writable.root(cx);
 
@@ -291,7 +291,7 @@ impl NativeStreamSinkCallbacks for Sink {
 				Promise::new_resolved(cx, Value::undefined(cx))
 			}
 
-			Some((o, f)) => match f.call(&cx, &o, &[chunk, controller_object]) {
+			Some((o, f)) => match f.call(cx, &o, &[chunk, controller_object]) {
 				Err(e) => Promise::new_rejected(
 					cx,
 					e.map(|e| e.exception).unwrap_or_else(|| {
@@ -302,7 +302,7 @@ impl NativeStreamSinkCallbacks for Sink {
 					if !val.get().is_object() {
 						Promise::new_resolved(cx, Value::undefined(cx))
 					} else {
-						match Promise::from(val.to_object(&cx).into_local()) {
+						match Promise::from(val.to_object(cx).into_local()) {
 							// The flush algorithm (erroneously) didn't return a promise
 							None => Promise::new_resolved(cx, Value::undefined(cx)),
 							Some(p) => p,
@@ -339,7 +339,7 @@ impl NativeStreamSinkCallbacks for Sink {
 		Ok(promise)
 	}
 
-	fn close<'cx>(&self, cx: &'cx Context) -> ResultExc<Promise> {
+	fn close(&self, cx: &Context) -> ResultExc<Promise> {
 		let stream = self.stream.clone();
 
 		unsafe {
@@ -423,7 +423,7 @@ impl NativeStreamSinkCallbacks for Sink {
 		}
 	}
 
-	fn abort<'cx>(&self, cx: &'cx Context, reason: Value) -> ResultExc<Promise> {
+	fn abort(&self, cx: &Context, reason: Value) -> ResultExc<Promise> {
 		let ts = TransformStream::from_traced_heap(cx, &self.stream);
 		if let Err(e) = ts.error(cx, &reason) {
 			return Ok(Promise::new_rejected(cx, e));
@@ -506,10 +506,10 @@ impl TransformStream {
 		let writable = self.writable.root(cx);
 
 		unsafe {
-			if WritableStreamGetState(cx.as_ptr(), writable.handle().into()) == WritableStreamState::Writable {
-				if !WritableStreamError(cx.as_ptr(), writable.handle().into(), e.handle().into()) {
-					return Err(Error::none());
-				}
+			if WritableStreamGetState(cx.as_ptr(), writable.handle().into()) == WritableStreamState::Writable
+				&& !WritableStreamError(cx.as_ptr(), writable.handle().into(), e.handle().into())
+			{
+				return Err(Error::none());
 			}
 		}
 
@@ -550,7 +550,7 @@ impl TransformStream {
 		};
 
 		let sink = Sink {
-			stream: TracedHeap::from_local(&this),
+			stream: TracedHeap::from_local(this),
 			start_promise: unsafe { Promise::from_unchecked(start_promise.root(cx)) },
 		};
 		let sink_obj = cx.root_object(NativeStreamSink::new_object(
@@ -576,7 +576,7 @@ impl TransformStream {
 		}
 
 		let source = Source {
-			stream: Heap::from_local(&this),
+			stream: Heap::from_local(this),
 			start_promise,
 		};
 

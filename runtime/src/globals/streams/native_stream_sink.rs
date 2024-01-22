@@ -10,9 +10,9 @@ pub struct NativeStreamSink {
 
 pub trait NativeStreamSinkCallbacks {
 	fn start<'cx>(&self, cx: &'cx Context, controller: Object<'cx>) -> ResultExc<Value<'cx>>;
-	fn write<'cx>(&self, cx: &'cx Context, chunk: Value, controller: Object) -> ResultExc<Promise>;
-	fn close<'cx>(&self, cx: &'cx Context) -> ResultExc<Promise>;
-	fn abort<'cx>(&self, cx: &'cx Context, reason: Value) -> ResultExc<Promise>;
+	fn write(&self, cx: &Context, chunk: Value, controller: Object) -> ResultExc<Promise>;
+	fn close(&self, cx: &Context) -> ResultExc<Promise>;
+	fn abort(&self, cx: &Context, reason: Value) -> ResultExc<Promise>;
 }
 
 impl NativeStreamSink {

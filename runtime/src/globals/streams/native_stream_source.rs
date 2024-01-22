@@ -20,7 +20,7 @@ pub trait NativeStreamSourceCallbacks: AsAny {
 	fn pull<'cx>(
 		&self, source: &'cx NativeStreamSource, cx: &'cx Context, controller: Object<'cx>,
 	) -> ResultExc<Promise>;
-	fn cancel<'cx>(self: Box<Self>, cx: &'cx Context, reason: Value) -> ResultExc<Promise>;
+	fn cancel(self: Box<Self>, cx: &Context, reason: Value) -> ResultExc<Promise>;
 
 	fn name(&self) -> &'static str {
 		core::any::type_name::<Self>()

@@ -35,7 +35,7 @@ impl ReadableStream {
 
 	pub fn from_local(local: &Local<'_, *mut JSObject>) -> Option<Self> {
 		if Self::is_readable_stream(local.get()) {
-			Some(Self { stream: TracedHeap::from_local(&local) })
+			Some(Self { stream: TracedHeap::from_local(local) })
 		} else {
 			None
 		}
@@ -47,6 +47,7 @@ impl ReadableStream {
 		}
 	}
 
+	#[allow(clippy::not_unsafe_ptr_arg_deref)]
 	pub fn is_readable_stream(obj: *mut JSObject) -> bool {
 		unsafe { IsReadableStream(obj) }
 	}
@@ -55,7 +56,7 @@ impl ReadableStream {
 		let mut locked = false;
 
 		unsafe {
-			ReadableStreamIsLocked(cx.as_ptr(), self.stream.root(&cx).handle().into(), &mut locked);
+			ReadableStreamIsLocked(cx.as_ptr(), self.stream.root(cx).handle().into(), &mut locked);
 		}
 
 		locked
@@ -188,7 +189,7 @@ impl ReadableStreamReader {
 		}
 	}
 
-	pub fn read_chunk_raw<'cx>(&self, cx: &'cx Context) -> Promise {
+	pub fn read_chunk_raw(&self, cx: &Context) -> Promise {
 		unsafe {
 			let promise = ReadableStreamDefaultReaderRead(cx.as_ptr(), self.reader.root(cx).handle().into());
 			Promise::from_raw(promise, cx).expect("ReadableStreamDefaultReaderRead should return a Promise")

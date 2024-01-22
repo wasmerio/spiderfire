@@ -157,6 +157,16 @@ pub struct Headers {
 	pub(crate) kind: HeadersKind,
 }
 
+impl Clone for Headers {
+	fn clone(&self) -> Self {
+		Self {
+			reflector: Default::default(),
+			headers: self.headers.clone(),
+			kind: self.kind,
+		}
+	}
+}
+
 impl Headers {
 	pub fn new(kind: HeadersKind) -> Headers {
 		Headers { kind, ..Headers::default() }

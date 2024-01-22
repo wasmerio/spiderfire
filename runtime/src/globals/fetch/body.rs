@@ -125,7 +125,7 @@ impl FetchBody {
 						match chunk {
 							None => break,
 							Some(Ok(bytes)) => {
-								if let Err(_) = sender.send_data(Bytes::from(bytes)).await {
+								if (sender.send_data(Bytes::from(bytes)).await).is_err() {
 									sender.abort();
 									break;
 								}
@@ -441,7 +441,7 @@ impl NativeStreamSourceCallbacks for HyperBodyStreamSource {
 		}
 	}
 
-	fn cancel<'cx>(self: Box<Self>, cx: &'cx Context, _reason: Value) -> ion::ResultExc<ion::Promise> {
+	fn cancel(self: Box<Self>, cx: &Context, _reason: Value) -> ion::ResultExc<ion::Promise> {
 		drop(self.body);
 		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
 	}

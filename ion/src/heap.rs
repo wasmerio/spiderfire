@@ -62,7 +62,7 @@ where
 
 	/// This constructs a Local from the Heap directly as opposed to rooting on the stack.
 	/// The returned Local cannot be used to construct a HandleMut.
-	pub fn to_local<'a>(&'a self) -> Local<'a, T> {
+	pub fn to_local(&self) -> Local<'_, T> {
 		unsafe { Local::from_heap(&self.heap) }
 	}
 }
@@ -127,7 +127,9 @@ where
 	}
 
 	pub fn set(&self, v: T) {
-		self.heap.set(v)
+		unsafe { RootedTraceableSet::remove(&*self.heap) }
+		self.heap.set(v);
+		unsafe { RootedTraceableSet::add(&*self.heap) };
 	}
 }
 
@@ -142,7 +144,7 @@ where
 
 	/// This constructs a Local from the Heap directly as opposed to rooting on the stack.
 	/// The returned Local cannot be used to construct a HandleMut.
-	pub fn to_local<'a>(&'a self) -> Local<'a, T> {
+	pub fn to_local(&self) -> Local<'_, T> {
 		unsafe { Local::from_heap(&self.heap) }
 	}
 }

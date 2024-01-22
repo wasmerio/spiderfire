@@ -85,7 +85,7 @@ impl Request {
 	}
 
 	pub fn get_headers_object<'cx>(&self, cx: &'cx Context) -> &'cx Headers {
-		&Headers::get_private(&self.headers.root(cx).into())
+		Headers::get_private(&self.headers.root(cx).into())
 	}
 
 	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
@@ -116,7 +116,7 @@ impl Request {
 			.into_bytes(cx)
 			.await?
 			.map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
-			.unwrap_or_else(|| String::new()))
+			.unwrap_or_else(String::new))
 	}
 
 	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
@@ -128,7 +128,7 @@ impl Request {
 			reflector: Reflector::default(),
 
 			method,
-			headers: Heap::new(std::ptr::null_mut()),
+			headers: Heap::new(Headers::new_object(cx, Box::new(self.get_headers_object(cx).clone()))),
 			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
 			body_used: self.body_used,
 
@@ -158,6 +158,8 @@ impl Request {
 
 		let url = self.locations.last().unwrap().clone();
 
+		let headers = Heap::new(Headers::new_object(&cx, Box::new(self.get_headers_object(&cx).clone())));
+
 		let body = match &mut self.body {
 			None => None,
 			Some(body) => Some(body.try_clone_with_cached_body(cx).await?),
@@ -167,7 +169,7 @@ impl Request {
 			reflector: Reflector::default(),
 
 			method,
-			headers: Heap::new(std::ptr::null_mut()),
+			headers,
 			body,
 			body_used: self.body_used,
 

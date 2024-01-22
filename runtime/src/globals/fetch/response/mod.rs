@@ -69,9 +69,9 @@ impl Response {
 		Ok(Response {
 			reflector: Reflector::default(),
 
-			headers: Heap::new(Headers::new_object(&cx, Box::new(headers))),
+			headers: Heap::new(Headers::new_object(cx, Box::new(headers))),
 			body: Some(FetchBody {
-				body: FetchBodyInner::Stream(hyper_body_to_stream(cx, body).ok_or_else(|| Error::none())?),
+				body: FetchBodyInner::Stream(hyper_body_to_stream(cx, body).ok_or_else(Error::none)?),
 				..Default::default()
 			}),
 
@@ -86,11 +86,11 @@ impl Response {
 		})
 	}
 
-	pub fn new_from_bytes(bytes: Bytes, url: Url) -> Response {
+	pub fn new_from_bytes(cx: &Context, bytes: Bytes, url: Url) -> Response {
 		Response {
 			reflector: Reflector::default(),
 
-			headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
+			headers: Heap::new(Headers::new_object(cx, Box::new(Headers::new(HeadersKind::Response)))),
 			body: Some(FetchBody {
 				body: FetchBodyInner::Bytes(bytes),
 				..Default::default()
@@ -148,11 +148,11 @@ impl Response {
 			headers: self.headers.clone(),
 			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
 
-			kind: self.kind.clone(),
+			kind: self.kind,
 			url: self.url.clone(),
 			redirected: self.redirected,
 
-			status: self.status.clone(),
+			status: self.status,
 			status_text: self.status_text.clone(),
 
 			range_requested: self.range_requested,
@@ -171,11 +171,11 @@ impl Response {
 			headers: self.headers.clone(),
 			body,
 
-			kind: self.kind.clone(),
+			kind: self.kind,
 			url: self.url.clone(),
 			redirected: self.redirected,
 
-			status: self.status.clone(),
+			status: self.status,
 			status_text: self.status_text.clone(),
 
 			range_requested: self.range_requested,
@@ -189,11 +189,11 @@ impl Response {
 			headers: self.headers.clone(),
 			body,
 
-			kind: self.kind.clone(),
+			kind: self.kind,
 			url: self.url.clone(),
 			redirected: self.redirected,
 
-			status: self.status.clone(),
+			status: self.status,
 			status_text: self.status_text.clone(),
 
 			range_requested: self.range_requested,
@@ -250,7 +250,7 @@ impl Response {
 	}
 
 	pub fn error(cx: &Context) -> *mut JSObject {
-		Response::new_object(cx, Box::new(network_error()))
+		Response::new_object(cx, Box::new(network_error(cx)))
 	}
 
 	#[ion(name = "json")]
@@ -339,7 +339,7 @@ impl Response {
 	}
 
 	#[ion(get)]
-	pub fn get_body<'cx>(&mut self, cx: &Context) -> Result<*mut JSObject> {
+	pub fn get_body(&mut self, cx: &Context) -> Result<*mut JSObject> {
 		let stream = match self.take_body()?.body {
 			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
 			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
@@ -354,7 +354,7 @@ impl Response {
 	}
 
 	#[ion(name = "arrayBuffer")]
-	pub fn array_buffer<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
+	pub fn array_buffer(&mut self, cx: &Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
@@ -377,14 +377,14 @@ impl Response {
 		}
 	}
 
-	pub fn text<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
+	pub fn text(&mut self, cx: &Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move { Self::take_body_text(&this, cx).await })
 		}
 	}
 
-	pub fn json<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
+	pub fn json(&mut self, cx: &Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
@@ -395,7 +395,7 @@ impl Response {
 	}
 
 	#[ion(name = "formData")]
-	pub fn form_data<'cx>(&mut self, cx: &'cx Context) -> Option<Promise> {
+	pub fn form_data(&mut self, cx: &Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
@@ -419,11 +419,11 @@ impl Response {
 	}
 }
 
-pub fn network_error() -> Response {
+pub fn network_error(cx: &Context) -> Response {
 	Response {
 		reflector: Reflector::default(),
 
-		headers: Heap::new(mozjs::jsval::NullValue().to_object_or_null()),
+		headers: Heap::new(Headers::new_object(cx, Box::new(Headers::new(HeadersKind::Response)))),
 		body: Some(FetchBody::default()),
 
 		kind: ResponseKind::Error,

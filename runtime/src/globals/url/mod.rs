@@ -104,7 +104,7 @@ impl URL {
 
 	#[ion(get)]
 	pub fn get_protocol(&self) -> String {
-		String::from(format!("{}:", self.url.scheme()))
+		format!("{}:", self.url.scheme())
 	}
 
 	#[ion(set)]

@@ -29,6 +29,10 @@ impl BufferSource<'_> {
 		unsafe { self.as_slice().len() }
 	}
 
+	pub fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
+
 	pub fn is_shared(&self) -> bool {
 		match self {
 			BufferSource::Buffer(buffer) => buffer.is_shared(),
@@ -258,13 +262,13 @@ impl Blob {
 		Blob::new_object(cx, Box::new(blob))
 	}
 
-	pub fn text<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
+	pub fn text(&self, cx: &Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
 		unsafe { future_to_promise(cx, |_| async move { Ok::<_, ()>(UTF_8.decode(&bytes).0.into_owned()) }) }
 	}
 
 	#[ion(name = "arrayBuffer")]
-	pub fn array_buffer<'cx>(&self, cx: &'cx Context) -> Option<Promise> {
+	pub fn array_buffer(&self, cx: &Context) -> Option<Promise> {
 		let bytes = self.bytes.clone();
 		unsafe {
 			future_to_promise(cx, |_| async move {

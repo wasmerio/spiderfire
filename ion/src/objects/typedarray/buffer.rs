@@ -96,6 +96,10 @@ impl<'ab> ArrayBuffer<'ab> {
 		self.data().1
 	}
 
+	pub fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
+
 	/// Returns a slice to the contents of the [ArrayBuffer].
 	///
 	/// The slice may be invalidated if the [ArrayBuffer] is detached.

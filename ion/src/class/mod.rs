@@ -177,7 +177,7 @@ pub trait ClassDefinition: NativeObject {
 		object
 	}
 
-	fn new_rooted<'cx>(cx: &'cx Context, native: Box<Self>) -> Object<'cx> {
+	fn new_rooted(cx: &Context, native: Box<Self>) -> Object {
 		let object = Self::new_object(cx, native);
 		Object::from(cx.root_object(object))
 	}

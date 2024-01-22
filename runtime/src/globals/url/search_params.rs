@@ -45,8 +45,8 @@ impl<'cx> FromValue<'cx> for URLSearchParamsInit {
 				.collect::<Result<_>>()?;
 			Ok(URLSearchParamsInit(vec))
 		} else if let Ok(string) = String::from_value(cx, value, strict, ()) {
-			let str = if string.starts_with('?') {
-				&string[1..]
+			let str = if let Some(stripped) = string.strip_prefix('?') {
+				stripped
 			} else {
 				string.as_str()
 			};

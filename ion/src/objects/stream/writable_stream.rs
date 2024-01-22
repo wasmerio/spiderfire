@@ -22,7 +22,7 @@ impl WritableStream {
 	}
 
 	pub fn is_locked(&self, cx: &Context) -> bool {
-		unsafe { WritableStreamIsLocked(cx.as_ptr(), self.stream.root(&cx).handle().into()) }
+		unsafe { WritableStreamIsLocked(cx.as_ptr(), self.stream.root(cx).handle().into()) }
 	}
 
 	pub fn static_is_locked(cx: &Context, obj: &Local<'_, *mut JSObject>) -> bool {
