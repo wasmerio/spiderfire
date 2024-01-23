@@ -186,6 +186,21 @@ impl<'s> String<'s> {
 			.map(|bytes| WStr::from_utf16(bytes).unwrap())
 	}
 
+	pub fn as_bytes(&self, cx: &Context) -> &'s [u8] {
+		let mut length = 0;
+		unsafe {
+			if self.is_latin1() {
+				let chars = JS_GetLatin1StringCharsAndLength(cx.as_ptr(), ptr::null(), self.get(), &mut length);
+				slice::from_raw_parts(chars, length)
+			} else {
+				let mut length = 0;
+				let chars = JS_GetTwoByteStringCharsAndLength(cx.as_ptr(), ptr::null(), self.get(), &mut length);
+				let slice = slice::from_raw_parts(chars, length);
+				cast_slice(slice)
+			}
+		}
+	}
+
 	pub fn as_ref(&self, cx: &Context) -> StringRef<'s> {
 		let mut length = 0;
 		if self.is_latin1() {

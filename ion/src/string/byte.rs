@@ -13,12 +13,37 @@ pub enum VisibleAscii {}
 #[derive(Debug)]
 pub enum Latin1 {}
 
+#[derive(Debug)]
+pub enum VerbatimBytes {}
+
 mod private {
-	use crate::string::byte::{Latin1, VisibleAscii};
+	use crate::{
+		string::byte::{Latin1, VisibleAscii},
+		Value, StringRef,
+		conversions::FromValue,
+		Context, Result, String, Error,
+	};
+
+	use super::VerbatimBytes;
 
 	pub trait Sealed {
 		fn predicate(_byte: u8) -> bool {
 			true
+		}
+
+		fn bytes_from_value(cx: &Context, value: &Value, strict: bool) -> Result<Vec<u8>> {
+			let string = StringRef::from_value(cx, value, strict, ())?;
+			match string {
+				StringRef::Latin1(bstr) => Ok(bstr.to_vec()),
+				StringRef::Utf16(wstr) => wstr
+					.as_bytes()
+					.chunks_exact(2)
+					.map(|chunk| {
+						let codepoint = u16::from_ne_bytes([chunk[0], chunk[1]]);
+						u8::try_from(codepoint).map_err(|_| Error::none())
+					})
+					.collect::<Result<Vec<_>>>(),
+			}
 		}
 	}
 
@@ -29,6 +54,13 @@ mod private {
 	}
 
 	impl Sealed for Latin1 {}
+
+	impl Sealed for VerbatimBytes {
+		fn bytes_from_value(cx: &Context, value: &Value, strict: bool) -> Result<Vec<u8>> {
+			let str = String::from_value(cx, value, strict, ())?;
+			Ok(str.as_bytes(cx).to_vec())
+		}
+	}
 }
 
 pub trait BytePredicate: private::Sealed {}
@@ -64,7 +96,15 @@ impl<T: BytePredicate> Deref for ByteStr<T> {
 	}
 }
 
-#[derive(Clone, Debug, Default)]
+impl<T: BytePredicate> PartialEq for ByteStr<T> {
+	fn eq(&self, other: &Self) -> bool {
+		self.bytes == other.bytes
+	}
+}
+
+impl<T: BytePredicate> Eq for ByteStr<T> {}
+
+#[derive(Debug, Default)]
 pub struct ByteString<T: BytePredicate = Latin1> {
 	_predicate: PhantomData<T>,
 	bytes: Vec<u8>,
@@ -97,5 +137,22 @@ impl<T: BytePredicate> Deref for ByteString<T> {
 
 	fn deref(&self) -> &ByteStr<T> {
 		self.as_byte_str()
+	}
+}
+
+impl<T: BytePredicate> PartialEq for ByteString<T> {
+	fn eq(&self, other: &Self) -> bool {
+		self.bytes == other.bytes
+	}
+}
+
+impl<T: BytePredicate> Eq for ByteString<T> {}
+
+impl<T: BytePredicate> Clone for ByteString<T> {
+	fn clone(&self) -> Self {
+		Self {
+			_predicate: PhantomData,
+			bytes: self.bytes.clone(),
+		}
 	}
 }

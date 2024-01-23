@@ -152,25 +152,16 @@ impl<'cx> FromValue<'cx> for StringRef<'cx> {
 impl<'cx, T: BytePredicate> FromValue<'cx> for ByteString<T> {
 	type Config = ();
 
-	fn from_value(cx: &'cx Context, value: &Value, strict: bool, config: ()) -> Result<ByteString<T>> {
+	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _config: ()) -> Result<ByteString<T>> {
 		const INVALID_CHARACTERS: &str = "ByteString contains invalid characters";
-		let string = StringRef::from_value(cx, value, strict, config)?;
-		match string {
-			StringRef::Latin1(bstr) => {
-				ByteString::from(bstr.to_vec()).ok_or_else(|| Error::new(INVALID_CHARACTERS, ErrorKind::Type))
+		let bytes = T::bytes_from_value(cx, value, strict).map_err(|e| {
+			if e.kind == ErrorKind::None {
+				Error::new(INVALID_CHARACTERS, ErrorKind::Type)
+			} else {
+				e
 			}
-			StringRef::Utf16(wstr) => {
-				let bytes = wstr
-					.as_bytes()
-					.chunks_exact(2)
-					.map(|chunk| {
-						let codepoint = u16::from_ne_bytes([chunk[0], chunk[1]]);
-						u8::try_from(codepoint).map_err(|_| Error::new(INVALID_CHARACTERS, ErrorKind::Type))
-					})
-					.collect::<Result<Vec<_>>>()?;
-				ByteString::from(bytes).ok_or_else(|| Error::new(INVALID_CHARACTERS, ErrorKind::Type))
-			}
-		}
+		})?;
+		ByteString::from(bytes).ok_or_else(|| Error::new(INVALID_CHARACTERS, ErrorKind::Type))
 	}
 }
 
