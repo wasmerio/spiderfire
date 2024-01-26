@@ -240,6 +240,10 @@ impl<'o> Object<'o> {
 		}
 	}
 
+	pub fn is_null(&self) -> bool {
+		self.handle().is_null()
+	}
+
 	/// Unboxes primitive wrappers. See [Object::is_boxed_primitive] for details.
 	pub fn unbox_primitive<'cx>(&self, cx: &'cx Context) -> Option<Value<'cx>> {
 		if self.is_boxed_primitive(cx).is_some() {

@@ -4,17 +4,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::ops::Deref;
 use std::path::Path;
-use std::ptr;
 
 use mozjs::jsapi::{
-	CompileModule, CreateModuleRequest, GetModuleRequestSpecifier, Handle, JS_GetRuntime, JSContext, JSObject,
-	ModuleEvaluate, ModuleLink, SetModuleMetadataHook, SetModulePrivate, SetModuleResolveHook,
+	CompileModule, CreateModuleRequest, FinishDynamicModuleImport, GetModuleRequestSpecifier, Handle, JSContext,
+	JSObject, JS_GetRuntime, ModuleEvaluate, ModuleLink, SetModuleDynamicImportHook, SetModuleMetadataHook,
+	SetModulePrivate, SetModuleResolveHook,
 };
 use mozjs::jsval::JSVal;
 use mozjs::rust::{CompileOptionsWrapper, transform_u16_to_source_text};
 
-use crate::{Context, ErrorReport, Local, Object, Promise, Value};
+use crate::flags::PropertyFlags;
+use crate::{Context, Error, ErrorReport, Function, Local, Object, Promise, ThrowException, TracedHeap, Value};
 use crate::conversions::{FromValue, ToValue};
 
 /// Represents private module data
@@ -108,7 +110,7 @@ impl<'cx> Module<'cx> {
 	#[allow(clippy::result_large_err)]
 	pub fn compile(
 		cx: &'cx Context, filename: &str, path: Option<&Path>, script: &str,
-	) -> Result<(Module<'cx>, Option<Promise>), ModuleError> {
+	) -> Result<Module<'cx>, ModuleError> {
 		let script: Vec<u16> = script.encode_utf16().collect();
 		let mut source = transform_u16_to_source_text(script.as_slice());
 		let filename = path.and_then(Path::to_str).unwrap_or(filename);
@@ -128,23 +130,28 @@ impl<'cx> Module<'cx> {
 				SetModulePrivate(module.0.handle().get(), &*private.handle());
 			}
 
-			if let Err(error) = module.instantiate(cx) {
-				return Err(ModuleError::new(error, ModuleErrorKind::Instantiation));
-			}
-
-			let eval_result = module.evaluate(cx);
-			match eval_result {
-				Ok(val) => {
-					let promise = Promise::from_value(cx, &val, true, ()).ok();
-					Ok((module, promise))
-				}
-				Err(error) => Err(ModuleError::new(error, ModuleErrorKind::Evaluation)),
-			}
+			Ok(module)
 		} else {
 			Err(ModuleError::new(
 				ErrorReport::new(cx).unwrap(),
 				ModuleErrorKind::Compilation,
 			))
+		}
+	}
+
+	#[allow(clippy::result_large_err)]
+	pub fn compile_and_evaluate(
+		cx: &'cx Context, filename: &str, path: Option<&Path>, script: &str,
+	) -> Result<(Module<'cx>, Option<Promise>), ModuleError> {
+		let module = Self::compile(cx, filename, path, script)?;
+
+		if let Err(error) = module.instantiate(cx) {
+			return Err(ModuleError::new(error, ModuleErrorKind::Instantiation));
+		}
+
+		match module.evaluate(cx) {
+			Ok(promise) => Ok((module, promise)),
+			Err(error) => Err(ModuleError::new(error, ModuleErrorKind::Evaluation)),
 		}
 	}
 
@@ -158,10 +165,10 @@ impl<'cx> Module<'cx> {
 	}
 
 	/// Evaluates a [Module]. Generally called by [Module::compile].
-	pub fn evaluate(&self, cx: &'cx Context) -> Result<Value<'cx>, ErrorReport> {
+	pub fn evaluate(&self, cx: &'cx Context) -> Result<Option<Promise>, ErrorReport> {
 		let mut rval = Value::undefined(cx);
 		if unsafe { ModuleEvaluate(cx.as_ptr(), self.0.handle().into(), rval.handle_mut().into()) } {
-			Ok(rval)
+			Ok(Promise::from_value(cx, &rval, true, ()).ok())
 		} else {
 			Err(ErrorReport::new_with_exception_stack(cx).unwrap())
 		}
@@ -172,45 +179,150 @@ impl<'cx> Module<'cx> {
 pub trait ModuleLoader {
 	/// Given a request and private data of a module, resolves the request into a compiled module object.
 	/// Should return the same module object for a given request.
-	fn resolve(&mut self, cx: &Context, private: &Value, request: &ModuleRequest) -> *mut JSObject;
+	fn resolve<'cx>(
+		&mut self, cx: &'cx Context, referencing_module: Option<&ModuleData>, request: &ModuleRequest,
+	) -> crate::Result<Module<'cx>>;
 
 	/// Registers a new module in the module registry. Useful for native modules.
-	fn register(&mut self, cx: &Context, module: *mut JSObject, request: &ModuleRequest) -> *mut JSObject;
+	fn register(&mut self, cx: &Context, module: &Object, request: &ModuleRequest) -> bool;
 
 	/// Returns metadata of a module, used to populate `import.meta`.
-	fn metadata(&self, cx: &Context, private: &Value, meta: &mut Object) -> bool;
+	fn metadata(&self, cx: &Context, data: Option<&ModuleData>, meta: &mut Object) -> crate::Result<()>;
 }
 
 impl ModuleLoader for () {
-	fn resolve(&mut self, _: &Context, _: &Value, _: &ModuleRequest) -> *mut JSObject {
-		ptr::null_mut()
+	fn resolve<'cx>(
+		&mut self, _: &'cx Context, _: Option<&ModuleData>, _: &ModuleRequest,
+	) -> crate::Result<Module<'cx>> {
+		Err(crate::Error::new(
+			"Module loading not supported",
+			crate::ErrorKind::Type,
+		))
 	}
 
-	fn register(&mut self, _: &Context, _: *mut JSObject, _: &ModuleRequest) -> *mut JSObject {
-		ptr::null_mut()
-	}
-
-	fn metadata(&self, _: &Context, _: &Value, _: &mut Object) -> bool {
+	fn register(&mut self, _: &Context, _: &Object, _: &ModuleRequest) -> bool {
 		true
+	}
+
+	fn metadata(&self, _: &Context, _: Option<&ModuleData>, _: &mut Object) -> crate::Result<()> {
+		Ok(())
 	}
 }
 
 /// Initialises a module loader in the current runtime.
 pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) {
 	unsafe extern "C" fn resolve(
-		cx: *mut JSContext, private: Handle<JSVal>, request: Handle<*mut JSObject>,
+		cx: *mut JSContext, referencing_private: Handle<JSVal>, request: Handle<*mut JSObject>,
 	) -> *mut JSObject {
 		let cx = unsafe { Context::new_unchecked(cx) };
+		let referencing_private = unsafe { Value::from(Local::from_raw_handle(referencing_private)) };
+		let request = unsafe { ModuleRequest::from_raw_request(request) };
+		match load_module(&cx, referencing_private, request) {
+			Ok(m) => m.0.deref().get(),
+			Err(e) => {
+				e.throw(&cx);
+				std::ptr::null_mut()
+			}
+		}
+	}
 
+	unsafe extern "C" fn resolve_dynamic(
+		cx: *mut JSContext, referencing_private: Handle<JSVal>, request: Handle<*mut JSObject>,
+		promise: Handle<*mut JSObject>,
+	) -> bool {
+		// The promise idea is taken from SpiderMonkey's own
+		// source (js/src/shell/ModuleLoader.cpp), they have
+		// this to say about it:
+		// To make this more realistic, use a promise to delay
+		// the import and make it happen asynchronously.
+
+		let cx = unsafe { Context::new_unchecked(cx) };
+
+		let referencing_private = TracedHeap::new(referencing_private.get());
+		let request = TracedHeap::new(request.get());
+		let promise = TracedHeap::new(promise.get());
+
+		let delay_promise = Promise::new_resolved(&cx, Value::undefined(&cx));
+		delay_promise.add_reactions(
+			&cx,
+			Some(Function::from_closure(
+				&cx,
+				"",
+				Box::new(move |args| {
+					let cx = args.cx();
+
+					// This is where the actual importing happens
+					let evaluation_object: Object =
+						match try_dynamic_import(cx, referencing_private.clone(), request.clone()) {
+							Ok(o) => o.root(cx).into(),
+							Err(e) => {
+								// Exceptions during dynamic import are handled by calling
+								// FinishDynamicModuleImport with a pending exception on the context.
+								// Thus, we throw the error to make sure it's pending on the context.
+								e.exception.throw(cx);
+								cx.root_object(std::ptr::null_mut()).into()
+							}
+						};
+
+					if unsafe {
+						FinishDynamicModuleImport(
+							cx.as_ptr(),
+							evaluation_object.handle().into(),
+							referencing_private.root(cx).handle().into(),
+							request.root(cx).handle().into(),
+							promise.root(cx).handle().into(),
+						)
+					} {
+						Ok(Value::undefined(cx))
+					} else {
+						Err(crate::Exception::Error(Error::none()))
+					}
+				}),
+				1,
+				PropertyFlags::empty(),
+			)),
+			Some(Function::from_closure(
+				&cx,
+				"",
+				Box::new(move |_| panic!("This promise cannot fail")),
+				1,
+				PropertyFlags::empty(),
+			)),
+		)
+	}
+
+	fn try_dynamic_import(
+		cx: &Context, referencing_private: TracedHeap<JSVal>, request: TracedHeap<*mut JSObject>,
+	) -> Result<Promise, ErrorReport> {
+		let module = load_module(
+			cx,
+			referencing_private.root(cx).into(),
+			ModuleRequest(request.root(cx).into()),
+		)
+		.map_err(|e| ErrorReport::from_exception_with_error_stack(cx, crate::Exception::Error(e)))?;
+
+		module.instantiate(cx)?;
+
+		let promise = module.evaluate(cx)?;
+		Ok(promise.unwrap_or_else(|| Promise::new_resolved(cx, Value::undefined(cx))))
+	}
+
+	fn load_module<'cx>(
+		cx: &'cx Context, referencing_private: Value, request: ModuleRequest,
+	) -> crate::Result<Module<'cx>> {
 		let loader = unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader };
 		loader
 			.as_mut()
 			.map(|loader| {
-				let private = unsafe { Value::from(Local::from_raw_handle(private)) };
-				let request = unsafe { ModuleRequest::from_raw_request(request) };
-				loader.resolve(&cx, &private, &request)
+				let module_data = ModuleData::from_private(cx, &referencing_private);
+				loader.resolve(cx, module_data.as_ref(), &request)
 			})
-			.unwrap_or_else(ptr::null_mut)
+			.unwrap_or_else(|| {
+				Err(crate::Error::new(
+					"Internal error: module loader not registered",
+					crate::ErrorKind::Normal,
+				))
+			})
 	}
 
 	unsafe extern "C" fn metadata(
@@ -223,8 +335,15 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 			.as_mut()
 			.map(|loader| {
 				let private = Value::from(unsafe { Local::from_raw_handle(private_data) });
+				let module_data = ModuleData::from_private(&cx, &private);
 				let mut metadata = Object::from(unsafe { Local::from_raw_handle(metadata) });
-				loader.metadata(&cx, &private, &mut metadata)
+				match loader.metadata(&cx, module_data.as_ref(), &mut metadata) {
+					Ok(()) => true,
+					Err(e) => {
+						e.throw(&cx);
+						false
+					}
+				}
 			})
 			.unwrap_or_else(|| true)
 	}
@@ -235,5 +354,6 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 		let rt = JS_GetRuntime(cx.as_ptr());
 		SetModuleResolveHook(rt, Some(resolve));
 		SetModuleMetadataHook(rt, Some(metadata));
+		SetModuleDynamicImportHook(rt, Some(resolve_dynamic));
 	}
 }
