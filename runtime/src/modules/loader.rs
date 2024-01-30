@@ -9,7 +9,6 @@ use std::ffi::OsStr;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
-use dunce::canonicalize;
 use mozjs::jsapi::JSObject;
 use url::Url;
 
@@ -30,6 +29,13 @@ impl ModuleLoader for Loader {
 		&mut self, cx: &'cx Context, referencing_module: Option<&ModuleData>, request: &ModuleRequest,
 	) -> ion::Result<Module<'cx>> {
 		let specifier = request.specifier(cx).to_owned(cx);
+
+		// Do a registry look-up before canonicalizing paths, since the
+		// canonicalization process is incompatible with built-in modules
+		// that don't have an address on disk.
+		if let Some(heap) = self.registry.get(&specifier) {
+			return Ok(Module(heap.root(cx).into()));
+		}
 
 		let path = if specifier.starts_with("./") || specifier.starts_with("../") {
 			Path::new(referencing_module.and_then(|d| d.path.as_ref()).unwrap())
@@ -59,9 +65,17 @@ impl ModuleLoader for Loader {
 		match self.registry.get(&str) {
 			Some(heap) => Ok(Module(heap.root(cx).into())),
 			None => {
-				let Ok(script) = read_to_string(&path) else {
-					return Err(Error::new(&format!("Unable to read module: {}", specifier), None));
-				};
+				let script = read_to_string(&path).map_err(|e| {
+					Error::new(
+						&format!(
+							"Unable to read module `{}` from `{}` due to {:?}",
+							specifier,
+							path.display(),
+							e
+						),
+						None,
+					)
+				})?;
 				let is_typescript = Config::global().typescript && path.extension() == Some(OsStr::new("ts"));
 				let (script, sourcemap) = is_typescript
 					.then(|| locate_in_cache(&path, &script))
@@ -112,7 +126,7 @@ impl ModuleLoader for Loader {
 }
 
 fn canonicalize_path(path: impl AsRef<Path> + Copy) -> ion::Result<PathBuf> {
-	canonicalize(path).map_err(|e| {
+	crate::wasi_polyfills::canonicalize(path).map_err(|e| {
 		if e.kind() == std::io::ErrorKind::NotFound {
 			Error::new(
 				format!("Module file not found: {}", path.as_ref().to_string_lossy()).as_str(),

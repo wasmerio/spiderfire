@@ -21,5 +21,6 @@ pub mod modules;
 pub mod promise;
 mod runtime;
 pub mod typescript;
+pub mod wasi_polyfills;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

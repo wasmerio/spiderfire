@@ -14,7 +14,6 @@ use std::str::{from_utf8, Utf8Error};
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE;
 use dirs::home_dir;
-use dunce::canonicalize;
 use sha3::{Digest, Sha3_512};
 use sourcemap::SourceMap;
 
@@ -48,7 +47,7 @@ impl Cache {
 	}
 
 	pub fn find_folder<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf, Error> {
-		let canonical = canonicalize(path)?;
+		let canonical = crate::wasi_polyfills::canonicalize(path)?;
 		let folder = canonical.parent().ok_or(Error::Other)?;
 		let folder_name = folder.file_name().and_then(OsStr::to_str).ok_or(Error::Other)?;
 
