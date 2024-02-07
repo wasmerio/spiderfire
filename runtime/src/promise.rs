@@ -47,7 +47,7 @@ where
 {
 	let promise = Promise::new(cx);
 	let heap = TracedHeap::new(promise.get());
-	let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
+	let cx2 = cx.duplicate();
 
 	let handle = spawn_local(async move {
 		let result: Result<BoxedIntoValue, BoxedIntoValue> = match callback(cx2).await {

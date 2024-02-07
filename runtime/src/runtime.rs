@@ -115,7 +115,7 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 		self
 	}
 
-	pub fn build(self, cx: &mut Context) -> Runtime {
+	pub fn build(self, cx: &Context) -> Runtime {
 		let mut global = new_global(
 			cx,
 			&SIMPLE_GLOBAL_CLASS,
