@@ -42,12 +42,16 @@ version = "0.2.11"
 optional = true
 
 [dependencies.hyper]
-version = "0.14.27"
+version = "0.14.28"
 features = ["client", "http1", "tcp"]
 optional = true
 
+[dependencies.rustls]
+version = "0.22.2"
+optional = true
+
 [dependencies.hyper-rustls]
-version = "0.24.1"
+version = "0.25.0"
 default-features = false
 features = ["http1", "tls12", "webpki-tokio"]
 optional = true
@@ -90,6 +94,7 @@ fetch = [
 	"dep:const_format",
 	"dep:http",
 	"dep:hyper",
+	"dep:rustls",
 	"dep:hyper-rustls",
 	"dep:mime",
 	"dep:sys-locale",

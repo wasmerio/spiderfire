@@ -15,7 +15,12 @@ pub type Client = hyper::Client<HttpsConnector<HttpConnector>>;
 pub static GLOBAL_CLIENT: OnceLock<Client> = OnceLock::new();
 
 pub fn default_client() -> Client {
-	let https = HttpsConnectorBuilder::new().with_webpki_roots().https_or_http().enable_http1().build();
+	let https = HttpsConnectorBuilder::new()
+		.with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
+		.unwrap()
+		.https_or_http()
+		.enable_http1()
+		.build();
 
 	let mut client = hyper::Client::builder();
 
