@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::any::Any;
 use std::ptr;
 
 use mozjs::glue::CreateJobQueue;
@@ -24,16 +25,37 @@ use crate::modules::StandardModules;
 #[derive(Default)]
 pub struct ContextPrivate {
 	pub(crate) event_loop: EventLoop,
+	pub app_data: Option<Box<dyn Any>>,
 }
 
 pub trait ContextExt {
 	#[allow(clippy::mut_from_ref)]
 	unsafe fn get_private(&self) -> &mut ContextPrivate;
+
+	fn set_app_data(&self, app_data: Box<dyn Any>);
+
+	fn get_raw_app_data(&self) -> *mut dyn Any;
+
+	#[allow(clippy::mut_from_ref)]
+	unsafe fn get_app_data<T: 'static>(&self) -> &mut T;
 }
 
 impl ContextExt for Context {
 	unsafe fn get_private(&self) -> &mut ContextPrivate {
 		unsafe { (*self.get_raw_private()).downcast_mut().unwrap() }
+	}
+
+	fn set_app_data(&self, app_data: Box<dyn Any>) {
+		unsafe { self.get_private() }.app_data = Some(app_data);
+	}
+
+	fn get_raw_app_data(&self) -> *mut dyn Any {
+		unsafe { self.get_private().app_data.as_deref().unwrap() as *const _ as *mut _ }
+	}
+
+	//
+	unsafe fn get_app_data<T: 'static>(&self) -> &mut T {
+		unsafe { (*self.get_raw_app_data()).downcast_mut().unwrap() }
 	}
 }
 
