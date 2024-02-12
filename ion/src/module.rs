@@ -101,9 +101,13 @@ impl ModuleError {
 
 /// Represents a compiled module.
 #[derive(Debug)]
-pub struct Module<'m>(pub Object<'m>);
+pub struct Module<'m>(Object<'m>);
 
 impl<'cx> Module<'cx> {
+	pub fn from_local(l: Local<'cx, *mut JSObject>) -> Self {
+		Self(l.into())
+	}
+
 	/// Compiles a [Module] with the given source and filename.
 	/// On success, returns the compiled module object and a promise. The promise resolves with the return value of the module.
 	/// The promise is a byproduct of enabling top-level await.
@@ -172,6 +176,20 @@ impl<'cx> Module<'cx> {
 		} else {
 			Err(ErrorReport::new_with_exception_stack(cx).unwrap())
 		}
+	}
+
+	pub fn module_object(&self) -> &Object {
+		&self.0
+	}
+
+	pub fn module_namespace(&self, cx: &'cx Context) -> Object<'cx> {
+		cx.root_object(unsafe { mozjs::jsapi::GetModuleNamespace(cx.as_ptr(), self.0.handle().into()) })
+			.into()
+	}
+
+	pub fn module_environment(&self, cx: &'cx Context) -> Object<'cx> {
+		cx.root_object(unsafe { mozjs::jsapi::GetModuleEnvironment(cx.as_ptr(), self.0.handle().into()) })
+			.into()
 	}
 }
 

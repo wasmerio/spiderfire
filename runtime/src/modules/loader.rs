@@ -34,7 +34,7 @@ impl ModuleLoader for Loader {
 		// canonicalization process is incompatible with built-in modules
 		// that don't have an address on disk.
 		if let Some(heap) = self.registry.get(&specifier) {
-			return Ok(Module(heap.root(cx).into()));
+			return Ok(Module::from_local(heap.root(cx)));
 		}
 
 		let path = if specifier.starts_with("./") || specifier.starts_with("../") {
@@ -63,7 +63,7 @@ impl ModuleLoader for Loader {
 
 		let str = String::from(path.to_str().unwrap());
 		match self.registry.get(&str) {
-			Some(heap) => Ok(Module(heap.root(cx).into())),
+			Some(heap) => Ok(Module::from_local(heap.root(cx))),
 			None => {
 				let script = read_to_string(&path).map_err(|e| {
 					Error::new(
@@ -90,7 +90,7 @@ impl ModuleLoader for Loader {
 
 				if let Ok(module) = module {
 					let request = ModuleRequest::new(cx, path.to_str().unwrap());
-					self.register(cx, &module.0, &request);
+					self.register(cx, module.module_object(), &request);
 					Ok(module)
 				} else {
 					Err(Error::new(&format!("Unable to compile module: {}\0", specifier), None))
