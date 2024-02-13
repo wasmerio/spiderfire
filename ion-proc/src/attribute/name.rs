@@ -4,7 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use syn::{Error, Expr, ExprLit, ExprPath, Lit, LitStr};
 use syn::parse::{Parse, ParseStream};
@@ -30,10 +29,7 @@ impl Name {
 	pub(crate) fn to_property_spec(&self, ion: &TokenStream, function: &mut Ident) -> (Box<Expr>, Box<Expr>) {
 		match self {
 			Name::String(literal) => {
-				let mut name = literal.value();
-				if name.is_case(Case::ScreamingSnake) {
-					name = name.to_case(Case::Camel)
-				}
+				let name = literal.value();
 				(
 					Box::new(Expr::Lit(ExprLit {
 						attrs: Vec::new(),
