@@ -186,7 +186,7 @@ impl URLSearchParams {
 		Ok(())
 	}
 
-	#[ion(name = WellKnownSymbolCode::Iterator)]
+	#[ion(name = WellKnownSymbolCode::Iterator, alias = ["entries"])]
 	pub fn iterator(cx: &Context, #[ion(this)] this: &Object) -> ion::Iterator {
 		let thisv = this.as_value(cx);
 		ion::Iterator::new(SearchParamsIterator::default(), &thisv)
