@@ -620,6 +620,6 @@ async fn http_redirect_fetch(
 
 pub fn define(cx: &Context, global: &mut Object) -> bool {
 	let _ = GLOBAL_CLIENT.set(default_client());
-	global.define_method(cx, "fetch", fetch, 1, PropertyFlags::CONSTANT_ENUMERATED);
+	global.define_method(cx, "fetch", fetch, 1, PropertyFlags::empty());
 	Headers::init_class(cx, global).0 && Request::init_class(cx, global).0 && Response::init_class(cx, global).0
 }
