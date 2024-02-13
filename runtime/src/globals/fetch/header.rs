@@ -21,7 +21,7 @@ use http::header::{
 };
 use mime::{APPLICATION, FORM_DATA, Mime, MULTIPART, PLAIN, TEXT, WWW_FORM_URLENCODED};
 
-use ion::{Array, Context, Error, ErrorKind, Object, OwnedKey, Result, Value};
+use ion::{Array, Context, Error, ErrorKind, Function, Object, OwnedKey, Result, ResultExc, Value};
 use ion::{ClassDefinition, JSIterator};
 use ion::class::Reflector;
 use ion::conversions::{FromValue, ToValue};
@@ -260,11 +260,26 @@ impl Headers {
 		Ok(())
 	}
 
-	pub fn entries<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
-		self.iterator(cx)
+	#[ion(name = "forEach")]
+	pub fn for_each(&self, cx: &Context, callback: Function, this_arg: Option<Object>) -> ResultExc<()> {
+		let this_arg = this_arg.unwrap_or_else(|| Object::null(cx));
+		for key in self.headers.keys() {
+			let mut value = Value::undefined(cx);
+			if let Some(h) = get_header(&self.headers, key) {
+				h.to_value(cx, &mut value);
+			}
+			let key = key.as_str().to_ascii_lowercase();
+			let this = Value::object(cx, &cx.root_object(self.reflector.get()).into());
+			callback.call(cx, &this_arg, &[value, key.as_value(cx), this]).map_err(|e| {
+				e.map(|e| e.exception).unwrap_or_else(|| {
+					ion::Exception::Error(Error::new("Unknown failure in callback", ErrorKind::Normal))
+				})
+			})?;
+		}
+		Ok(())
 	}
 
-	#[ion(name = WellKnownSymbolCode::Iterator)]
+	#[ion(name = WellKnownSymbolCode::Iterator, alias = ["entries"])]
 	pub fn iterator(&self, cx: &Context) -> ion::Iterator {
 		let cookies: Vec<_> = self.headers.get_all(&SET_COOKIE).iter().map(HeaderValue::clone).collect();
 

@@ -188,12 +188,8 @@ impl FormData {
 		Ok(())
 	}
 
-	#[ion(name = WellKnownSymbolCode::Iterator)]
+	#[ion(name = WellKnownSymbolCode::Iterator, alias = ["entries"])]
 	pub fn iterator<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
-		self.make_iterator(cx, FormDataIteratorMode::Both)
-	}
-
-	pub fn entries<'cx: 'o, 'o>(&self, cx: &'cx Context) -> ion::Iterator {
 		self.make_iterator(cx, FormDataIteratorMode::Both)
 	}
 

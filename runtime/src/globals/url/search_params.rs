@@ -6,7 +6,9 @@
 use form_urlencoded::{parse, Serializer};
 use mozjs::jsapi::{Heap, JSObject};
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, JSIterator, Local, Object, OwnedKey, Result, Value, Function};
+use ion::{
+	ClassDefinition, Context, Error, ErrorKind, Function, JSIterator, Local, Object, OwnedKey, Result, ResultExc, Value,
+};
 use ion::class::Reflector;
 use ion::conversions::{FromValue, ToValue};
 use ion::symbol::WellKnownSymbolCode;
@@ -130,6 +132,10 @@ impl URLSearchParams {
 		}
 	}
 
+	pub fn keys(&self) -> Vec<String> {
+		self.pairs.iter().map(|(k, _)| k.clone()).collect()
+	}
+
 	pub fn set(&mut self, key: String, value: String) {
 		let mut i = 0;
 		let mut index = None;
@@ -178,10 +184,16 @@ impl URLSearchParams {
 		}
 	}
 
-	pub fn for_each(&self, cx: &Context, f: Function) -> Result<()> {
-		let this = Object::null(cx);
+	#[ion(name = "forEach")]
+	pub fn for_each(&self, cx: &Context, callback: Function, this_arg: Option<Object>) -> ResultExc<()> {
+		let this_arg = this_arg.unwrap_or_else(|| Object::null(cx));
 		for (k, v) in &self.pairs {
-			f.call(cx, &this, &[v.as_value(cx), k.as_value(cx)]).map_err(|_| Error::none())?;
+			let this = Value::object(cx, &cx.root_object(self.reflector.get()).into());
+			callback.call(cx, &this_arg, &[v.as_value(cx), k.as_value(cx), this]).map_err(|e| {
+				e.map(|e| e.exception).unwrap_or_else(|| {
+					ion::Exception::Error(Error::new("Unknown failure in callback", ErrorKind::Normal))
+				})
+			})?;
 		}
 		Ok(())
 	}
