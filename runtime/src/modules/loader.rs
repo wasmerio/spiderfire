@@ -37,7 +37,7 @@ impl ModuleLoader for Loader {
 			return Ok(Module::from_local(heap.root(cx)));
 		}
 
-		let path = if specifier.starts_with("./") || specifier.starts_with("../") {
+		let path = if !specifier.starts_with('/') {
 			Path::new(referencing_module.and_then(|d| d.path.as_ref()).unwrap())
 				.parent()
 				.unwrap()
@@ -47,6 +47,10 @@ impl ModuleLoader for Loader {
 		};
 
 		let path = canonicalize_path(&path).or_else(|e| {
+			if path.extension() == Some(OsStr::new("js")) {
+				return Err(e);
+			}
+
 			// Try appending a .js extension
 			let Some(file_name) = path.file_name() else {
 				return Err(e);
