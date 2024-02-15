@@ -1,6 +1,6 @@
 use ion::{
-	class::Reflector, Heap, Result, ClassDefinition, Context, Error, ErrorKind, Object, conversions::ToValue,
-	typedarray::ArrayBuffer,
+	class::Reflector, conversions::ToValue, function::Opt, typedarray::ArrayBuffer, ClassDefinition, Context, Error,
+	ErrorKind, Heap, Object, Result,
 };
 use mozjs::jsapi::JSObject;
 
@@ -33,9 +33,9 @@ impl TextDecoderStreamTransformer {
 	fn transform_chunk(
 		&self, cx: &Context, chunk: BufferSource, final_chunk: bool, controller: &TransformStreamDefaultController,
 	) -> Result<()> {
-		let stream = TextDecoderStream::get_private(&self.stream.root(cx).into());
-		let decoder = TextDecoder::get_mut_private(&mut stream.decoder.root(cx).into());
-		match decoder.decode(chunk, Some(TextDecodeOptions::new(!final_chunk))) {
+		let stream = TextDecoderStream::get_private(cx, &self.stream.root(cx).into()).unwrap();
+		let decoder = TextDecoder::get_mut_private(cx, &stream.decoder.root(cx).into()).unwrap();
+		match decoder.decode(chunk, Opt(Some(TextDecodeOptions::new(!final_chunk)))) {
 			Ok(string) if string.is_empty() => (),
 			Ok(string) => controller.enqueue(cx, string.as_value(cx)).map_err(|e| e.to_error())?,
 			Err(e) => controller.error(cx, e.as_value(cx))?,
@@ -74,11 +74,11 @@ pub struct TextDecoderStream {
 
 impl TextDecoderStream {
 	fn transform_stream<'cx>(&self, cx: &'cx Context) -> &'cx TransformStream {
-		TransformStream::get_private(&self.transform_stream.root(cx).into())
+		TransformStream::get_private(cx, &self.transform_stream.root(cx).into()).unwrap()
 	}
 
 	fn decoder<'cx>(&self, cx: &'cx Context) -> &'cx TextDecoder {
-		TextDecoder::get_private(&self.decoder.root(cx).into())
+		TextDecoder::get_private(cx, &self.decoder.root(cx).into()).unwrap()
 	}
 }
 
@@ -86,14 +86,14 @@ impl TextDecoderStream {
 impl TextDecoderStream {
 	#[ion(constructor)]
 	pub fn constructor(
-		cx: &Context, #[ion(this)] this: &Object, label: Option<String>, options: Option<TextDecoderOptions>,
+		cx: &Context, #[ion(this)] this: &Object, label: Opt<String>, options: Opt<TextDecoderOptions>,
 	) -> Result<TextDecoderStream> {
-		let decoder = cx.root_object(TextDecoder::new_object(
+		let decoder = cx.root(TextDecoder::new_object(
 			cx,
 			Box::new(TextDecoder::constructor(label, options)?),
 		));
 
-		let transformer = Object::from(cx.root_object(TextDecoderStreamTransformer::new_object(
+		let transformer = Object::from(cx.root(TextDecoderStreamTransformer::new_object(
 			cx,
 			Box::new(TextDecoderStreamTransformer::new(this)),
 		)));

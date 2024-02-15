@@ -14,7 +14,7 @@ pub use text_decoder_stream::TextDecoderStream;
 pub use text_encoder_stream::TextEncoderStream;
 pub use transform_stream::{TransformStream, TransformStreamDefaultController};
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
 	readable_stream_extensions::define(cx, global)
 		&& native_stream_sink::NativeStreamSink::init_class(cx, global).0
 		&& native_stream_source::NativeStreamSource::init_class(cx, global).0

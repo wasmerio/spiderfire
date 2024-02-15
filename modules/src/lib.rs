@@ -11,7 +11,7 @@
 extern crate ion;
 
 use ion::{Context, Object};
-use runtime::modules::{init_global_module, init_module, StandardModules};
+use runtime::module::{init_global_module, init_module, StandardModules};
 
 pub use crate::assert::Assert;
 pub use crate::fs::FileSystem;
@@ -26,14 +26,14 @@ mod url;
 pub struct Modules;
 
 impl StandardModules for Modules {
-	fn init(self, cx: &Context, global: &mut Object) -> bool {
+	fn init(self, cx: &Context, global: &Object) -> bool {
 		init_module::<Assert>(cx, global)
 			&& init_module::<FileSystem>(cx, global)
 			&& init_module::<PathM>(cx, global)
 			&& init_module::<UrlM>(cx, global)
 	}
 
-	fn init_globals(self, cx: &Context, global: &mut Object) -> bool {
+	fn init_globals(self, cx: &Context, global: &Object) -> bool {
 		init_global_module::<Assert>(cx, global)
 			&& init_global_module::<FileSystem>(cx, global)
 			&& init_global_module::<PathM>(cx, global)

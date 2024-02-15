@@ -21,7 +21,7 @@ use mozjs::typedarray::JSObjectStorage;
 use crate::{
 	Array, Context, Date, Error, ErrorKind, Exception, Function, Object, Promise, Result, StringRef, Symbol, Value,
 };
-use crate::objects::RegExp;
+use crate::object::RegExp;
 use crate::string::byte::{BytePredicate, ByteString};
 use crate::typedarray::{ArrayBuffer, TypedArray, TypedArrayElement};
 
@@ -76,7 +76,7 @@ macro_rules! impl_from_value_for_integer {
 
 				match unsafe { <$ty>::from_jsval(cx.as_ptr(), value, config) } {
 					Ok(ConversionResult::Success(number)) => Ok(number),
-					Err(_) => Err(Exception::new(cx).unwrap().to_error()),
+					Err(_) => Err(Exception::new(cx)?.unwrap().to_error()),
 					_ => unreachable!(),
 				}
 			}
@@ -124,11 +124,12 @@ impl<'cx> FromValue<'cx> for *mut JSString {
 		if strict && !value.is_string() {
 			return Err(Error::new("Expected String in Strict Conversion", ErrorKind::Type));
 		}
-		let ptr = unsafe { ToString(cx.as_ptr(), value) };
-		if ptr.is_null() {
-			Err(Error::new("Value cannot be converted to a string", ErrorKind::Type))
+
+		let str = unsafe { ToString(cx.as_ptr(), value) };
+		if str.is_null() {
+			Err(Error::new("Failed to convert value to String", ErrorKind::Type))
 		} else {
-			Ok(ptr)
+			Ok(str)
 		}
 	}
 }
@@ -137,7 +138,7 @@ impl<'cx> FromValue<'cx> for crate::String<'cx> {
 	type Config = ();
 
 	fn from_value(cx: &'cx Context, value: &Value, strict: bool, config: ()) -> Result<crate::String<'cx>> {
-		<*mut JSString>::from_value(cx, value, strict, config).map(|str| crate::String::from(cx.root_string(str)))
+		<*mut JSString>::from_value(cx, value, strict, config).map(|str| crate::String::from(cx.root(str)))
 	}
 }
 
@@ -169,7 +170,7 @@ impl<'cx> FromValue<'cx> for String {
 	type Config = ();
 
 	fn from_value(cx: &'cx Context, value: &Value, strict: bool, config: ()) -> Result<String> {
-		crate::String::from_value(cx, value, strict, config).map(|s| s.to_owned(cx))
+		crate::String::from_value(cx, value, strict, config).and_then(|s| s.to_owned(cx))
 	}
 }
 
@@ -293,7 +294,7 @@ impl<'cx, T: jsta::TypedArrayElement, S: JSObjectStorage> FromValue<'cx> for jst
 		let value = value.handle();
 		if value.is_object() {
 			let object = value.to_object();
-			cx.root_object(object);
+			cx.root(object);
 			jsta::TypedArray::from(object).map_err(|_| Error::new("Expected Typed Array", ErrorKind::Type))
 		} else {
 			Err(Error::new("Expected Object", ErrorKind::Type))
@@ -386,7 +387,7 @@ impl<'cx> FromValue<'cx> for Symbol<'cx> {
 	type Config = ();
 
 	fn from_value(cx: &'cx Context, value: &Value, strict: bool, config: Self::Config) -> Result<Symbol<'cx>> {
-		<*mut JSSymbol>::from_value(cx, value, strict, config).map(|s| cx.root_symbol(s).into())
+		<*mut JSSymbol>::from_value(cx, value, strict, config).map(|s| cx.root(s).into())
 	}
 }
 
@@ -410,7 +411,7 @@ impl<'cx> FromValue<'cx> for Value<'cx> {
 		unsafe {
 			AssertSameCompartment1(cx.as_ptr(), value.into());
 		}
-		Ok(cx.root_value(value.get()).into())
+		Ok(cx.root(value.get()).into())
 	}
 }
 
@@ -433,7 +434,7 @@ struct ForOfIteratorGuard<'a> {
 
 impl<'a> ForOfIteratorGuard<'a> {
 	fn new(cx: &Context, root: &'a mut ForOfIterator) -> Self {
-		cx.root_object(root.iterator.ptr);
+		cx.root(root.iterator.ptr);
 		ForOfIteratorGuard { root }
 	}
 }

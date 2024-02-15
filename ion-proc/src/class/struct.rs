@@ -4,15 +4,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::ffi::CString;
-
 use proc_macro2::{Ident, Span, TokenStream};
-use syn::{Error, Fields, ImplItemFn, ItemImpl, ItemStruct, LitStr, Member, parse2, Path, Result, Type};
+use syn::{Error, ItemImpl, ItemStruct, Member, parse2, Path, Result, Type};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
+use crate::attribute::class::ClassAttribute;
 use crate::attribute::krate::crate_from_attributes;
-use crate::utils::path_ends_with;
+use crate::attribute::ParseAttribute;
+use crate::utils::{new_token, path_ends_with};
 
 pub(super) fn impl_js_class_struct(r#struct: &mut ItemStruct) -> Result<[ItemImpl; 6]> {
 	let ion = &crate_from_attributes(&mut r#struct.attrs);
@@ -42,6 +42,8 @@ pub(super) fn impl_js_class_struct(r#struct: &mut ItemStruct) -> Result<[ItemImp
 		r#struct.attrs.push(parse_quote!(#[derive(#ion::Traceable)]));
 	}
 
+	let attribute = ClassAttribute::from_attributes_mut("ion", &mut r#struct.attrs)?;
+
 	if !r#struct.generics.params.is_empty() {
 		return Err(Error::new(
 			r#struct.generics.span(),
@@ -49,32 +51,23 @@ pub(super) fn impl_js_class_struct(r#struct: &mut ItemStruct) -> Result<[ItemImp
 		));
 	}
 
+	let name = if let Some(name) = attribute.name {
+		name.value()
+	} else {
+		r#struct.ident.to_string()
+	};
+
 	let ident = &r#struct.ident;
 	let r#type: Type = parse2(quote_spanned!(ident.span() => #ident))?;
-	let super_field;
-	let super_type;
 
-	let err = Err(Error::new(
-		r#struct.span(),
-		"Native Class Structs must have at least a reflector field.",
-	));
-	match &r#struct.fields {
-		Fields::Named(fields) => match fields.named.first() {
-			Some(field) => {
-				super_field = Member::Named(field.ident.as_ref().unwrap().clone());
-				super_type = field.ty.clone();
-			}
-			None => return err,
-		},
-		Fields::Unnamed(fields) => match fields.unnamed.first() {
-			Some(field) => {
-				super_field = parse_quote!(0);
-				super_type = field.ty.clone()
-			}
-			None => return err,
-		},
-		Fields::Unit => return err,
-	}
+	let (super_field, super_type) = if let Some(field) = r#struct.fields.iter().next() {
+		(Member::Named(field.ident.as_ref().unwrap().clone()), field.ty.clone())
+	} else {
+		return Err(Error::new(
+			r#struct.span(),
+			"Native Class Structs must have at least a reflector field.",
+		));
+	};
 
 	if let Type::Path(ty) = &super_type {
 		if ty.path.segments.iter().any(|segment| !segment.arguments.is_empty()) {
@@ -84,24 +77,17 @@ pub(super) fn impl_js_class_struct(r#struct: &mut ItemStruct) -> Result<[ItemImp
 		return Err(Error::new(super_type.span(), "Superclass Type must be a path."));
 	}
 
-	class_impls(
-		ion,
-		r#struct.span(),
-		&ident.to_string(),
-		&r#type,
-		&super_field,
-		&super_type,
-	)
+	class_impls(ion, r#struct.span(), &name, &r#type, &super_field, &super_type)
 }
 
 fn class_impls(
 	ion: &TokenStream, span: Span, name: &str, r#type: &Type, super_field: &Member, super_type: &Type,
 ) -> Result<[ItemImpl; 6]> {
-	let from_value = impl_from_value(ion, span, name, r#type, false)?;
-	let from_value_mut = impl_from_value(ion, span, name, r#type, true)?;
+	let from_value = impl_from_value(ion, span, r#type, false)?;
+	let from_value_mut = impl_from_value(ion, span, r#type, true)?;
 
-	let derived_from = quote_spanned!(span => unsafe impl #ion::class::DerivedFrom<#super_type> for #r#type {});
-	let derived_from = parse2(derived_from)?;
+	let derived_from =
+		parse2(quote_spanned!(span => unsafe impl #ion::class::DerivedFrom<#super_type> for #r#type {}))?;
 	let castable = parse2(quote_spanned!(span => impl #ion::class::Castable for #r#type {}))?;
 
 	let native_object = parse2(quote_spanned!(span => impl #ion::class::NativeObject for #r#type {
@@ -111,40 +97,29 @@ fn class_impls(
 	}))?;
 
 	let none = quote!(::std::option::Option::None);
+	let name = format!("{}\0", name);
 
-	let operations = class_operations(span)?;
-	let name = String::from_utf8(CString::new(name).unwrap().into_bytes_with_nul()).unwrap();
-
-	let mut operations_native_class: ItemImpl = parse2(quote_spanned!(span => impl #r#type {
-		#(#operations)*
-
-		pub fn __ion_self_as_parent_class_info(
-			cx: &#ion::Context,
-		) -> Option<(&'static #ion::class::NativeClass, #ion::Local<*mut ::mozjs::jsapi::JSObject>)> {
-			let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
-			let info = infos.get(&::core::any::TypeId::of::<Self>()).expect("Uninitialised Class");
-			Some((info.class, cx.root_object(info.prototype)))
-		}
-
-		pub fn __ion_parent_class_info(cx: &#ion::Context) -> Option<(&'static #ion::class::NativeClass, #ion::Local<*mut ::mozjs::jsapi::JSObject>)> {
-			#super_type::__ion_self_as_parent_class_info(cx)
-		}
-
+	let mut class_impl: ItemImpl = parse2(quote_spanned!(span => impl #r#type {
 		pub const fn __ion_native_prototype_chain() -> #ion::class::PrototypeChain {
 			const ION_TYPE_ID: #ion::class::TypeIdWrapper<#r#type> = #ion::class::TypeIdWrapper::new();
+			#super_type::__ion_native_prototype_chain().push(&ION_TYPE_ID)
+		}
 
-			let mut proto_chain = #super_type::__ion_native_prototype_chain();
-			let mut i = 0;
-			while i < #ion::class::MAX_PROTO_CHAIN_LENGTH {
-				match proto_chain[i] {
-					Some(_) => i += 1,
-					None => {
-						proto_chain[i] = Some(&ION_TYPE_ID);
-						break;
-					}
-				}
-			}
-			proto_chain
+		pub const fn __ion_bindings_proto_class() -> Option<&'static #ion::class::NativeClass> {
+			#super_type::__ion_maybe_native_class()
+		}
+
+		pub fn __ion_bindings_parent_prototype(cx: &#ion::Context) -> Option<#ion::Local<*mut ::mozjs::jsapi::JSObject>> {
+			#super_type::__ion_maybe_prototype_object(cx)
+		}
+
+		pub const fn __ion_maybe_native_class() -> Option<&'static #ion::class::NativeClass> {
+			Some(Self::__ion_native_class())
+		}
+
+		pub fn __ion_maybe_prototype_object(cx: &#ion::Context) -> Option<#ion::Local<*mut ::mozjs::jsapi::JSObject>> {
+			let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
+			Some(cx.root(infos.get(&::core::any::TypeId::of::<Self>()).expect("Uninitialised Class").prototype))
 		}
 
 		pub const fn __ion_native_class() -> &'static #ion::class::NativeClass {
@@ -155,17 +130,17 @@ fn class_impls(
 				newEnumerate: #none,
 				resolve: #none,
 				mayResolve: #none,
-				finalize: ::std::option::Option::Some(#r#type::__ion_finalise_operation),
+				finalize: ::std::option::Option::Some(#ion::class::finalise_native_object_operation::<#r#type>),
 				call: #none,
 				construct: #none,
-				trace: ::std::option::Option::Some(#r#type::__ion_trace_operation),
+				trace: ::std::option::Option::Some(#ion::class::trace_native_object_operation::<#r#type>),
 			};
 
 			const ION_NATIVE_CLASS: #ion::class::NativeClass = #ion::class::NativeClass {
 				base: ::mozjs::jsapi::JSClass {
 					name: #name.as_ptr().cast(),
-					flags: #ion::objects::class_reserved_slots(1) | ::mozjs::jsapi::JSCLASS_BACKGROUND_FINALIZE,
-					cOps: &ION_CLASS_OPERATIONS as *const _,
+					flags: #ion::object::class_reserved_slots(1) | ::mozjs::jsapi::JSCLASS_BACKGROUND_FINALIZE,
+					cOps: ::std::ptr::from_ref(&ION_CLASS_OPERATIONS),
 					spec: ::std::ptr::null_mut(),
 					ext: ::std::ptr::null_mut(),
 					oOps: ::std::ptr::null_mut(),
@@ -175,8 +150,10 @@ fn class_impls(
 
 			&ION_NATIVE_CLASS
 		}
+
+		pub const __ION_TO_STRING_TAG: &'static str = #name;
 	}))?;
-	operations_native_class.attrs.push(parse_quote!(#[doc(hidden)]));
+	class_impl.attrs.push(parse_quote!(#[doc(hidden)]));
 
 	Ok([
 		from_value,
@@ -184,65 +161,25 @@ fn class_impls(
 		derived_from,
 		castable,
 		native_object,
-		operations_native_class,
+		class_impl,
 	])
 }
 
-fn impl_from_value(ion: &TokenStream, span: Span, name: &str, r#type: &Type, mutable: bool) -> Result<ItemImpl> {
-	let from_value_error = LitStr::new(&format!("Expected {}", name), span);
-	let function = if mutable {
-		quote!(get_mut_private)
+fn impl_from_value(ion: &TokenStream, span: Span, r#type: &Type, mutable: bool) -> Result<ItemImpl> {
+	let (function, mutable) = if mutable {
+		(quote!(get_mut_private), Some(new_token![mut]))
 	} else {
-		quote!(get_private)
+		(quote!(get_private), None)
 	};
-	let mutable = mutable.then(<Token![mut]>::default);
 
 	parse2(
 		quote_spanned!(span => impl<'cx> #ion::conversions::FromValue<'cx> for &'cx #mutable #r#type {
 			type Config = ();
 
 			fn from_value(cx: &'cx #ion::Context, value: &#ion::Value, strict: ::core::primitive::bool, _: ()) -> #ion::Result<&'cx #mutable #r#type> {
-				let #mutable object = #ion::Object::from_value(cx, value, strict, ())?;
-				if <#r#type as #ion::class::ClassDefinition>::instance_of(cx, &object, None) {
-					Ok(<#r#type as #ion::class::ClassDefinition>::#function(&#mutable object))
-				} else {
-					Err(#ion::Error::new(#from_value_error, #ion::ErrorKind::Type))
-				}
+				let object = #ion::Object::from_value(cx, value, strict, ())?;
+				<#r#type as #ion::class::ClassDefinition>::#function(cx, &object)
 			}
 		}),
 	)
-}
-
-fn class_operations(span: Span) -> Result<Vec<ImplItemFn>> {
-	let finalise = parse2(
-		quote_spanned!(span => unsafe extern "C" fn __ion_finalise_operation(_: *mut ::mozjs::jsapi::GCContext, this: *mut ::mozjs::jsapi::JSObject) {
-				let mut value = ::mozjs::jsval::NullValue();
-				unsafe {
-					::mozjs::glue::JS_GetReservedSlot(this, 0, &mut value);
-				}
-				if value.is_double() && value.asBits_ & 0xFFFF000000000000 == 0 {
-					let private = value.to_private().cast_mut() as *mut Self;
-					let _ = unsafe { ::std::boxed::Box::from_raw(private) };
-				}
-			}
-		),
-	)?;
-
-	let trace = parse2(
-		quote_spanned!(span => unsafe extern "C" fn __ion_trace_operation(trc: *mut ::mozjs::jsapi::JSTracer, this: *mut ::mozjs::jsapi::JSObject) {
-				let mut value = ::mozjs::jsval::NullValue();
-				unsafe {
-					::mozjs::glue::JS_GetReservedSlot(this, 0, &mut value);
-				}
-				if value.is_double() && value.asBits_ & 0xFFFF000000000000 == 0 {
-					unsafe {
-						let private = &*(value.to_private() as *const Self);
-						::mozjs::gc::Traceable::trace(private, trc);
-					}
-				}
-			}
-		),
-	)?;
-
-	Ok(vec![finalise, trace])
 }

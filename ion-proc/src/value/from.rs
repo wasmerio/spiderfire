@@ -70,8 +70,13 @@ pub(crate) fn impl_from_value(mut input: DeriveInput) -> Result<ItemImpl> {
 
 	let (body, requires_object) = impl_body(ion, input.span(), &input.data, name, tag, inherit, repr)?;
 
-	let object = requires_object
-		.then(|| quote_spanned!(input.span() => let __object = #ion::Object::from_value(cx, value, true, ())?;));
+	let object = if requires_object {
+		Some(quote_spanned!(input.span() =>
+			let __object = #ion::Object::from_value(cx, value, true, ())?;
+		))
+	} else {
+		None
+	};
 
 	parse2(quote_spanned!(input.span() =>
 		#[automatically_derived]
@@ -213,9 +218,9 @@ fn impl_body(
 
 			if unit {
 				if let Some(repr) = repr {
-					if_unit = Some(
-						quote_spanned!(repr.span() => let discriminant: #repr = #ion::conversions::FromValue::from_value(cx, value, true, #ion::conversions::ConversionBehavior::EnforceRange)?;),
-					);
+					if_unit = Some(quote_spanned!(repr.span() =>
+						let discriminant: #repr = #ion::conversions::FromValue::from_value(cx, value, true, #ion::conversions::ConversionBehavior::EnforceRange)?;
+					));
 				}
 			}
 
@@ -245,8 +250,8 @@ fn map_fields(
 			if let Some(variant) = variant {
 				let error = format!("Expected Object at External Tag {}", variant);
 				quote!(
-					let __object: #ion::Object = __object.get_as(cx, #variant, true, ())
-						.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type))?;
+					let __object: #ion::Object = __object.get_as(cx, #variant, true, ())?
+						.ok_or_else(|_| #ion::Error::new(#error, #ion::ErrorKind::Type))?;
 				)
 			} else {
 				return Err(Error::new(Span::call_site(), "Cannot have Tag for Struct"));
@@ -257,7 +262,8 @@ fn map_fields(
 				let missing_error = format!("Expected Internal Tag key {}", key.value());
 				let error = format!("Expected Internal Tag {} at key {}", variant, key.value());
 				quote!(
-					let __key: ::std::string::String = __object.get_as(cx, #key, true, ()).ok_or_else(|| #ion::Error::new(#missing_error, #ion::ErrorKind::Type))?;
+					let __key: ::std::string::String = __object.get_as(cx, #key, true, ())?
+						.ok_or_else(|| #ion::Error::new(#missing_error, #ion::ErrorKind::Type))?;
 					if __key != #variant {
 						return Err(#ion::Error::new(#error, #ion::ErrorKind::Type));
 					}
@@ -295,7 +301,15 @@ fn map_fields(
 				Ok(attribute) => attribute,
 				Err(e) => return Some(Err(e)),
 			};
-			let FieldAttribute { name, inherit, skip, convert, strict, default, parser } = attribute;
+			let FieldAttribute {
+				name,
+				inherit,
+				skip,
+				convert,
+				strict,
+				default,
+				parser,
+			} = attribute;
 			if let Some(name) = name {
 				key = name.value();
 			}
@@ -308,17 +322,23 @@ fn map_fields(
 
 			let base = if inherit {
 				if requires_object {
-					return Some(Err(Error::new(field.span(), "Inherited Field cannot be parsed from a Tagged Enum")));
+					return Some(Err(Error::new(
+						field.span(),
+						"Inherited Field cannot be parsed from a Tagged Enum",
+					)));
 				}
-				quote_spanned!(field.span() => let #ident: #ty = <#ty as #ion::conversions::FromValue>::from_value(cx, value, #strict || strict, #convert))
+				quote_spanned!(field.span() =>
+					let #ident: #ty = <#ty as #ion::conversions::FromValue>::from_value(cx, value, #strict || strict, #convert)
+				)
 			} else if let Some(parser) = &parser {
 				requires_object = true;
 				let error = format!("Expected Value at Key {}", key);
-				quote_spanned!(field.span() => let #ident: #ty = __object.get(cx, #key).map(#parser).transpose()?.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)))
+				quote_spanned!(field.span() => let #ident: #ty = __object.get(cx, #key)?.map(#parser).transpose()?
+					.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)))
 			} else {
 				requires_object = true;
 				let error = format!("Expected Value at key {} of Type {}", key, format_type(ty));
-				quote_spanned!(field.span() => let #ident: #ty = __object.get_as(cx, #key, #strict || strict, #convert)
+				quote_spanned!(field.span() => let #ident: #ty = __object.get_as(cx, #key, #strict || strict, #convert)?
 					.ok_or_else(|| #ion::Error::new(#error, #ion::ErrorKind::Type)))
 			};
 
@@ -336,7 +356,9 @@ fn map_fields(
 							quote_spanned!(field.span() => #base.unwrap_or_else(|_| #expr);)
 						}
 					}
-					Some(DefaultValue::Closure(closure)) => quote_spanned!(field.span() => #base.unwrap_or_else(#closure);),
+					Some(DefaultValue::Closure(closure)) => {
+						quote_spanned!(field.span() => #base.unwrap_or_else(#closure);)
+					}
 					Some(DefaultValue::Literal(lit)) => quote_spanned!(field.span() => #base.unwrap_or(#lit);),
 					Some(DefaultValue::Default) => quote_spanned!(field.span() => #base.unwrap_or_default();),
 					None => quote_spanned!(field.span() => #base?;),

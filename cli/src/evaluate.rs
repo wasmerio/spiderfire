@@ -23,7 +23,7 @@ use runtime::{Runtime, RuntimeBuilder};
 use runtime::cache::locate_in_cache;
 use runtime::cache::map::{save_sourcemap, transform_error_report_with_sourcemaps};
 use runtime::config::Config;
-use runtime::modules::Loader;
+use runtime::module::Loader;
 
 pub(crate) async fn eval_inline(rt: &Runtime<'_>, source: &str) {
 	let result = Script::compile_and_evaluate(rt.cx(), Path::new("inline.js"), source);
@@ -81,7 +81,7 @@ pub(crate) async fn eval_module(path: &Path) {
 		if let Some(sourcemap) = sourcemap {
 			save_sourcemap(path, sourcemap);
 		}
-		let result = Module::compile(rt.cx(), &filename, Some(path), &script);
+		let result = Module::compile_and_evaluate(rt.cx(), &filename, Some(path), &script);
 
 		if let Err(mut error) = result {
 			transform_error_report_with_sourcemaps(&mut error.report);

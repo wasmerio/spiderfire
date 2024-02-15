@@ -17,7 +17,7 @@ use mozjs::jsval::JSVal;
 use ion::{Context, ErrorReport, Function, Object, Value, TracedHeap};
 
 pub struct SignalMacrotask {
-	callback: Box<dyn FnOnce()>,
+	callback: Option<Box<dyn FnOnce()>>,
 	terminate: Arc<AtomicBool>,
 	scheduled: DateTime<Utc>,
 }
@@ -25,7 +25,7 @@ pub struct SignalMacrotask {
 impl SignalMacrotask {
 	pub fn new(callback: Box<dyn FnOnce()>, terminate: Arc<AtomicBool>, duration: Duration) -> SignalMacrotask {
 		SignalMacrotask {
-			callback,
+			callback: Some(callback),
 			terminate,
 			scheduled: Utc::now() + duration,
 		}
@@ -52,10 +52,10 @@ pub struct TimerMacrotask {
 }
 
 impl TimerMacrotask {
-	pub fn new(callback: Function, arguments: Vec<JSVal>, repeat: bool, duration: Duration) -> TimerMacrotask {
+	pub fn new(callback: Function, arguments: &[JSVal], repeat: bool, duration: Duration) -> TimerMacrotask {
 		TimerMacrotask {
 			callback: TracedHeap::new(callback.get()),
-			arguments: arguments.into_iter().map(TracedHeap::new).collect(),
+			arguments: arguments.iter().map(|a| TracedHeap::new(*a)).collect(),
 			repeat,
 			duration,
 			scheduled: Utc::now(),
@@ -102,10 +102,12 @@ pub struct MacrotaskQueue {
 }
 
 impl Macrotask {
-	pub fn run(self, cx: &Context) -> Result<Option<Macrotask>, Option<ErrorReport>> {
+	pub fn run(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
 		if let Macrotask::Signal(signal) = self {
-			(signal.callback)();
-			return Ok(None);
+			if let Some(callback) = signal.callback.take() {
+				callback();
+			}
+			return Ok(());
 		}
 		let (callback, args) = match &self {
 			Macrotask::Timer(timer) => (&timer.callback, timer.arguments.clone()),
@@ -116,7 +118,15 @@ impl Macrotask {
 		let callback = Function::from(callback.root(cx));
 		let args: Vec<_> = args.into_iter().map(|value| Value::from(value.root(cx))).collect();
 
-		callback.call(cx, &Object::global(cx), args.as_slice()).map(|_| (Some(self)))
+		callback.call(cx, &Object::global(cx), args.as_slice())?;
+		Ok(())
+	}
+
+	pub fn remove(&mut self) -> bool {
+		match self {
+			Macrotask::Timer(timer) => !timer.reset(),
+			_ => true,
+		}
 	}
 
 	fn terminate(&self) -> bool {
@@ -139,14 +149,18 @@ impl MacrotaskQueue {
 	pub fn run_job(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
 		self.find_next();
 		if let Some(next) = self.next {
-			let macrotask = { self.map.remove_entry(&next) };
-			if let Some((id, macrotask)) = macrotask {
-				let macrotask = macrotask.run(cx)?;
+			{
+				let macrotask = self.map.get_mut(&next);
+				if let Some(macrotask) = macrotask {
+					macrotask.run(cx)?;
+				}
+			}
 
-				if let Some(Macrotask::Timer(mut timer)) = macrotask {
-					if timer.reset() {
-						self.map.insert(id, Macrotask::Timer(timer));
-					}
+			// The previous reference may be invalidated by running the macrotask.
+			let macrotask = self.map.get_mut(&next);
+			if let Some(macrotask) = macrotask {
+				if macrotask.remove() {
+					self.map.remove(&next);
 				}
 			}
 		}

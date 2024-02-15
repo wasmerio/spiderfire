@@ -17,6 +17,7 @@ use mozjs::jsval::{JSVal, NullValue};
 use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Result, TracedHeap};
 use ion::class::{NativeObject, Reflector};
 use ion::conversions::ToValue;
+use ion::function::Opt;
 use ion::string::byte::{ByteString, Latin1};
 use ion::typedarray::ArrayBufferWrapper;
 
@@ -100,7 +101,7 @@ impl FileReader {
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
 				let reader = Object::from(this.root(&cx));
-				let reader = FileReader::get_private(&reader);
+				let reader = FileReader::get_private(&cx, &reader).unwrap();
 				let array_buffer = ArrayBufferWrapper::from(bytes.to_vec());
 				reader.result.set(array_buffer.as_value(&cx).get());
 				Ok::<_, ()>(())
@@ -119,7 +120,7 @@ impl FileReader {
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
 				let reader = Object::from(this.root(&cx));
-				let reader = FileReader::get_private(&reader);
+				let reader = FileReader::get_private(&cx, &reader).unwrap();
 				let byte_string = ByteString::<Latin1>::from_unchecked(bytes.to_vec());
 				reader.result.set(byte_string.as_value(&cx).get());
 				Ok::<_, ()>(())
@@ -129,7 +130,7 @@ impl FileReader {
 	}
 
 	#[ion(name = "readAsText")]
-	pub fn read_as_text(&mut self, cx: &Context, blob: &Blob, encoding: Option<String>) -> Result<()> {
+	pub fn read_as_text(&mut self, cx: &Context, blob: &Blob, Opt(encoding): Opt<String>) -> Result<()> {
 		self.state.validate()?;
 		let bytes = blob.as_bytes().clone();
 		let mime = blob.kind();
@@ -141,7 +142,7 @@ impl FileReader {
 				let encoding = encoding_from_string_mime(encoding.as_deref(), mime.as_deref());
 
 				let reader = Object::from(this.root(&cx));
-				let reader = FileReader::get_private(&reader);
+				let reader = FileReader::get_private(&cx, &reader).unwrap();
 				let str = encoding.decode_without_bom_handling(&bytes).0;
 				reader.result.set(str.as_value(&cx).get());
 				Ok::<_, ()>(())
@@ -161,7 +162,7 @@ impl FileReader {
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
 				let reader = Object::from(this.root(&cx));
-				let reader = FileReader::get_private(&reader);
+				let reader = FileReader::get_private(&cx, &reader).unwrap();
 				let base64 = BASE64_STANDARD.encode(&bytes);
 				let data_url = match mime {
 					Some(mime) => format!("data:{};base64,{}", mime, base64),
@@ -211,7 +212,7 @@ impl FileReaderSync {
 	}
 
 	#[ion(name = "readAsText")]
-	pub fn read_as_text(&mut self, blob: &Blob, encoding: Option<String>) -> String {
+	pub fn read_as_text(&mut self, blob: &Blob, Opt(encoding): Opt<String>) -> String {
 		let encoding = encoding_from_string_mime(encoding.as_deref(), blob.kind().as_deref());
 		encoding.decode_without_bom_handling(blob.as_bytes()).0.into_owned()
 	}

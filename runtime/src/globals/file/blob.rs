@@ -8,13 +8,13 @@ use std::str::FromStr;
 
 use bytes::Bytes;
 use encoding_rs::UTF_8;
-use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::JSObject;
 
 use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, Value, ReadableStream};
 use ion::class::Reflector;
 use ion::conversions::FromValue;
 use ion::format::NEWLINE;
+use ion::function::{Clamp, Opt};
 use ion::typedarray::{ArrayBuffer, ArrayBufferView};
 
 use crate::promise::future_to_promise;
@@ -60,7 +60,7 @@ impl<'cx> FromValue<'cx> for BufferSource<'cx> {
 	type Config = bool;
 	fn from_value(cx: &'cx Context, value: &Value, strict: bool, allow_shared: bool) -> Result<BufferSource<'cx>> {
 		let obj = Object::from_value(cx, value, strict, ())?;
-		if let Some(buffer) = ArrayBuffer::from(cx.root_object(obj.handle().get())) {
+		if let Some(buffer) = ArrayBuffer::from(cx.root(obj.handle().get())) {
 			if buffer.is_shared() && !allow_shared {
 				return Err(Error::new("Buffer Source cannot be shared", ErrorKind::Type));
 			}
@@ -172,7 +172,7 @@ impl Blob {
 #[js_class]
 impl Blob {
 	#[ion(constructor)]
-	pub fn constructor(parts: Option<Vec<BlobPart>>, options: Option<BlobOptions>) -> Blob {
+	pub fn constructor(Opt(parts): Opt<Vec<BlobPart>>, Opt(options): Opt<BlobOptions>) -> Blob {
 		let options = options.unwrap_or_default();
 
 		let mut bytes = Vec::new();
@@ -225,18 +225,17 @@ impl Blob {
 	}
 
 	pub fn slice(
-		&self, cx: &Context, #[ion(convert = ConversionBehavior::Clamp)] start: Option<i64>,
-		#[ion(convert = ConversionBehavior::Clamp)] end: Option<i64>, kind: Option<String>,
+		&self, cx: &Context, Opt(start): Opt<Clamp<i64>>, Opt(end): Opt<Clamp<i64>>, Opt(kind): Opt<String>,
 	) -> *mut JSObject {
 		let size = self.bytes.len() as i64;
 
-		let mut start = start.unwrap_or(0);
+		let mut start = start.unwrap_or_default().0;
 		if start < 0 {
 			start = 0.max(size + start);
 		}
 		let start = start.min(size) as usize;
 
-		let mut end = end.unwrap_or(size);
+		let mut end = end.unwrap_or(Clamp(size)).0;
 		if end < 0 {
 			end = 0.max(size + end);
 		}

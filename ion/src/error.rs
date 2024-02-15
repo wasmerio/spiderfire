@@ -5,12 +5,13 @@
  */
 
 use std::{error, fmt, ptr};
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
 use mozjs::error::{throw_internal_error, throw_range_error, throw_type_error};
 use mozjs::jsapi::{CreateError, JS_ReportErrorUTF8, JSExnType, JSObject, JSProtoKey, UndefinedHandleValue};
 
-use crate::{Context, Object, Stack, Value};
+use crate::{Context, ErrorReport, Exception, Object, Stack, Value};
 use crate::conversions::ToValue;
 use crate::exception::ThrowException;
 use crate::stack::Location;
@@ -109,16 +110,16 @@ impl Display for ErrorKind {
 #[derive(Clone, Debug)]
 pub struct Error {
 	pub kind: ErrorKind,
-	pub message: String,
+	pub message: Cow<'static, str>,
 	pub location: Option<Location>,
 	pub object: Option<*mut JSObject>,
 }
 
 impl Error {
-	pub fn new<T: Into<Option<ErrorKind>>>(message: &str, kind: T) -> Error {
+	pub fn new<M: Into<Cow<'static, str>>, K: Into<Option<ErrorKind>>>(message: M, kind: K) -> Error {
 		Error {
 			kind: kind.into().unwrap_or(ErrorKind::Normal),
-			message: String::from(message),
+			message: message.into(),
 			location: None,
 			object: None,
 		}
@@ -127,7 +128,7 @@ impl Error {
 	pub fn none() -> Error {
 		Error {
 			kind: ErrorKind::None,
-			message: String::from(""),
+			message: Cow::Borrowed(""),
 			location: None,
 			object: None,
 		}
@@ -135,7 +136,7 @@ impl Error {
 
 	pub fn to_object<'cx>(&self, cx: &'cx Context) -> Option<Object<'cx>> {
 		if let Some(object) = self.object {
-			return Some(cx.root_object(object).into());
+			return Some(cx.root(object).into());
 		}
 		if self.kind != ErrorKind::None {
 			unsafe {
@@ -149,17 +150,17 @@ impl Error {
 					.map(|location| (&*location.file, location.lineno, location.column))
 					.unwrap_or_default();
 
-				let stack = Object::from(cx.root_object(stack.object.unwrap()));
+				let stack = Object::from(cx.root(stack.object.unwrap()));
 
 				let file = file.as_value(cx);
 
-				let file_name = cx.root_string(file.handle().to_string());
+				let file_name = cx.root(file.handle().to_string());
 
 				let message = (!self.message.is_empty()).then(|| {
 					let value = self.message.as_value(cx);
-					crate::String::from(cx.root_string(value.handle().to_string()))
+					crate::String::from(cx.root(value.handle().to_string()))
 				});
-				let message = message.unwrap_or_else(|| crate::String::from(cx.root_string(ptr::null_mut())));
+				let message = message.unwrap_or_else(|| crate::String::from(cx.root(ptr::null_mut())));
 
 				let mut error = Value::undefined(cx);
 
@@ -207,9 +208,21 @@ impl Display for Error {
 	}
 }
 
+impl From<Error> for fmt::Error {
+	fn from(_: Error) -> fmt::Error {
+		fmt::Error
+	}
+}
+
+impl From<Error> for ErrorReport {
+	fn from(error: Error) -> ErrorReport {
+		ErrorReport::from(Exception::Error(error), None)
+	}
+}
+
 impl<E: error::Error> From<E> for Error {
 	fn from(error: E) -> Error {
-		Error::new(&error.to_string(), None)
+		Error::new(error.to_string(), None)
 	}
 }
 

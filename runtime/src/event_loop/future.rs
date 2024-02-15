@@ -30,7 +30,7 @@ impl FutureQueue {
 			match item {
 				Ok(item) => results.push(item),
 				Err(error) => {
-					Error::new(&error.to_string(), ErrorKind::Normal).throw(cx);
+					Error::new(error.to_string(), ErrorKind::Normal).throw(cx);
 					return Err(None);
 				}
 			}
@@ -52,7 +52,7 @@ impl FutureQueue {
 			};
 
 			if !result {
-				return Err(ErrorReport::new_with_exception_stack(cx));
+				return Err(ErrorReport::new_with_exception_stack(cx).unwrap());
 			}
 		}
 

@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use ion::{
-	Context, Object, flags::PropertyFlags, js_fn, Function, TracedHeap, ReadableStream, Result, Error, ErrorKind,
-	Value, conversions::ToValue, Promise, objects::WritableStream, ClassDefinition,
+	conversions::ToValue, flags::PropertyFlags, function::Opt, js_fn, object::WritableStream, ClassDefinition, Context,
+	Error, ErrorKind, Function, Object, Promise, ReadableStream, Result, TracedHeap, Value,
 };
 use mozjs::jsapi::{JSFunction, NewReadableDefaultStreamObject, HandleFunction, HandleObject};
 
@@ -14,7 +14,7 @@ thread_local! {
 
 #[js_fn]
 fn pipe_through<'cx>(
-	cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer: Object<'cx>, options: Option<Value<'cx>>,
+	cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer: Object<'cx>, Opt(options): Opt<Value<'cx>>,
 ) -> Result<Object<'cx>> {
 	if !ReadableStream::is_readable_stream((**this).get()) {
 		return Err(Error::new(
@@ -30,7 +30,7 @@ fn pipe_through<'cx>(
 		));
 	}
 
-	let Some(readable_end) = transformer.get(cx, "readable") else {
+	let Some(readable_end) = transformer.get(cx, "readable")? else {
 		return Err(Error::new(
 			"First argument to pipeThrough must be an object with a readable property that is a ReadableStream",
 			ErrorKind::Type,
@@ -46,7 +46,7 @@ fn pipe_through<'cx>(
 
 	let readable_end = readable_end.to_object(cx);
 
-	let Some(writable_end) = transformer.get(cx, "writable") else {
+	let Some(writable_end) = transformer.get(cx, "writable")? else {
 		return Err(Error::new(
 			"First argument to pipeThrough must be an object with a writable property that is a writableStream",
 			ErrorKind::Type,
@@ -88,8 +88,8 @@ fn pipe_through<'cx>(
 	Ok(readable_end)
 }
 
-pub(super) fn define(cx: &Context, global: &mut Object) -> bool {
-	let Some(readable_stream) = global.get(cx, "ReadableStream") else {
+pub(super) fn define(cx: &Context, global: &Object) -> bool {
+	let Ok(Some(readable_stream)) = global.get(cx, "ReadableStream") else {
 		return false;
 	};
 
@@ -99,12 +99,12 @@ pub(super) fn define(cx: &Context, global: &mut Object) -> bool {
 		return false;
 	};
 
-	let Some(readable_stream_prototype) = readable_stream.get(cx, "prototype") else {
+	let Ok(Some(readable_stream_prototype)) = readable_stream.get(cx, "prototype") else {
 		return false;
 	};
-	let mut readable_stream_prototype = readable_stream_prototype.to_object(cx);
+	let readable_stream_prototype = readable_stream_prototype.to_object(cx);
 
-	let Some(pipe_to) = readable_stream_prototype.get(cx, "pipeTo") else {
+	let Ok(Some(pipe_to)) = readable_stream_prototype.get(cx, "pipeTo") else {
 		return false;
 	};
 
@@ -130,7 +130,7 @@ pub const NULL_FUNCTION: *mut JSFunction = 0 as *mut JSFunction;
 pub fn readable_stream_from_callbacks(
 	cx: &Context, callbacks: Box<dyn NativeStreamSourceCallbacks>,
 ) -> Option<ReadableStream> {
-	let source_obj = cx.root_object(NativeStreamSource::new_object(
+	let source_obj = cx.root(NativeStreamSource::new_object(
 		cx,
 		Box::new(NativeStreamSource::new(callbacks)),
 	));

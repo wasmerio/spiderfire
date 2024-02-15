@@ -31,10 +31,10 @@ impl FromStr for Referrer {
 	type Err = Error;
 
 	fn from_str(referrer: &str) -> Result<Referrer> {
-		if referrer.is_empty() {
+		if referrer.is_empty() || referrer.eq_ignore_ascii_case("no-referrer") {
 			Ok(Referrer::NoReferrer)
 		} else {
-			let url = Url::parse(referrer).map_err(|e| Error::new(&e.to_string(), ErrorKind::Type))?;
+			let url = Url::parse(referrer).map_err(|e| Error::new(e.to_string(), ErrorKind::Type))?;
 
 			if url.scheme() == "about" && url.path() == "client" {
 				Ok(Referrer::Client)

@@ -8,6 +8,7 @@ use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_8};
 
 use ion::{Error, ErrorKind, Result};
 use ion::class::Reflector;
+use ion::function::Opt;
 
 use crate::globals::file::BufferSource;
 
@@ -43,14 +44,14 @@ pub struct TextDecoder {
 #[js_class]
 impl TextDecoder {
 	#[ion(constructor)]
-	pub fn constructor(label: Option<String>, options: Option<TextDecoderOptions>) -> Result<TextDecoder> {
+	pub fn constructor(Opt(label): Opt<String>, Opt(options): Opt<TextDecoderOptions>) -> Result<TextDecoder> {
 		let encoding;
 		if let Some(label) = label {
 			let enc = Encoding::for_label_no_replacement(label.as_bytes());
 			match enc {
 				None => {
 					return Err(Error::new(
-						&format!("The given encoding '{}' is not supported.", label),
+						format!("The given encoding '{}' is not supported.", label),
 						ErrorKind::Range,
 					));
 				}
@@ -76,7 +77,7 @@ impl TextDecoder {
 	}
 
 	pub fn decode(
-		&mut self, #[ion(convert = true)] buffer: BufferSource, options: Option<TextDecodeOptions>,
+		&mut self, #[ion(convert = true)] buffer: BufferSource, Opt(options): Opt<TextDecodeOptions>,
 	) -> Result<String> {
 		let mut string = String::with_capacity(self.decoder.max_utf8_buffer_length(buffer.len()).unwrap());
 		let stream = options.unwrap_or_default().stream;

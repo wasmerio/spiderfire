@@ -19,7 +19,7 @@ use mozjs::rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, mayb
 use mozjs::typedarray as jsta;
 
 use crate::{Array, Context, Date, Function, Object, Promise, PropertyKey, Symbol, Value};
-use crate::objects::RegExp;
+use crate::object::RegExp;
 use crate::string::byte::{BytePredicate, ByteStr, ByteString};
 use crate::typedarray::{ArrayBuffer, TypedArray, TypedArrayElement};
 
@@ -128,7 +128,7 @@ impl<'cx, T: ToOwned + ToValue<'cx>> ToValue<'cx> for Cow<'_, T> {
 
 impl<'cx, T: BytePredicate> ToValue<'cx> for ByteStr<T> {
 	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
-		unsafe { JS_NewStringCopyN(cx.as_ptr(), self.as_ptr() as *const _, self.len()).to_value(cx, value) }
+		unsafe { JS_NewStringCopyN(cx.as_ptr(), self.as_ptr().cast(), self.len()).to_value(cx, value) }
 	}
 }
 
@@ -286,7 +286,7 @@ impl<'cx, T: ToValue<'cx>> ToValue<'cx> for Option<T> {
 
 impl<'cx, T: ToValue<'cx>> ToValue<'cx> for [T] {
 	fn to_value(&self, cx: &'cx Context, value: &mut Value) {
-		let mut array = Array::new_with_length(cx, self.len());
+		let array = Array::new_with_length(cx, self.len());
 
 		for (i, t) in self.iter().enumerate() {
 			assert!(array.set_as(cx, i as u32, t));

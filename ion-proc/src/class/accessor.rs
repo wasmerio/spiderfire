@@ -13,7 +13,7 @@ use syn::{Error, ItemFn, Result, Type};
 use syn::spanned::Spanned;
 
 use crate::class::method::{impl_method, Method};
-use crate::function::parameters::{Parameter, Parameters};
+use crate::function::parameter::Parameters;
 
 pub(super) struct Accessor(pub(super) Option<Method>, Option<Method>);
 
@@ -83,7 +83,7 @@ pub(super) fn get_accessor_name(mut name: String, is_setter: bool) -> String {
 pub(super) fn impl_accessor(
 	ion: &TokenStream, method: ItemFn, ty: &Type, is_setter: bool,
 ) -> Result<(Method, Parameters)> {
-	let expected_args = is_setter as i32;
+	let expected_args = i32::from(is_setter);
 	let error_message = if is_setter {
 		format!("Expected Setter to have {} argument", expected_args)
 	} else {
@@ -98,14 +98,11 @@ pub(super) fn impl_accessor(
 	};
 	let (mut accessor, parameters) = impl_method(ion, method, ty, |sig| {
 		let parameters = Parameters::parse(&sig.inputs, Some(ty))?;
-		let nargs = parameters.parameters.iter().fold(0, |mut acc, param| {
-			if let Parameter::Regular { pat_ty, .. } = &param {
-				if let Type::Path(_) = &*pat_ty.ty {
-					acc += 1;
-				}
-			}
-			acc
-		});
+		let nargs: i32 = parameters
+			.parameters
+			.iter()
+			.map(|param| i32::from(matches!(&*param.pat_ty.ty, Type::Path(_))))
+			.sum();
 		(nargs == expected_args).then_some(()).ok_or(error)
 	})?;
 	accessor.method.sig.ident = ident;

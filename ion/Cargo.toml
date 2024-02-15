@@ -8,9 +8,10 @@ authors = ["Redfire <redfire75369@hotmail.com>"]
 
 [dependencies]
 arrayvec = "0.7.4"
-bitflags = "2.4.1"
+async-stream = "0.3.5"
+bitflags = "2.4.2"
 byteorder = "1.5.0"
-bytemuck = "1.14.0"
+bytemuck = "1.14.3"
 itoa = "1.0.10"
 typed-arena = "2.0.2"
 utf16string = "0.2.0"
@@ -18,10 +19,11 @@ utf16string = "0.2.0"
 bytes.workspace = true
 colored.workspace = true
 chrono.workspace = true
+encoding_rs.workspace = true
 indent.workspace = true
 mozjs.workspace = true
 mozjs_sys.workspace = true
-async-stream = "0.3.5"
+memoffset = "0.9.0"
 
 [dependencies.futures]
 workspace = true

@@ -30,14 +30,14 @@ impl ModuleData {
 	pub fn from_private(cx: &Context, private: &Value) -> Option<ModuleData> {
 		private.handle().is_object().then(|| {
 			let private = private.to_object(cx);
-			let path: Option<String> = private.get_as(cx, "path", true, ());
+			let path: Option<String> = private.get_as(cx, "path", true, ()).unwrap();
 			ModuleData { path }
 		})
 	}
 
 	/// Converts [ModuleData] to an [Object] for storage.
 	pub fn to_object<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
-		let mut object = Object::new(cx);
+		let object = Object::new(cx);
 		object.set_as(cx, "path", &self.path);
 		object
 	}
@@ -51,10 +51,7 @@ impl<'r> ModuleRequest<'r> {
 	/// Creates a new [ModuleRequest] with a given specifier.
 	pub fn new<S: AsRef<str>>(cx: &'r Context, specifier: S) -> ModuleRequest<'r> {
 		let specifier = crate::String::copy_from_str(cx, specifier.as_ref()).unwrap();
-		ModuleRequest(
-			cx.root_object(unsafe { CreateModuleRequest(cx.as_ptr(), specifier.handle().into()) })
-				.into(),
-		)
+		ModuleRequest(cx.root(unsafe { CreateModuleRequest(cx.as_ptr(), specifier.handle().into()) }).into())
 	}
 
 	/// Creates a new [ModuleRequest] from a raw handle.
@@ -67,8 +64,7 @@ impl<'r> ModuleRequest<'r> {
 
 	/// Returns the specifier of the request.
 	pub fn specifier<'cx>(&self, cx: &'cx Context) -> crate::String<'cx> {
-		cx.root_string(unsafe { GetModuleRequestSpecifier(cx.as_ptr(), self.0.handle().into()) })
-			.into()
+		cx.root(unsafe { GetModuleRequestSpecifier(cx.as_ptr(), self.0.handle().into()) }).into()
 	}
 }
 
@@ -109,8 +105,6 @@ impl<'cx> Module<'cx> {
 	}
 
 	/// Compiles a [Module] with the given source and filename.
-	/// On success, returns the compiled module object and a promise. The promise resolves with the return value of the module.
-	/// The promise is a byproduct of enabling top-level await.
 	#[allow(clippy::result_large_err)]
 	pub fn compile(
 		cx: &'cx Context, filename: &str, path: Option<&Path>, script: &str,
@@ -120,10 +114,10 @@ impl<'cx> Module<'cx> {
 		let filename = path.and_then(Path::to_str).unwrap_or(filename);
 		let options = unsafe { CompileOptionsWrapper::new(cx.as_ptr(), filename, 1) };
 
-		let module = unsafe { CompileModule(cx.as_ptr(), options.ptr.cast_const().cast(), &mut source) };
+		let module = unsafe { CompileModule(cx.as_ptr(), options.ptr.cast_const(), &mut source) };
 
 		if !module.is_null() {
-			let module = Module(Object::from(cx.root_object(module)));
+			let module = Module(Object::from(cx.root(module)));
 
 			let data = ModuleData {
 				path: path.and_then(Path::to_str).map(String::from),
@@ -137,12 +131,15 @@ impl<'cx> Module<'cx> {
 			Ok(module)
 		} else {
 			Err(ModuleError::new(
-				ErrorReport::new(cx).unwrap(),
+				ErrorReport::new(cx).unwrap().unwrap(),
 				ModuleErrorKind::Compilation,
 			))
 		}
 	}
 
+	/// Compiles and evaluates a [Module] with the given source and filename.
+	/// On success, returns the compiled module object and a promise. The promise resolves with the return value of the module.
+	/// The promise is a byproduct of enabling top-level await.
 	#[allow(clippy::result_large_err)]
 	pub fn compile_and_evaluate(
 		cx: &'cx Context, filename: &str, path: Option<&Path>, script: &str,
@@ -164,7 +161,7 @@ impl<'cx> Module<'cx> {
 		if unsafe { ModuleLink(cx.as_ptr(), self.0.handle().into()) } {
 			Ok(())
 		} else {
-			Err(ErrorReport::new(cx).unwrap())
+			Err(ErrorReport::new(cx)?.unwrap())
 		}
 	}
 
@@ -174,7 +171,7 @@ impl<'cx> Module<'cx> {
 		if unsafe { ModuleEvaluate(cx.as_ptr(), self.0.handle().into(), rval.handle_mut().into()) } {
 			Ok(Promise::from_value(cx, &rval, true, ()).ok())
 		} else {
-			Err(ErrorReport::new_with_exception_stack(cx).unwrap())
+			Err(ErrorReport::new_with_exception_stack(cx)?.unwrap())
 		}
 	}
 
@@ -183,12 +180,12 @@ impl<'cx> Module<'cx> {
 	}
 
 	pub fn module_namespace(&self, cx: &'cx Context) -> Object<'cx> {
-		cx.root_object(unsafe { mozjs::jsapi::GetModuleNamespace(cx.as_ptr(), self.0.handle().into()) })
+		cx.root(unsafe { mozjs::jsapi::GetModuleNamespace(cx.as_ptr(), self.0.handle().into()) })
 			.into()
 	}
 
 	pub fn module_environment(&self, cx: &'cx Context) -> Object<'cx> {
-		cx.root_object(unsafe { mozjs::jsapi::GetModuleEnvironment(cx.as_ptr(), self.0.handle().into()) })
+		cx.root(unsafe { mozjs::jsapi::GetModuleEnvironment(cx.as_ptr(), self.0.handle().into()) })
 			.into()
 	}
 }
@@ -202,7 +199,7 @@ pub trait ModuleLoader {
 	) -> crate::Result<Module<'cx>>;
 
 	/// Registers a new module in the module registry. Useful for native modules.
-	fn register(&mut self, cx: &Context, module: &Object, request: &ModuleRequest) -> bool;
+	fn register(&mut self, cx: &Context, module: &Object, request: &ModuleRequest) -> crate::Result<()>;
 
 	/// Returns metadata of a module, used to populate `import.meta`.
 	fn metadata(&self, cx: &Context, data: Option<&ModuleData>, meta: &mut Object) -> crate::Result<()>;
@@ -212,14 +209,11 @@ impl ModuleLoader for () {
 	fn resolve<'cx>(
 		&mut self, _: &'cx Context, _: Option<&ModuleData>, _: &ModuleRequest,
 	) -> crate::Result<Module<'cx>> {
-		Err(crate::Error::new(
-			"Module loading not supported",
-			crate::ErrorKind::Type,
-		))
+		Err(Error::new("Modules are unsupported by this loader.", None))
 	}
 
-	fn register(&mut self, _: &Context, _: &Object, _: &ModuleRequest) -> bool {
-		true
+	fn register(&mut self, _: &Context, _: &Object, _: &ModuleRequest) -> crate::Result<()> {
+		Ok(())
 	}
 
 	fn metadata(&self, _: &Context, _: Option<&ModuleData>, _: &mut Object) -> crate::Result<()> {
@@ -260,7 +254,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 		let request = TracedHeap::new(request.get());
 		let promise = TracedHeap::new(promise.get());
 
-		let delay_promise = Promise::new_resolved(&cx, Value::undefined(&cx));
+		let delay_promise = Promise::resolved(&cx, Value::undefined(&cx));
 		delay_promise.add_reactions(
 			&cx,
 			Some(Function::from_closure(
@@ -278,7 +272,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 								// FinishDynamicModuleImport with a pending exception on the context.
 								// Thus, we throw the error to make sure it's pending on the context.
 								e.exception.throw(cx);
-								cx.root_object(std::ptr::null_mut()).into()
+								cx.root(std::ptr::null_mut()).into()
 							}
 						};
 
@@ -322,7 +316,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 		module.instantiate(cx)?;
 
 		let promise = module.evaluate(cx)?;
-		Ok(promise.unwrap_or_else(|| Promise::new_resolved(cx, Value::undefined(cx))))
+		Ok(promise.unwrap_or_else(|| Promise::resolved(cx, Value::undefined(cx))))
 	}
 
 	fn load_module<'cx>(
@@ -346,19 +340,19 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 	unsafe extern "C" fn metadata(
 		cx: *mut JSContext, private_data: Handle<JSVal>, metadata: Handle<*mut JSObject>,
 	) -> bool {
-		let cx = unsafe { Context::new_unchecked(cx) };
+		let cx = &unsafe { Context::new_unchecked(cx) };
 
 		let loader = unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader };
 		loader
 			.as_mut()
 			.map(|loader| {
 				let private = Value::from(unsafe { Local::from_raw_handle(private_data) });
-				let module_data = ModuleData::from_private(&cx, &private);
+				let module_data = ModuleData::from_private(cx, &private);
 				let mut metadata = Object::from(unsafe { Local::from_raw_handle(metadata) });
-				match loader.metadata(&cx, module_data.as_ref(), &mut metadata) {
+				match loader.metadata(cx, module_data.as_ref(), &mut metadata) {
 					Ok(()) => true,
 					Err(e) => {
-						e.throw(&cx);
+						e.throw(cx);
 						false
 					}
 				}

@@ -24,13 +24,15 @@ use sys_locale::get_locales;
 use tokio::fs::read;
 use url::Url;
 
-pub use body::{FetchBody, FetchBodyInner, FetchBodyKind, FetchBodyLength, hyper_body_to_stream};
-pub use client::{default_client, GLOBAL_CLIENT};
-pub use header::{Headers, HeaderEntry, HeadersInit, HeadersObject};
 use ion::{ClassDefinition, Context, Error, ErrorKind, Exception, Object, Promise, ResultExc, TracedHeap, Result};
 use ion::class::Reflector;
 use ion::conversions::ToValue;
 use ion::flags::PropertyFlags;
+use ion::function::Opt;
+
+pub use body::{FetchBody, FetchBodyInner, FetchBodyKind, FetchBodyLength, hyper_body_to_stream};
+pub use client::{default_client, GLOBAL_CLIENT};
+pub use header::{Headers, HeaderEntry, HeadersInit, HeadersObject};
 pub use request::{Request, RequestInfo, RequestInit};
 pub use response::Response;
 
@@ -55,22 +57,22 @@ const DEFAULT_USER_AGENT: &str = concatcp!("Spiderfire/", VERSION);
 // TODO: replace all of the `network_error()`s with better errors
 
 #[js_fn]
-fn fetch(cx: &Context, resource: RequestInfo, init: Option<RequestInit>) -> Option<Promise> {
+fn fetch(cx: &Context, resource: RequestInfo, init: Opt<RequestInit>) -> Option<Promise> {
 	let request = match Request::constructor(cx, resource, init) {
 		Ok(request) => request,
 		Err(error) => {
-			return Some(Promise::new_rejected(cx, error.as_value(cx)));
+			return Some(Promise::rejected(cx, error.as_value(cx)));
 		}
 	};
 
 	let signal = Object::from(request.signal_object.to_local());
-	let signal = AbortSignal::get_private(&signal);
+	let signal = AbortSignal::get_private(cx, &signal).unwrap();
 	if let Some(reason) = signal.get_reason() {
-		return Some(Promise::new_rejected(cx, reason));
+		return Some(Promise::rejected(cx, reason));
 	}
 
-	let mut headers = Object::from(request.headers.to_local());
-	let headers = Headers::get_mut_private(&mut headers);
+	let headers = Object::from(request.headers.to_local());
+	let headers = Headers::get_mut_private(cx, &headers).unwrap();
 	if !headers.headers.contains_key(ACCEPT) {
 		headers.headers.append(ACCEPT, HeaderValue::from_static("*/*"));
 	}
@@ -90,21 +92,20 @@ fn fetch(cx: &Context, resource: RequestInfo, init: Option<RequestInit>) -> Opti
 	let request = TracedHeap::new(Request::new_object(cx, Box::new(request)));
 	unsafe {
 		future_to_promise(cx, move |cx| async move {
-			let mut request = Object::from(request.to_local());
-			let (cx, res) = cx
-				.await_native_cx(|cx| fetch_internal(cx, &mut request, GLOBAL_CLIENT.get().unwrap().clone()))
+			let request = Object::from(request.to_local());
+			let (_, res) = cx
+				.await_native_cx(|cx| fetch_internal(cx, &request, GLOBAL_CLIENT.get().unwrap().clone()))
 				.await;
-			cx.unroot_persistent_object(request.handle().get());
 			res
 		})
 	}
 }
 
-pub async fn fetch_internal<'o>(cx: Context, request: &mut Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
-	let request = Request::get_mut_private(request);
+pub async fn fetch_internal<'o>(cx: Context, request: &Object<'o>, client: Client) -> ResultExc<*mut JSObject> {
+	let request = Request::get_mut_private(&cx, request)?;
 	let signal = Object::from(request.signal_object.to_local());
-	let signal = AbortSignal::get_private(&signal).signal.clone().poll();
-	let request_url = request.url.clone();
+	let signal = AbortSignal::get_private(&cx, &signal)?.signal.clone().poll();
+	let request_url = request.url().clone();
 	let send = main_fetch(cx.duplicate(), request, client, 0);
 	let (cx, response) = cx.await_native(select(send, signal)).await;
 	let response = match response {
@@ -114,7 +115,7 @@ pub async fn fetch_internal<'o>(cx: Context, request: &mut Object<'o>, client: C
 
 	if response.kind == ResponseKind::Error {
 		Err(Exception::Error(Error::new(
-			&format!("Network Error: Failed to fetch from {}", request_url),
+			format!("Network Error: Failed to fetch from {}", request_url),
 			ErrorKind::Type,
 		)))
 	} else {
@@ -209,7 +210,7 @@ static SCHEMES: [&str; 4] = ["about", "blob", "data", "file"];
 
 #[async_recursion(?Send)]
 async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirections: u8) -> Result<Response> {
-	let scheme = request.url.scheme();
+	let scheme = request.url().scheme();
 
 	// TODO: Upgrade HTTP Schemes if the host is a domain and matches the Known HSTS Domain List
 
@@ -220,9 +221,9 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 			let response = network_error(&cx);
 			(cx, Ok(response))
 		} else if SCHEMES.contains(&scheme) {
-			cx.await_native_cx(|cx| scheme_fetch(cx, scheme, request.url.clone())).await
+			cx.await_native_cx(|cx| scheme_fetch(cx, scheme, request.url().clone())).await
 		} else if scheme == "https" || scheme == "http" {
-			if let Some(port) = request.url.port() {
+			if let Some(port) = request.url().port() {
 				if BAD_PORTS.contains(&port) {
 					return Ok(network_error(&cx));
 				}
@@ -251,10 +252,10 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 		return Ok(response);
 	}
 
-	response.url.get_or_insert(request.url.clone());
+	response.url.get_or_insert(request.url().clone());
 
-	let mut headers = Object::from(response.headers.to_local());
-	let headers = Headers::get_mut_private(&mut headers);
+	let headers = Object::from(response.headers.to_local());
+	let headers = Headers::get_mut_private(&cx, &headers).unwrap();
 
 	if !opaque_redirect
 		&& taint == ResponseTaint::Opaque
@@ -271,14 +272,15 @@ async fn main_fetch(cx: Context, request: &mut Request, client: Client, redirect
 	}
 
 	if !opaque_redirect
-		&& (request.method == Method::HEAD
-		|| request.method == Method::CONNECT
-		|| response.status == Some(StatusCode::SWITCHING_PROTOCOLS)
+		&& (matches!(request.method, Method::HEAD | Method::CONNECT)
 		|| response.status.as_ref().map(StatusCode::as_u16) == Some(103) // Early Hints
-		|| response.status == Some(StatusCode::NO_CONTENT)
-		|| response.status == Some(StatusCode::RESET_CONTENT)
-		|| response.status == Some(StatusCode::NOT_MODIFIED))
-	{
+		|| matches!(
+				response.status,
+				Some(StatusCode::SWITCHING_PROTOCOLS)
+					| Some(StatusCode::NO_CONTENT)
+					| Some(StatusCode::RESET_CONTENT)
+					| Some(StatusCode::NOT_MODIFIED)
+			)) {
 		response.body = Some(FetchBody::default());
 	}
 
@@ -428,11 +430,11 @@ async fn http_fetch(
 
 #[async_recursion(?Send)]
 async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_new: bool) -> Result<Response> {
-	let mut request = req.try_clone(&cx)?;
-	let mut headers = Object::from(req.headers.to_local());
-	let headers = Headers::get_mut_private(&mut headers);
+	let request = req.try_clone(&cx)?;
+	let headers = Object::from(req.headers.to_local());
+	let headers = Headers::get_mut_private(&cx, &headers).unwrap();
 
-	let mut request_builder = hyper::Request::builder().method(&request.method).uri(request.url.to_string());
+	let mut request_builder = hyper::Request::builder().method(&request.method).uri(request.url().to_string());
 	let Some(request_headers) = request_builder.headers_mut() else {
 		return Ok(network_error(&cx));
 	};
@@ -460,7 +462,7 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 		headers.append(CONTENT_LENGTH, HeaderValue::from_str(&length.to_string()).unwrap());
 	}
 
-	if let Referrer::Url(url) = request.referrer {
+	if let Referrer::Url(url) = &request.referrer {
 		headers.append(REFERER, HeaderValue::from_str(url.as_str()).unwrap());
 	}
 
@@ -468,21 +470,22 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 		headers.append(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
 	}
 
-	if request.cache == RequestCache::Default
+	let mut cache = request.cache;
+	if cache == RequestCache::Default
 		&& (headers.contains_key(IF_MODIFIED_SINCE)
 			|| headers.contains_key(IF_NONE_MATCH)
 			|| headers.contains_key(IF_UNMODIFIED_SINCE)
 			|| headers.contains_key(IF_MATCH)
 			|| headers.contains_key(IF_RANGE))
 	{
-		request.cache = RequestCache::NoStore;
+		cache = RequestCache::NoStore;
 	}
 
-	if request.cache == RequestCache::NoCache && !headers.contains_key(CACHE_CONTROL) {
+	if cache == RequestCache::NoCache && !headers.contains_key(CACHE_CONTROL) {
 		headers.append(CACHE_CONTROL, HeaderValue::from_static("max-age=0"));
 	}
 
-	if request.cache == RequestCache::NoStore || request.cache == RequestCache::Reload {
+	if cache == RequestCache::NoStore || cache == RequestCache::Reload {
 		if !headers.contains_key(PRAGMA) {
 			headers.append(PRAGMA, HeaderValue::from_static("no-cache"));
 		}
@@ -497,10 +500,10 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 
 	if !headers.contains_key(HOST) {
 		let host = request
-			.url
+			.url()
 			.host_str()
 			.map(|host| {
-				if let Some(port) = request.url.port() {
+				if let Some(port) = request.url().port() {
 					format!("{}:{}", host, port)
 				} else {
 					String::from(host)
@@ -536,7 +539,7 @@ async fn http_network_fetch(cx: Context, req: &mut Request, client: Client, is_n
 		}
 	};
 	let hyper_response = hyper_response?;
-	let mut response = Response::from_hyper_response(&cx, hyper_response, req.url.clone())?;
+	let mut response = Response::from_hyper_response(&cx, hyper_response, req.url().clone())?;
 
 	response.range_requested = range_requested;
 
@@ -555,7 +558,7 @@ async fn http_redirect_fetch(
 	cx: Context, request: &mut Request, response: Response, client: Client, taint: ResponseTaint, redirections: u8,
 ) -> Result<Response> {
 	let headers = Object::from(response.headers.to_local());
-	let headers = Headers::get_private(&headers);
+	let headers = Headers::get_private(&cx, &headers).unwrap();
 	let mut location = headers.headers.get_all(LOCATION).into_iter();
 	let location = match location.size_hint().1 {
 		Some(0) => return Ok(response),
@@ -596,8 +599,8 @@ async fn http_redirect_fetch(
 	{
 		request.method = Method::GET;
 		request.body = Some(FetchBody::default());
-		let mut headers = Object::from(request.headers.to_local());
-		let headers = Headers::get_mut_private(&mut headers);
+		let headers = Object::from(request.headers.to_local());
+		let headers = Headers::get_mut_private(&cx, &headers).unwrap();
 		remove_all_header_entries(&mut headers.headers, &CONTENT_ENCODING);
 		remove_all_header_entries(&mut headers.headers, &CONTENT_LANGUAGE);
 		remove_all_header_entries(&mut headers.headers, &CONTENT_LOCATION);
@@ -605,7 +608,6 @@ async fn http_redirect_fetch(
 	}
 
 	request.locations.push(location.clone());
-	request.url = location;
 
 	let policy = headers.headers.get_all(REFERRER_POLICY).into_iter().rev();
 	let policy = policy
@@ -618,7 +620,7 @@ async fn http_redirect_fetch(
 	main_fetch(cx, request, client, redirections + 1).await
 }
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
 	let _ = GLOBAL_CLIENT.set(default_client());
 	global.define_method(cx, "fetch", fetch, 1, PropertyFlags::empty());
 	Headers::init_class(cx, global).0 && Request::init_class(cx, global).0 && Response::init_class(cx, global).0

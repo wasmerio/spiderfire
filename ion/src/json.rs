@@ -3,6 +3,7 @@ use core::slice;
 use bytemuck::cast_slice;
 use byteorder::NativeEndian;
 use mozjs::jsapi::ToJSON;
+use mozjs_sys::jsapi::JSObject;
 use utf16string::WStr;
 
 use crate::{Context, Result, Value, Error, ErrorKind, Object};
@@ -21,7 +22,7 @@ pub fn parse(cx: &Context, text: String) -> Result<Object> {
 
 pub fn stringify(cx: &Context, value: Value) -> Result<String> {
 	let mut string = String::new();
-	let replacer = cx.root_object(std::ptr::null_mut());
+	let replacer = cx.root::<*mut JSObject>(std::ptr::null_mut());
 	let space = Value::undefined(cx);
 	if !unsafe {
 		ToJSON(

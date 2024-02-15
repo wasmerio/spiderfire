@@ -1,9 +1,10 @@
 use ion::{
 	class::Reflector,
-	Heap, js_class, Result, Error, ErrorKind, Context, Object, Value, Function, ClassDefinition, ResultExc, Exception,
 	conversions::{FromValue, ToValue},
-	Promise, PromiseFuture, TracedHeap,
 	flags::PropertyFlags,
+	function::Opt,
+	js_class, ClassDefinition, Context, Error, ErrorKind, Exception, Function, Heap, Object, Promise, PromiseFuture,
+	Result, ResultExc, TracedHeap, Value,
 };
 use mozjs::{
 	jsapi::{
@@ -109,11 +110,11 @@ pub struct TransformStreamDefaultController {
 
 impl TransformStreamDefaultController {
 	pub fn from_heap<'cx>(cx: &'cx Context, heap: &Heap<*mut JSObject>) -> &'cx Self {
-		<Self as ClassDefinition>::get_private(&heap.root(cx).into())
+		<Self as ClassDefinition>::get_private(cx, &heap.root(cx).into()).unwrap()
 	}
 
 	pub fn from_heap_mut<'cx>(cx: &'cx Context, heap: &Heap<*mut JSObject>) -> &'cx mut Self {
-		<Self as ClassDefinition>::get_mut_private(&mut heap.root(cx).into())
+		<Self as ClassDefinition>::get_mut_private(cx, &heap.root(cx).into()).unwrap()
 	}
 
 	fn new(stream: &Object, transformer: HeapTransformer) -> Self {
@@ -249,13 +250,13 @@ impl NativeStreamSourceCallbacks for Source {
 		&self, _source: &'cx NativeStreamSource, cx: &'cx Context, _controller: Object<'cx>,
 	) -> ResultExc<Promise> {
 		// todo: implement backpressure
-		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
+		Ok(Promise::resolved(cx, Value::undefined(cx)))
 	}
 
 	fn cancel(self: Box<Self>, cx: &Context, reason: Value) -> ResultExc<Promise> {
 		let ts = TransformStream::from_heap(cx, &self.stream);
 		ts.error_writable_and_unblock_write(cx, &reason)?;
-		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
+		Ok(Promise::resolved(cx, Value::undefined(cx)))
 	}
 }
 
@@ -288,11 +289,11 @@ impl NativeStreamSinkCallbacks for Sink {
 		let promise = match controller.transformer.transform_function(cx) {
 			None => {
 				controller.enqueue(cx, chunk)?;
-				Promise::new_resolved(cx, Value::undefined(cx))
+				Promise::resolved(cx, Value::undefined(cx))
 			}
 
 			Some((o, f)) => match f.call(cx, &o, &[chunk, controller_object]) {
-				Err(e) => Promise::new_rejected(
+				Err(e) => Promise::rejected(
 					cx,
 					e.map(|e| e.exception).unwrap_or_else(|| {
 						Exception::Error(Error::new("Call to transformer.transform failed", ErrorKind::Normal))
@@ -300,11 +301,11 @@ impl NativeStreamSinkCallbacks for Sink {
 				),
 				Ok(val) => {
 					if !val.get().is_object() {
-						Promise::new_resolved(cx, Value::undefined(cx))
+						Promise::resolved(cx, Value::undefined(cx))
 					} else {
 						match Promise::from(val.to_object(cx).into_local()) {
 							// The flush algorithm (erroneously) didn't return a promise
-							None => Promise::new_resolved(cx, Value::undefined(cx)),
+							None => Promise::resolved(cx, Value::undefined(cx)),
 							Some(p) => p,
 						}
 					}
@@ -322,9 +323,14 @@ impl NativeStreamSinkCallbacks for Sink {
 				"__TransformStreamSinkWriteCallbackFailed",
 				Box::new(move |args| {
 					let mut accessor = args.access();
-					let reason = accessor.arg::<Value>(false, ()).ok_or_else(|| {
-						Exception::Error(Error::new("Bad arguments to promise.reject", ErrorKind::Internal))
-					})??;
+					if accessor.is_empty() {
+						return Err(Exception::Error(Error::new(
+							"Bad arguments to promise.reject",
+							ErrorKind::Internal,
+						)));
+					}
+
+					let reason = accessor.value();
 
 					let ts = TransformStream::from_traced_heap(args.cx(), &ts_heap);
 					ts.error(args.cx(), &reason)?;
@@ -426,20 +432,20 @@ impl NativeStreamSinkCallbacks for Sink {
 	fn abort(&self, cx: &Context, reason: Value) -> ResultExc<Promise> {
 		let ts = TransformStream::from_traced_heap(cx, &self.stream);
 		if let Err(e) = ts.error(cx, &reason) {
-			return Ok(Promise::new_rejected(cx, e));
+			return Ok(Promise::rejected(cx, e));
 		}
 
 		match ts.get_controller(cx).transformer.cancel_function(cx) {
-			None => Ok(Promise::new_resolved(cx, Value::undefined(cx))),
+			None => Ok(Promise::resolved(cx, Value::undefined(cx))),
 			Some((o, f)) => {
 				let result = f.call(cx, &o, &[reason]);
 				match result {
-					Err(_) => Ok(Promise::new_rejected_with_pending_exception(cx)),
+					Err(_) => Ok(Promise::rejected_with_pending_exception(cx)),
 					Ok(v) if v.get().is_object() => match Promise::from(v.to_object(cx).into_local()) {
 						Some(p) => Ok(p),
-						None => Ok(Promise::new_resolved(cx, Value::undefined(cx))),
+						None => Ok(Promise::resolved(cx, Value::undefined(cx))),
 					},
-					Ok(_) => Ok(Promise::new_resolved(cx, Value::undefined(cx))),
+					Ok(_) => Ok(Promise::resolved(cx, Value::undefined(cx))),
 				}
 			}
 		}
@@ -458,11 +464,11 @@ pub struct TransformStream {
 
 impl TransformStream {
 	pub fn from_heap<'cx>(cx: &'cx Context, heap: &Heap<*mut JSObject>) -> &'cx Self {
-		<Self as ClassDefinition>::get_private(&heap.root(cx).into())
+		<Self as ClassDefinition>::get_private(cx, &heap.root(cx).into()).unwrap()
 	}
 
 	pub fn from_traced_heap<'cx>(cx: &'cx Context, heap: &TracedHeap<*mut JSObject>) -> &'cx Self {
-		<Self as ClassDefinition>::get_private(&heap.root(cx).into())
+		<Self as ClassDefinition>::get_private(cx, &heap.root(cx).into()).unwrap()
 	}
 
 	pub fn get_controller<'cx>(&self, cx: &'cx Context) -> &'cx TransformStreamDefaultController {
@@ -480,13 +486,13 @@ impl TransformStream {
 	pub fn get_readable_controller<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
 		// TODO: Implement ion wrapper type for the controller
 		Object::from(
-			cx.root_object(unsafe { ReadableStreamGetController(cx.as_ptr(), self.readable.root(cx).handle().into()) }),
+			cx.root(unsafe { ReadableStreamGetController(cx.as_ptr(), self.readable.root(cx).handle().into()) }),
 		)
 	}
 
 	pub fn get_writable_controller<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
 		Object::from(
-			cx.root_object(unsafe { WritableStreamGetController(cx.as_ptr(), self.writable.root(cx).handle().into()) }),
+			cx.root(unsafe { WritableStreamGetController(cx.as_ptr(), self.writable.root(cx).handle().into()) }),
 		)
 	}
 
@@ -521,7 +527,7 @@ impl TransformStream {
 impl TransformStream {
 	#[ion(constructor)]
 	pub fn constructor<'cx>(
-		cx: &'cx Context, #[ion(this)] this: &Object<'cx>, transformer_object: Option<Object<'cx>>,
+		cx: &'cx Context, #[ion(this)] this: &Object<'cx>, Opt(transformer_object): Opt<Object<'cx>>,
 	) -> Result<TransformStream> {
 		let transformer = HeapTransformer::from_transformer(cx, transformer_object)?;
 
@@ -536,7 +542,8 @@ impl TransformStream {
 		// accesses this stream, the private slot will not be set and everything will fail.
 		let start_promise = unsafe {
 			future_to_promise(cx, move |cx| async move {
-				let controller = TransformStreamDefaultController::get_private(&controller_heap.root(&cx).into());
+				let controller =
+					TransformStreamDefaultController::get_private(&cx, &controller_heap.root(&cx).into()).unwrap();
 				let controller_value = Object::from(controller_heap.root(&cx)).as_value(&cx);
 				match controller.transformer.start_function(&cx) {
 					Some((o, f)) => match f.call(&cx, &o, &[controller_value]) {
@@ -553,13 +560,13 @@ impl TransformStream {
 			stream: TracedHeap::from_local(this),
 			start_promise: unsafe { Promise::from_unchecked(start_promise.root(cx)) },
 		};
-		let sink_obj = cx.root_object(NativeStreamSink::new_object(
+		let sink_obj = cx.root(NativeStreamSink::new_object(
 			cx,
 			Box::new(NativeStreamSink::new(Box::new(sink))),
 		));
 
 		let writable = unsafe {
-			cx.root_object(NewWritableDefaultStreamObject(
+			cx.root::<*mut JSObject>(NewWritableDefaultStreamObject(
 				cx.as_ptr(),
 				sink_obj.handle().into(),
 				HandleFunction::from_marked_location(&super::readable_stream_extensions::NULL_FUNCTION),

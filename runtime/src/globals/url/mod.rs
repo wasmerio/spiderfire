@@ -9,8 +9,9 @@ use std::cmp::Ordering;
 use mozjs::jsapi::{Heap, JSObject};
 use url::Url;
 
-use ion::{ClassDefinition, Context, Object, Result, Error, conversions::ConversionBehavior};
+use ion::{ClassDefinition, Context, Object, Result, Error};
 use ion::class::Reflector;
+use ion::function::Opt;
 pub use search_params::URLSearchParams;
 
 mod search_params;
@@ -36,12 +37,12 @@ pub struct URL {
 #[js_class]
 impl URL {
 	#[ion(constructor)]
-	pub fn constructor(#[ion(this)] this: &Object, cx: &Context, input: String, base: Option<String>) -> Result<URL> {
+	pub fn constructor(#[ion(this)] this: &Object, cx: &Context, input: String, Opt(base): Opt<String>) -> Result<URL> {
 		let base = base.as_ref().and_then(|base| Url::parse(base).ok());
 		let url = Url::options()
 			.base_url(base.as_ref())
 			.parse(&input)
-			.map_err(|error| Error::new(&error.to_string(), None))?;
+			.map_err(|error| Error::new(error.to_string(), None))?;
 
 		let search_params = Box::new(URLSearchParams::new(url.query_pairs().into_owned().collect()));
 		search_params.url.as_ref().unwrap().set(this.handle().get());
@@ -55,12 +56,12 @@ impl URL {
 	}
 
 	#[ion(name = "canParse")]
-	pub fn can_parse(input: String, base: Option<String>) -> bool {
+	pub fn can_parse(input: String, Opt(base): Opt<String>) -> bool {
 		let base = base.as_ref().and_then(|base| Url::parse(base).ok());
 		Url::options().base_url(base.as_ref()).parse(&input).is_ok()
 	}
 
-	pub fn format(&self, options: Option<FormatOptions>) -> Result<String> {
+	pub fn format(&self, Opt(options): Opt<FormatOptions>) -> Result<String> {
 		let mut url = self.url.clone();
 
 		let options = options.unwrap_or_default();
@@ -98,7 +99,7 @@ impl URL {
 				self.url = url;
 				Ok(())
 			}
-			Err(error) => Err(Error::new(&error.to_string(), None)),
+			Err(error) => Err(Error::new(error.to_string(), None)),
 		}
 	}
 
@@ -127,29 +128,22 @@ impl URL {
 	}
 
 	#[ion(set)]
-	pub fn set_host(&mut self, host: Option<String>) -> Result<()> {
-		if let Some(host) = host {
-			let segments: Vec<&str> = host.split(':').collect();
-			let (host, port) = match segments.len().cmp(&2) {
-				Ordering::Less => Ok((segments[0], None)),
-				Ordering::Greater => Err(Error::new("Invalid Host", None)),
-				Ordering::Equal => {
-					let port = match segments[1].parse::<u16>() {
-						Ok(port) => Ok(port),
-						Err(error) => Err(Error::new(&error.to_string(), None)),
-					}?;
-					Ok((segments[0], Some(port)))
-				}
-			}?;
+	pub fn set_host(&mut self, host: String) -> Result<()> {
+		let segments: Vec<&str> = host.split(':').collect();
+		let (host, port) = match segments.len().cmp(&2) {
+			Ordering::Less => Ok((segments[0], None)),
+			Ordering::Greater => Err(Error::new("Invalid Host", None)),
+			Ordering::Equal => {
+				let port = match segments[1].parse::<u16>() {
+					Ok(port) => Ok(port),
+					Err(error) => Err(Error::new(error.to_string(), None)),
+				}?;
+				Ok((segments[0], Some(port)))
+			}
+		}?;
 
-			self.url.set_host(Some(host))?;
-
-			self.url.set_port(port).map_err(|_| Error::new("Invalid Url", None))?;
-		} else {
-			self.url.set_host(None)?;
-			self.url.set_port(None).map_err(|_| Error::new("Invalid Url", None))?;
-		}
-		Ok(())
+		self.url.set_host(Some(host))?;
+		self.url.set_port(port).map_err(|_| Error::new("Invalid Url", None))
 	}
 
 	#[ion(get)]
@@ -158,10 +152,8 @@ impl URL {
 	}
 
 	#[ion(set)]
-	pub fn set_hostname(&mut self, hostname: Option<String>) -> Result<()> {
-		self.url
-			.set_host(hostname.as_deref())
-			.map_err(|error| Error::new(&error.to_string(), None))
+	pub fn set_hostname(&mut self, hostname: String) -> Result<()> {
+		self.url.set_host(Some(&hostname)).map_err(|error| Error::new(error.to_string(), None))
 	}
 
 	#[ion(get)]
@@ -170,12 +162,13 @@ impl URL {
 	}
 
 	#[ion(get)]
-	pub fn get_port(&self) -> Option<u16> {
-		self.url.port_or_known_default()
+	pub fn get_port(&self) -> String {
+		self.url.port_or_known_default().map(|port| port.to_string()).unwrap_or_default()
 	}
 
 	#[ion(set)]
-	pub fn set_port(&mut self, #[ion(convert = ConversionBehavior::EnforceRange)] port: Option<u16>) -> Result<()> {
+	pub fn set_port(&mut self, port: String) -> Result<()> {
+		let port = if port.is_empty() { None } else { Some(port.parse()?) };
 		self.url.set_port(port).map_err(|_| Error::new("Invalid Port", None))
 	}
 
@@ -206,18 +199,13 @@ impl URL {
 	}
 
 	#[ion(set)]
-	pub fn set_password(&mut self, password: Option<String>) -> Result<()> {
-		self.url.set_password(password.as_deref()).map_err(|_| Error::new("Invalid Url", None))
+	pub fn set_password(&mut self, password: String) -> Result<()> {
+		self.url.set_password(Some(&password)).map_err(|_| Error::new("Invalid Url", None))
 	}
 
 	#[ion(get)]
 	pub fn get_search(&self) -> String {
-		let search = self.url.query().map(String::from).unwrap_or_default();
-		if search.is_empty() {
-			search
-		} else {
-			format!("?{}", search)
-		}
+		self.url.query().map(|search| format!("?{}", search)).unwrap_or_default()
 	}
 
 	#[ion(set)]
@@ -229,23 +217,19 @@ impl URL {
 		};
 
 		self.url.set_query(search.as_deref());
-		URLSearchParams::get_mut_private(&mut cx.root_object(self.search_params.get()).into())
+		URLSearchParams::get_mut_private(cx, &cx.root(self.search_params.get()).into())
+			.unwrap()
 			.set_pairs(self.url.query_pairs().into_owned().collect())
 	}
 
 	#[ion(get)]
 	pub fn get_hash(&self) -> String {
-		let hash = self.url.fragment().map(String::from).unwrap_or_default();
-		if hash.is_empty() {
-			hash
-		} else {
-			format!("#{}", hash)
-		}
+		self.url.fragment().map(|hash| format!("#{}", hash)).unwrap_or_default()
 	}
 
 	#[ion(set)]
-	pub fn set_hash(&mut self, hash: Option<String>) {
-		self.url.set_fragment(hash.as_deref());
+	pub fn set_hash(&mut self, hash: String) {
+		self.url.set_fragment(Some(&*hash).filter(|hash| !hash.is_empty()));
 	}
 
 	#[ion(get)]
@@ -254,6 +238,6 @@ impl URL {
 	}
 }
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
 	URL::init_class(cx, global).0 && URLSearchParams::init_class(cx, global).0
 }

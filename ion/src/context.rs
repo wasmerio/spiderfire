@@ -7,6 +7,7 @@
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ptr;
 use std::ptr::NonNull;
 
 use futures::Future;
@@ -78,7 +79,7 @@ impl Context {
 	pub fn from_runtime(rt: &Runtime) -> Context {
 		let cx = rt.cx();
 
-		let private = NonNull::new(unsafe { JS_GetContextPrivate(cx).cast() }).unwrap_or_else(|| {
+		let private = NonNull::new(unsafe { JS_GetContextPrivate(cx).cast::<ContextInner>() }).unwrap_or_else(|| {
 			let private = Box::<ContextInner>::default();
 			let private = Box::into_raw(private);
 			unsafe {
@@ -100,7 +101,7 @@ impl Context {
 			context: unsafe { NonNull::new_unchecked(cx) },
 			rooted: RootedArena::default(),
 			order: RefCell::new(Vec::new()),
-			private: unsafe { NonNull::new_unchecked(JS_GetContextPrivate(cx).cast()) },
+			private: unsafe { NonNull::new_unchecked(JS_GetContextPrivate(cx).cast::<ContextInner>()) },
 		}
 	}
 
@@ -118,7 +119,7 @@ impl Context {
 
 	pub fn get_raw_private(&self) -> *mut dyn Any {
 		let inner = self.get_inner_data();
-		unsafe { (*inner.as_ptr()).private.as_deref().unwrap() as *const _ as *mut _ }
+		ptr::from_mut(unsafe { (*inner.as_ptr()).private.as_deref_mut().unwrap() })
 	}
 
 	pub fn set_private(&self, private: Box<dyn Any>) {
@@ -154,11 +155,66 @@ impl Context {
 			(Context::new_unchecked(cx_ptr), result)
 		}
 	}
+
+	/// Roots a value and returns a `[Local]` to it.
+	/// The Local is only unrooted when the `[Context]` is dropped
+	pub fn root<T: Rootable>(&self, value: T) -> Local<T> {
+		let root = T::alloc(&self.rooted, Rooted::new_unrooted());
+		self.order.borrow_mut().push(T::GC_TYPE);
+		Local::new(self, root, value)
+	}
+}
+
+pub trait Rootable: private::Sealed {}
+
+impl<T: private::Sealed> Rootable for T {}
+
+mod private {
+	use mozjs::gc::{GCMethods, RootKind};
+	use mozjs::jsapi::{BigInt, JSFunction, JSObject, JSScript, JSString, PropertyDescriptor, PropertyKey, Rooted, Symbol};
+	use mozjs::jsval::JSVal;
+
+	use super::{GCType, RootedArena};
+
+	#[allow(clippy::mut_from_ref, private_interfaces)]
+	pub trait Sealed: RootKind + GCMethods + Copy + Sized {
+		const GC_TYPE: GCType;
+
+		fn alloc(arena: &RootedArena, root: Rooted<Self>) -> &mut Rooted<Self>;
+	}
+
+	macro_rules! impl_rootable {
+		($(($value:ty, $key:ident, $gc_type:ident)$(,)?)*) => {
+			$(
+				#[allow(clippy::mut_from_ref, private_interfaces)]
+				impl Sealed for $value {
+					const GC_TYPE: GCType = GCType::$gc_type;
+
+					fn alloc(arena: &RootedArena, root: Rooted<Self>) -> &mut Rooted<Self> {
+						arena.$key.alloc(root)
+					}
+				}
+			)*
+		};
+	}
+
+	impl_rootable! {
+		(JSVal, values, Value),
+		(*mut JSObject, objects, Object),
+		(*mut JSString, strings, String),
+		(*mut JSScript, scripts, Script),
+		(PropertyKey, property_keys, PropertyKey),
+		(PropertyDescriptor, property_descriptors, PropertyDescriptor),
+		(*mut JSFunction, functions, Function),
+		(*mut BigInt, big_ints, BigInt),
+		(*mut Symbol, symbols, Symbol),
+	}
 }
 
 macro_rules! impl_root_methods {
 	($(($fn_name:ident, $pointer:ty, $key:ident, $gc_type:ident)$(,)?)*) => {
 		$(
+			#[deprecated = "Use Context::root instead."]
 			#[doc = concat!("Roots a [", stringify!($pointer), "](", stringify!($pointer), ") as a ", stringify!($gc_type), " ands returns a [Local] to it.")]
 			pub fn $fn_name(&self, ptr: $pointer) -> Local<$pointer> {
 				let root = self.rooted.$key.alloc(Rooted::new_unrooted());
@@ -170,6 +226,7 @@ macro_rules! impl_root_methods {
 	};
 	([persistent], $(($root_fn:ident, $unroot_fn:ident, $pointer:ty, $key:ident)$(,)?)*) => {
 		$(
+			#[deprecated = "Use TracedHeap instead."]
 			pub fn $root_fn(&self, ptr: $pointer) -> Local<$pointer> {
 				let heap = Heap::boxed(ptr);
 				let persistent = unsafe { &mut (*self.get_inner_data().as_ptr()).persistent.$key };
@@ -181,6 +238,7 @@ macro_rules! impl_root_methods {
 				}
 			}
 
+			#[deprecated = "Use TracedHeap instead."]
 			pub fn $unroot_fn(&self, ptr: $pointer) {
 				let persistent = unsafe { &mut (*self.get_inner_data().as_ptr()).persistent.$key };
 				let idx = match persistent.iter().rposition(|x| x.get() == ptr) {

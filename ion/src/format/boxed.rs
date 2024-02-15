@@ -11,22 +11,25 @@ use crate::{Context, Object};
 use crate::format::Config;
 use crate::format::primitive::format_primitive;
 
-/// Formats a boxed primitive ([Object]) as a string using the given [configuration](Config).
+/// Formats a boxed primitive ([Object]) using the given [configuration](Config).
 /// The supported boxed types are `Boolean`, `Number`, `String` and `BigInt`.
-pub fn format_boxed<'cx>(cx: &'cx Context, cfg: Config, object: &'cx Object<'cx>) -> BoxedDisplay<'cx> {
-	BoxedDisplay { cx, object, cfg }
+pub fn format_boxed_primitive<'cx>(
+	cx: &'cx Context, cfg: Config, object: &'cx Object<'cx>,
+) -> BoxedPrimitiveDisplay<'cx> {
+	BoxedPrimitiveDisplay { cx, object, cfg }
 }
 
-pub struct BoxedDisplay<'cx> {
+#[must_use]
+pub struct BoxedPrimitiveDisplay<'cx> {
 	cx: &'cx Context,
 	object: &'cx Object<'cx>,
 	cfg: Config,
 }
 
-impl Display for BoxedDisplay<'_> {
+impl Display for BoxedPrimitiveDisplay<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
 		if let Some(primitive) = self.object.unbox_primitive(self.cx) {
-			write!(f, "{}", format_primitive(self.cx, self.cfg, &primitive))
+			format_primitive(self.cx, self.cfg, &primitive).fmt(f)
 		} else {
 			unreachable!("Object is not boxed")
 		}

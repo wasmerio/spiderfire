@@ -6,21 +6,24 @@
 
 use std::any::TypeId;
 use std::collections::hash_map::Entry;
-use std::ffi::CString;
+use std::ffi::CStr;
 use std::ptr;
 
+use mozjs::gc::HandleObject;
+use mozjs::gc::Traceable;
 use mozjs::glue::JS_GetReservedSlot;
 use mozjs::jsapi::{
-	Handle, JS_GetConstructor, JS_InitClass, JS_InstanceOf, JS_NewObjectWithGivenProto, JS_SetReservedSlot, JSFunction,
-	JSFunctionSpec, JSObject, JSPropertySpec, Construct, Construct1, HandleValueArray,
+	GCContext, Handle, JS_GetConstructor, JS_InitClass, JS_InstanceOf, JS_HasInstance, JS_NewObjectWithGivenProto,
+	JS_SetReservedSlot, JSFunction, JSFunctionSpec, JSObject, JSPropertySpec, Construct, Construct1, HandleValueArray,
+	JSTracer,
 };
-use mozjs::jsval::{PrivateValue, UndefinedValue};
+use mozjs::jsval::{NullValue, PrivateValue, UndefinedValue};
 use mozjs_sys::jsapi::JS_GetFunctionObject;
 
-use crate::{Arguments, Context, Function, Local, Object, Value, Exception};
+use crate::{Context, Error, ErrorKind, Function, Local, Object, Value, Exception, Result};
 pub use crate::class::native::{MAX_PROTO_CHAIN_LENGTH, NativeClass, PrototypeChain, TypeIdWrapper};
 pub use crate::class::reflect::{Castable, DerivedFrom, NativeObject, Reflector};
-use crate::functions::NativeFunction;
+use crate::function::NativeFunction;
 
 mod native;
 mod reflect;
@@ -40,69 +43,74 @@ fn class_info<'cx>(cx: &'cx Context, type_id: &TypeId) -> &'cx ClassInfo {
 }
 
 pub trait ClassDefinition: NativeObject {
-	const NAME: &'static str;
-
 	fn class() -> &'static NativeClass;
 
-	fn parent_class_info(_cx: &Context) -> Option<(&'static NativeClass, Local<*mut JSObject>)> {
+	fn proto_class() -> Option<&'static NativeClass> {
+		None
+	}
+
+	fn parent_prototype(_: &Context) -> Option<Local<*mut JSObject>> {
 		None
 	}
 
 	fn constructor() -> (NativeFunction, u32);
 
-	fn functions() -> &'static [JSFunctionSpec] {
-		&[JSFunctionSpec::ZERO]
+	fn functions() -> Option<&'static [JSFunctionSpec]> {
+		None
 	}
 
-	fn properties() -> &'static [JSPropertySpec] {
-		&[JSPropertySpec::ZERO]
+	fn properties() -> Option<&'static [JSPropertySpec]> {
+		None
 	}
 
-	fn static_functions() -> &'static [JSFunctionSpec] {
-		&[JSFunctionSpec::ZERO]
+	fn static_functions() -> Option<&'static [JSFunctionSpec]> {
+		None
 	}
 
-	fn static_properties() -> &'static [JSPropertySpec] {
-		&[JSPropertySpec::ZERO]
+	fn static_properties() -> Option<&'static [JSPropertySpec]> {
+		None
 	}
 
-	fn init_class<'cx>(cx: &'cx Context, object: &mut Object) -> (bool, &'cx ClassInfo) {
+	fn init_class<'cx>(cx: &'cx Context, object: &Object) -> (bool, &'cx ClassInfo) {
 		let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
-		let entry = infos.entry(TypeId::of::<Self>());
 
-		match entry {
+		match infos.entry(TypeId::of::<Self>()) {
 			Entry::Occupied(o) => (false, o.into_mut()),
 			Entry::Vacant(entry) => {
-				let (parent_class, parent_proto) = Self::parent_class_info(cx)
-					.map(|(class, proto)| (&class.base as *const _, Object::from(proto)))
-					.unwrap_or_else(|| (ptr::null(), Object::new(cx)));
+				let proto_class = Self::proto_class().map_or_else(ptr::null, |class| &class.base);
+				let parent_proto = Self::parent_prototype(cx).map_or_else(HandleObject::null, |proto| proto.handle());
+
 				let (constructor, nargs) = Self::constructor();
+
 				let properties = Self::properties();
 				let functions = Self::functions();
 				let static_properties = Self::static_properties();
 				let static_functions = Self::static_functions();
 
-				let name = CString::new(Self::NAME).unwrap();
+				assert!(has_zero_spec(properties));
+				assert!(has_zero_spec(functions));
+				assert!(has_zero_spec(static_properties));
+				assert!(has_zero_spec(static_functions));
 
 				let class = unsafe {
 					JS_InitClass(
 						cx.as_ptr(),
 						object.handle().into(),
-						parent_class,
-						parent_proto.handle().into(),
-						name.as_ptr().cast(),
+						proto_class,
+						parent_proto.into(),
+						Self::class().base.name,
 						Some(constructor),
 						nargs,
-						properties.as_ptr(),
-						functions.as_ptr(),
-						static_properties.as_ptr(),
-						static_functions.as_ptr(),
+						unwrap_specs(properties),
+						unwrap_specs(functions),
+						unwrap_specs(static_properties),
+						unwrap_specs(static_functions),
 					)
 				};
-				let prototype = cx.root_object(class);
+				let prototype = cx.root(class);
 
 				let constructor = unsafe { JS_GetConstructor(cx.as_ptr(), prototype.handle().into()) };
-				let constructor = Object::from(cx.root_object(constructor));
+				let constructor = Object::from(cx.root(constructor));
 				let constructor = Function::from_object(cx, &constructor).unwrap();
 
 				let class_info = ClassInfo {
@@ -124,11 +132,16 @@ pub trait ClassDefinition: NativeObject {
 		unsafe {
 			let info = Self::class_info(cx);
 			let ctor = info.constructor;
-			let ctor_object = crate::Value::object(cx, &cx.root_object(JS_GetFunctionObject(ctor)).into());
+			let ctor_object = crate::Value::object(cx, &cx.root(JS_GetFunctionObject(ctor)).into());
 
-			let new_target = info.class.prototype_chain[1].map(|c| {
+			let new_target = if info.class.prototype_chain.len() >= 2 {
+				info.class.prototype_chain.get(info.class.prototype_chain.len() - 2)
+			} else {
+				None
+			}
+			.map(|c| {
 				let class = class_info(cx, &c.type_id());
-				Object::from(cx.root_object(JS_GetFunctionObject(class.constructor)))
+				Object::from(cx.root(JS_GetFunctionObject(class.constructor)))
 			});
 
 			let args: Vec<_> = args.iter().map(|a| a.get()).collect();
@@ -152,7 +165,7 @@ pub trait ClassDefinition: NativeObject {
 			if construct_result {
 				Ok(res)
 			} else {
-				Err(Exception::new(cx).expect("There should be a pending exception after a failure"))
+				Err(Exception::new(cx)?.expect("There should be a pending exception after a failure"))
 			}
 		}
 	}
@@ -179,22 +192,44 @@ pub trait ClassDefinition: NativeObject {
 
 	fn new_rooted(cx: &Context, native: Box<Self>) -> Object {
 		let object = Self::new_object(cx, native);
-		Object::from(cx.root_object(object))
+		Object::from(cx.root(object))
 	}
 
-	fn get_private<'a>(object: &Object<'a>) -> &'a Self {
+	unsafe fn get_private_unchecked<'a>(object: &Object<'a>) -> &'a Self {
 		unsafe {
 			let mut value = UndefinedValue();
 			JS_GetReservedSlot(object.handle().get(), 0, &mut value);
-			&*(value.to_private() as *const Self)
+			&*(value.to_private().cast::<Self>())
 		}
 	}
 
-	fn get_mut_private<'a>(object: &mut Object<'a>) -> &'a mut Self {
+	fn get_private<'a>(cx: &Context, object: &Object<'a>) -> Result<&'a Self> {
+		if Self::instance_of(cx, object) // Fast path, most native objects don't have base classes and this check is way faster
+		|| Self::instance_or_subtype_of(cx, object)?
+		{
+			Ok(unsafe { Self::get_private_unchecked(object) })
+		} else {
+			Err(private_error(Self::class()))
+		}
+	}
+
+	#[allow(clippy::mut_from_ref)]
+	unsafe fn get_mut_private_unchecked<'a>(object: &Object<'a>) -> &'a mut Self {
 		unsafe {
 			let mut value = UndefinedValue();
 			JS_GetReservedSlot(object.handle().get(), 0, &mut value);
-			&mut *(value.to_private() as *mut Self)
+			&mut *(value.to_private().cast_mut().cast::<Self>())
+		}
+	}
+
+	#[allow(clippy::mut_from_ref)]
+	fn get_mut_private<'a>(cx: &Context, object: &Object<'a>) -> Result<&'a mut Self> {
+		if Self::instance_of(cx, object) // Fast path, most native objects don't have base classes and this check is way faster
+		|| Self::instance_or_subtype_of(cx, object)?
+		{
+			Ok(unsafe { Self::get_mut_private_unchecked(object) })
+		} else {
+			Err(private_error(Self::class()))
 		}
 	}
 
@@ -205,10 +240,86 @@ pub trait ClassDefinition: NativeObject {
 		}
 	}
 
-	fn instance_of(cx: &Context, object: &Object, args: Option<&Arguments>) -> bool {
+	fn instance_of(cx: &Context, object: &Object) -> bool {
 		unsafe {
-			let args = args.map(|a| a.call_args()).as_mut().map_or(ptr::null_mut(), |args| args);
-			JS_InstanceOf(cx.as_ptr(), object.handle().into(), &Self::class().base, args)
+			JS_InstanceOf(
+				cx.as_ptr(),
+				object.handle().into(),
+				&Self::class().base,
+				ptr::null_mut(),
+			)
+		}
+	}
+
+	fn instance_or_subtype_of(cx: &Context, object: &Object) -> Result<bool> {
+		let constructor: Function = cx.root(Self::class_info(cx).constructor).into();
+		let constructor_obj = constructor.to_object(cx);
+		let mut result = false;
+		unsafe {
+			if !JS_HasInstance(
+				cx.as_ptr(),
+				constructor_obj.handle().into(),
+				Value::object(cx, object).handle().into(),
+				&mut result as *mut bool,
+			) {
+				return Err(Error::none());
+			}
+		}
+		Ok(result)
+	}
+}
+
+trait SpecZero {
+	fn is_zeroed(&self) -> bool;
+}
+
+impl SpecZero for JSFunctionSpec {
+	fn is_zeroed(&self) -> bool {
+		self.is_zeroed()
+	}
+}
+
+impl SpecZero for JSPropertySpec {
+	fn is_zeroed(&self) -> bool {
+		self.is_zeroed()
+	}
+}
+
+fn has_zero_spec<T: SpecZero>(specs: Option<&[T]>) -> bool {
+	specs.and_then(|s| s.last()).map_or(true, |specs| specs.is_zeroed())
+}
+
+fn unwrap_specs<T>(specs: Option<&[T]>) -> *const T {
+	specs.map_or_else(ptr::null, |specs| specs.as_ptr())
+}
+
+fn private_error(class: &'static NativeClass) -> Error {
+	let name = unsafe { CStr::from_ptr(class.base.name).to_str().unwrap() };
+	Error::new(format!("Object does not implement interface {}", name), ErrorKind::Type)
+}
+
+#[doc(hidden)]
+pub unsafe extern "C" fn finalise_native_object_operation<T>(_: *mut GCContext, this: *mut JSObject) {
+	let mut value = NullValue();
+	unsafe {
+		JS_GetReservedSlot(this, 0, &mut value);
+	}
+	if value.is_double() && value.asBits_ & 0xFFFF000000000000 == 0 {
+		let private = value.to_private().cast_mut().cast::<T>();
+		let _ = unsafe { Box::from_raw(private) };
+	}
+}
+
+#[doc(hidden)]
+pub unsafe extern "C" fn trace_native_object_operation<T: Traceable>(trc: *mut JSTracer, this: *mut JSObject) {
+	let mut value = NullValue();
+	unsafe {
+		JS_GetReservedSlot(this, 0, &mut value);
+	}
+	if value.is_double() && value.asBits_ & 0xFFFF000000000000 == 0 {
+		unsafe {
+			let private = &*(value.to_private().cast::<T>());
+			private.trace(trc);
 		}
 	}
 }

@@ -5,9 +5,9 @@
  */
 
 use bytes::Bytes;
-use http::{HeaderMap, HeaderValue};
+use http::{HeaderValue, StatusCode};
 use http::header::{CONTENT_TYPE, LOCATION};
-use hyper::{Body, StatusCode};
+use hyper::{Body, HeaderMap};
 use hyper::ext::ReasonPhrase;
 use ion::conversions::ToValue;
 use ion::string::byte::{ByteString, VisibleAscii};
@@ -17,6 +17,7 @@ use url::Url;
 
 use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap, HeapPointer};
 use ion::class::{NativeObject, Reflector};
+use ion::function::Opt;
 use ion::typedarray::ArrayBufferWrapper;
 pub use options::*;
 
@@ -55,7 +56,7 @@ impl Response {
 		let status_text = if let Some(reason) = response.extensions().get::<ReasonPhrase>() {
 			Some(String::from_utf8(reason.as_bytes().to_vec()).unwrap())
 		} else {
-			status.canonical_reason().map(String::from)
+			response.status().canonical_reason().map(String::from)
 		};
 
 		let headers = Headers {
@@ -108,12 +109,12 @@ impl Response {
 	}
 
 	pub fn headers<'cx>(&self, cx: &'cx Context) -> &'cx HeaderMap {
-		&Headers::get_private(&self.headers.root(cx).into()).headers
+		&Headers::get_private(cx, &self.headers.root(cx).into()).unwrap().headers
 	}
 
 	pub fn get_headers_object<'s, 'cx: 's>(&'s mut self, cx: &'cx Context) -> &'s Headers {
-		let obj = cx.root_object(self.headers.get()).into();
-		Headers::get_private(&obj)
+		let obj = cx.root(self.headers.get()).into();
+		Headers::get_private(cx, &obj).unwrap()
 	}
 
 	pub fn take_body(&mut self) -> Result<FetchBody> {
@@ -132,12 +133,12 @@ impl Response {
 	}
 
 	pub async fn take_body_bytes(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<Bytes> {
-		let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
 		Ok(body.into_bytes(cx).await?.unwrap_or_default())
 	}
 
 	pub async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
-		let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
 		body.into_text(cx).await
 	}
 
@@ -204,7 +205,7 @@ impl Response {
 #[js_class]
 impl Response {
 	#[ion(constructor)]
-	pub fn constructor(cx: &Context, body: Option<FetchBody>, init: Option<ResponseInit>) -> Result<Response> {
+	pub fn constructor(cx: &Context, Opt(body): Opt<FetchBody>, Opt(init): Opt<ResponseInit>) -> Result<Response> {
 		let init = init.unwrap_or_default();
 
 		let mut response = Response {
@@ -236,11 +237,7 @@ impl Response {
 				));
 			}
 
-			if let Some(kind) = &body.kind {
-				if !headers.headers.contains_key(CONTENT_TYPE) {
-					headers.headers.append(CONTENT_TYPE, HeaderValue::from_str(&kind.to_string()).unwrap());
-				}
-			}
+			body.add_content_type_header(&mut headers.headers);
 			response.body = Some(body);
 		}
 
@@ -254,7 +251,7 @@ impl Response {
 	}
 
 	#[ion(name = "json")]
-	pub fn static_json(cx: &Context, data: Object, options: Option<ResponseInit>) -> Result<*mut JSObject> {
+	pub fn static_json(cx: &Context, data: Object, Opt(options): Opt<ResponseInit>) -> Result<*mut JSObject> {
 		let text = ion::json::stringify(cx, data.as_value(cx))?;
 		let text_bytes: Vec<_> = text.into();
 		let body = FetchBody {
@@ -271,13 +268,13 @@ impl Response {
 
 		Ok(Response::new_object(
 			cx,
-			Box::new(Response::constructor(cx, Some(body), Some(options))?),
+			Box::new(Response::constructor(cx, Opt(Some(body)), Opt(Some(options)))?),
 		))
 	}
 
 	pub fn redirect(
 		cx: &Context, location: ByteString<VisibleAscii>,
-		#[ion(convert = ConversionBehavior::Clamp, strict)] status: Option<u16>,
+		#[ion(convert = ConversionBehavior::Clamp, strict)] Opt(status): Opt<u16>,
 	) -> Result<*mut JSObject> {
 		let status = status.unwrap_or(302);
 		if ![301, 302, 303, 307, 308].contains(&status) {
@@ -299,7 +296,7 @@ impl Response {
 
 		Ok(Response::new_object(
 			cx,
-			Box::new(Response::constructor(cx, None, Some(init))?),
+			Box::new(Response::constructor(cx, Opt(None), Opt(Some(init)))?),
 		))
 	}
 
@@ -368,7 +365,7 @@ impl Response {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
 				let body = this.take_body()?;
 				let headers = this.get_headers_object(&cx);
 				let header = headers.get(ByteString::from(CONTENT_TYPE.to_string().into()).unwrap()).unwrap();
@@ -388,7 +385,7 @@ impl Response {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
-				let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+				let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
 				body.into_json(cx).await
 			})
 		}
@@ -398,8 +395,8 @@ impl Response {
 	pub fn form_data(&mut self, cx: &Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let this = Self::get_mut_private(&mut Object::from(this.to_local()));
+			future_to_promise::<_, _, *mut JSObject, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&cx, &Object::from(this.to_local())).unwrap();
 				let headers = this.get_headers_object(&cx);
 				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
 				let Some(content_type) = headers.get(content_type_string)? else {

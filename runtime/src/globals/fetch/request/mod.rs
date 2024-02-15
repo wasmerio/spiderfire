@@ -7,7 +7,7 @@
 use std::str::FromStr;
 
 use bytes::Bytes;
-use http::{HeaderMap, HeaderValue};
+use http::HeaderMap;
 use http::header::CONTENT_TYPE;
 use hyper::Method;
 use ion::string::byte::ByteString;
@@ -18,6 +18,7 @@ use url::Url;
 
 use ion::{ClassDefinition, Context, Error, ErrorKind, Result, Promise};
 use ion::class::{Reflector, NativeObject};
+use ion::function::Opt;
 pub use options::*;
 
 use crate::globals::abort::AbortSignal;
@@ -49,8 +50,6 @@ pub struct Request {
 	pub(crate) body_used: bool,
 
 	#[trace(no_trace)]
-	pub(crate) url: Url,
-	#[trace(no_trace)]
 	pub(crate) locations: Vec<Url>,
 
 	pub(crate) referrer: Referrer,
@@ -73,7 +72,7 @@ pub struct Request {
 
 impl Request {
 	pub fn url(&self) -> &Url {
-		&self.url
+		&self.locations.last().unwrap()
 	}
 
 	pub fn method(&self) -> &Method {
@@ -85,7 +84,7 @@ impl Request {
 	}
 
 	pub fn get_headers_object<'cx>(&self, cx: &'cx Context) -> &'cx Headers {
-		Headers::get_private(&self.headers.root(cx).into())
+		Headers::get_private(cx, &self.headers.root(cx).into()).unwrap()
 	}
 
 	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
@@ -110,7 +109,7 @@ impl Request {
 	}
 
 	async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
-		let this = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into());
+		let this = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap();
 		Ok(this
 			.take_body()?
 			.into_bytes(cx)
@@ -132,7 +131,6 @@ impl Request {
 			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
 			body_used: self.body_used,
 
-			url: url.clone(),
 			locations: vec![url],
 
 			referrer: self.referrer.clone(),
@@ -173,7 +171,6 @@ impl Request {
 			body,
 			body_used: self.body_used,
 
-			url: url.clone(),
 			locations: vec![url],
 
 			referrer: self.referrer.clone(),
@@ -198,12 +195,12 @@ impl Request {
 #[js_class]
 impl Request {
 	#[ion(constructor)]
-	pub fn constructor(cx: &Context, info: RequestInfo, init: Option<RequestInit>) -> Result<Request> {
+	pub fn constructor(cx: &Context, info: RequestInfo, Opt(init): Opt<RequestInit>) -> Result<Request> {
 		let mut fallback_cors = false;
 
 		let mut request = match info {
 			RequestInfo::Request(request) => {
-				let request = Request::get_mut_private(&mut cx.root_object(request.reflector().get()).into());
+				let request = Request::get_mut_private(cx, &cx.root(request.reflector().get()).into()).unwrap();
 				request.try_clone(cx)?
 			}
 			RequestInfo::String(url) => {
@@ -222,7 +219,6 @@ impl Request {
 					body: Some(FetchBody::default()),
 					body_used: false,
 
-					url: url.clone(),
 					locations: vec![url],
 
 					referrer: Referrer::default(),
@@ -339,12 +335,7 @@ impl Request {
 		};
 
 		if let Some(body) = body {
-			if let Some(kind) = &body.kind {
-				if !headers.headers.contains_key(CONTENT_TYPE) {
-					headers.headers.append(CONTENT_TYPE, HeaderValue::from_str(&kind.to_string()).unwrap());
-				}
-			}
-
+			body.add_content_type_header(&mut headers.headers);
 			request.body = Some(body);
 		}
 		request.headers.set(Headers::new_object(cx, Box::new(headers)));
@@ -359,7 +350,7 @@ impl Request {
 
 	#[ion(get)]
 	pub fn get_url(&self) -> String {
-		self.url.to_string()
+		self.url().to_string()
 	}
 
 	#[ion(get)]
@@ -453,7 +444,7 @@ impl Request {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
 				let body = this.take_body()?;
 				let (cx, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
 				let array = match bytes? {
@@ -471,7 +462,7 @@ impl Request {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let this = Self::get_mut_private(&mut this.root(&cx).into());
+				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
 				let body = this.take_body()?;
 				let headers = this.get_headers_object(&cx);
 				let header = headers.get(ByteString::from(CONTENT_TYPE.to_string().into()).unwrap()).unwrap();
@@ -489,7 +480,7 @@ impl Request {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
-				let body = Self::get_mut_private(&mut cx.root_object(this.to_ptr()).into()).take_body()?;
+				let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
 				body.into_json(cx).await
 			})
 		}
@@ -500,7 +491,7 @@ impl Request {
 		let this = TracedHeap::new(self.reflector().get());
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let this = Self::get_mut_private(&mut Object::from(this.to_local()));
+				let this = Self::get_mut_private(&cx, &Object::from(this.to_local())).unwrap();
 				let headers = this.get_headers_object(&cx);
 				let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into_bytes()).unwrap();
 				let Some(content_type) = headers.get(content_type_string)? else {

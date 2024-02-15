@@ -11,6 +11,7 @@ use ion::{
 };
 use ion::class::Reflector;
 use ion::conversions::{FromValue, ToValue};
+use ion::function::Opt;
 use ion::symbol::WellKnownSymbolCode;
 
 use crate::globals::url::URL;
@@ -36,23 +37,23 @@ impl<'cx> FromValue<'cx> for URLSearchParamsInit {
 		} else if let Ok(object) = Object::from_value(cx, value, strict, ()) {
 			let vec = object
 				.iter(cx, None)
-				.map(|(key, value)| {
-					let value = String::from_value(cx, &value, strict, ())?;
+				.filter_map(|(key, value)| {
+					let value = match value.and_then(|v| String::from_value(cx, &v, strict, ())) {
+						Ok(v) => v,
+						Err(e) => return Some(Err(e)),
+					};
 					match key.to_owned_key(cx) {
-						OwnedKey::Int(i) => Ok((i.to_string(), value)),
-						OwnedKey::String(key) => Ok((key, value)),
-						_ => unreachable!(),
+						Ok(OwnedKey::Int(i)) => Some(Ok((i.to_string(), value))),
+						Ok(OwnedKey::String(key)) => Some(Ok((key, value))),
+						Err(e) => Some(Err(e)),
+						_ => None,
 					}
 				})
 				.collect::<Result<_>>()?;
 			Ok(URLSearchParamsInit(vec))
 		} else if let Ok(string) = String::from_value(cx, value, strict, ()) {
-			let str = if let Some(stripped) = string.strip_prefix('?') {
-				stripped
-			} else {
-				string.as_str()
-			};
-			Ok(URLSearchParamsInit(parse(str.as_bytes()).into_owned().collect()))
+			let string = string.strip_prefix('?').unwrap_or(&string);
+			Ok(URLSearchParamsInit(parse(string.as_bytes()).into_owned().collect()))
 		} else {
 			Err(Error::new("Invalid Search Params Initialiser", ErrorKind::Type))
 		}
@@ -79,7 +80,7 @@ impl URLSearchParams {
 #[js_class]
 impl URLSearchParams {
 	#[ion(constructor)]
-	pub fn constructor(init: Option<URLSearchParamsInit>) -> URLSearchParams {
+	pub fn constructor(Opt(init): Opt<URLSearchParamsInit>) -> URLSearchParams {
 		let pairs = init.map(|init| init.0).unwrap_or_default();
 		URLSearchParams {
 			reflector: Reflector::default(),
@@ -106,7 +107,7 @@ impl URLSearchParams {
 		self.update();
 	}
 
-	pub fn delete(&mut self, name: String, value: Option<String>) {
+	pub fn delete(&mut self, name: String, Opt(value): Opt<String>) {
 		if let Some(value) = value {
 			self.pairs.retain(|(k, v)| k != &name || v != &value)
 		} else {
@@ -124,7 +125,7 @@ impl URLSearchParams {
 		self.pairs.iter().filter(|(k, _)| k == &key).map(|(_, v)| v.clone()).collect()
 	}
 
-	pub fn has(&self, key: String, value: Option<String>) -> bool {
+	pub fn has(&self, key: String, Opt(value): Opt<String>) -> bool {
 		if let Some(value) = value {
 			self.pairs.iter().any(|(k, v)| k == &key && v == &value)
 		} else {
@@ -174,8 +175,8 @@ impl URLSearchParams {
 
 	fn update(&mut self) {
 		if let Some(url) = &self.url {
-			let mut url = Object::from(unsafe { Local::from_heap(url) });
-			let url = URL::get_mut_private(&mut url);
+			let url = Object::from(unsafe { Local::from_heap(url) });
+			let url = unsafe { URL::get_mut_private_unchecked(&url) };
 			if self.pairs.is_empty() {
 				url.url.set_query(None);
 			} else {
@@ -185,10 +186,10 @@ impl URLSearchParams {
 	}
 
 	#[ion(name = "forEach")]
-	pub fn for_each(&self, cx: &Context, callback: Function, this_arg: Option<Object>) -> ResultExc<()> {
+	pub fn for_each(&self, cx: &Context, callback: Function, Opt(this_arg): Opt<Object>) -> ResultExc<()> {
 		let this_arg = this_arg.unwrap_or_else(|| Object::null(cx));
 		for (k, v) in &self.pairs {
-			let this = Value::object(cx, &cx.root_object(self.reflector.get()).into());
+			let this = Value::object(cx, &cx.root(self.reflector.get()).into());
 			callback.call(cx, &this_arg, &[v.as_value(cx), k.as_value(cx), this]).map_err(|e| {
 				e.map(|e| e.exception).unwrap_or_else(|| {
 					ion::Exception::Error(Error::new("Unknown failure in callback", ErrorKind::Normal))
@@ -211,7 +212,7 @@ pub struct SearchParamsIterator(usize);
 impl JSIterator for SearchParamsIterator {
 	fn next_value<'cx>(&mut self, cx: &'cx Context, private: &Value<'cx>) -> Option<Value<'cx>> {
 		let object = private.to_object(cx);
-		let search_params = URLSearchParams::get_private(&object);
+		let search_params = URLSearchParams::get_private(cx, &object).unwrap();
 		let pair = search_params.pairs.get(self.0);
 		pair.map(move |(k, v)| {
 			self.0 += 1;

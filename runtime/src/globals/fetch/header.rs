@@ -25,6 +25,7 @@ use ion::{Array, Context, Error, ErrorKind, Function, Object, OwnedKey, Result, 
 use ion::{ClassDefinition, JSIterator};
 use ion::class::Reflector;
 use ion::conversions::{FromValue, ToValue};
+use ion::function::Opt;
 use ion::string::byte::{ByteString, VisibleAscii};
 use ion::symbol::WellKnownSymbolCode;
 
@@ -70,7 +71,7 @@ impl<'cx> FromValue<'cx> for HeaderEntry {
 
 impl ToValue<'_> for HeaderEntry {
 	fn to_value(&self, cx: &Context, value: &mut Value) {
-		let mut array = Array::new(cx);
+		let array = Array::new(cx);
 		array.set_as(cx, 0, &self.name);
 		array.set_as(cx, 1, &self.value);
 		array.to_value(cx, value);
@@ -193,7 +194,7 @@ impl Headers {
 #[js_class]
 impl Headers {
 	#[ion(constructor)]
-	pub fn constructor(init: Option<HeadersInit>) -> Result<Headers> {
+	pub fn constructor(Opt(init): Opt<HeadersInit>) -> Result<Headers> {
 		init.unwrap_or_default().into_headers(HeaderMap::default(), HeadersKind::None)
 	}
 
@@ -269,7 +270,7 @@ impl Headers {
 				h.to_value(cx, &mut value);
 			}
 			let key = key.as_str().to_ascii_lowercase();
-			let this = Value::object(cx, &cx.root_object(self.reflector.get()).into());
+			let this = Value::object(cx, &cx.root(self.reflector.get()).into());
 			callback.call(cx, &this_arg, &[value, key.as_value(cx), this]).map_err(|e| {
 				e.map(|e| e.exception).unwrap_or_else(|| {
 					ion::Exception::Error(Error::new("Unknown failure in callback", ErrorKind::Normal))
@@ -309,7 +310,7 @@ pub struct HeadersIterator {
 impl JSIterator for HeadersIterator {
 	fn next_value<'cx>(&mut self, cx: &'cx Context, private: &Value<'cx>) -> Option<Value<'cx>> {
 		let object = private.to_object(cx);
-		let headers = Headers::get_private(&object);
+		let headers = Headers::get_private(cx, &object).unwrap();
 		let key = self.keys.next();
 		key.and_then(|key| {
 			if key == SET_COOKIE.as_str() {
@@ -487,13 +488,13 @@ fn remove_privileged_no_cors_headers(headers: &mut HeaderMap, kind: HeadersKind)
 fn append_to_headers(cx: &Context, headers: &mut HeaderMap, obj: Object) -> Result<()> {
 	for key in obj.keys(cx, None).map(|key| key.to_owned_key(cx)) {
 		let key = match key {
-			OwnedKey::Int(i) => i.to_string(),
-			OwnedKey::String(s) => s,
+			Ok(OwnedKey::Int(i)) => i.to_string(),
+			Ok(OwnedKey::String(s)) => s,
 			_ => continue,
 		};
 
 		let name = HeaderName::from_str(&key.to_lowercase())?;
-		let value = obj.get(cx, &key).unwrap();
+		let value = obj.get(cx, &key)?.unwrap();
 		if let Ok(array) = Array::from_value(cx, &value, false, ()) {
 			let vec: Vec<_> = array
 				.to_vec(cx)

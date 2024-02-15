@@ -1,4 +1,7 @@
-use ion::{class::Reflector, Heap, Result, ClassDefinition, Context, Error, ErrorKind, Object, conversions::ToValue, Value};
+use ion::{
+	class::Reflector, conversions::ToValue, function::Opt, ClassDefinition, Context, Error, ErrorKind, Heap, Object,
+	Result, Value,
+};
 use mozjs::jsapi::{JSObject, ToStringSlow};
 
 use crate::globals::encoding::TextEncoder;
@@ -22,15 +25,15 @@ impl TextEncoderStreamTransformer {
 
 impl TextEncoderStreamTransformer {
 	fn transform_chunk(&self, cx: &Context, chunk: Value, controller: &TransformStreamDefaultController) -> Result<()> {
-		let stream = TextEncoderStream::get_private(&self.stream.root(cx).into());
-		let encoder = TextEncoder::get_mut_private(&mut stream.encoder.root(cx).into());
+		let stream = TextEncoderStream::get_private(cx, &self.stream.root(cx).into()).unwrap();
+		let encoder = TextEncoder::get_mut_private(cx, &stream.encoder.root(cx).into()).unwrap();
 		let chunk_str = unsafe { ToStringSlow(cx.as_ptr(), chunk.handle().into()) };
 		if chunk_str.is_null() {
 			return Err(Error::none());
 		}
-		let chunk_str = ion::String::from(cx.root_string(chunk_str)).to_owned(cx);
+		let chunk_str = ion::String::from(cx.root(chunk_str)).to_owned(cx)?;
 		controller
-			.enqueue(cx, encoder.encode(cx, Some(chunk_str))?.as_value(cx))
+			.enqueue(cx, encoder.encode(cx, Opt(Some(chunk_str)))?.as_value(cx))
 			.map_err(|e| e.to_error())?;
 		Ok(())
 	}
@@ -61,11 +64,11 @@ pub struct TextEncoderStream {
 
 impl TextEncoderStream {
 	fn transform_stream<'cx>(&self, cx: &'cx Context) -> &'cx TransformStream {
-		TransformStream::get_private(&self.transform_stream.root(cx).into())
+		TransformStream::get_private(cx, &self.transform_stream.root(cx).into()).unwrap()
 	}
 
 	fn encoder<'cx>(&self, cx: &'cx Context) -> &'cx TextEncoder {
-		TextEncoder::get_private(&self.encoder.root(cx).into())
+		TextEncoder::get_private(cx, &self.encoder.root(cx).into()).unwrap()
 	}
 }
 
@@ -73,9 +76,9 @@ impl TextEncoderStream {
 impl TextEncoderStream {
 	#[ion(constructor)]
 	pub fn constructor(cx: &Context, #[ion(this)] this: &Object) -> Result<TextEncoderStream> {
-		let encoder = cx.root_object(TextEncoder::new_object(cx, Box::new(TextEncoder::constructor())));
+		let encoder = cx.root(TextEncoder::new_object(cx, Box::new(TextEncoder::constructor())));
 
-		let transformer = Object::from(cx.root_object(TextEncoderStreamTransformer::new_object(
+		let transformer = Object::from(cx.root(TextEncoderStreamTransformer::new_object(
 			cx,
 			Box::new(TextEncoderStreamTransformer::new(this)),
 		)));

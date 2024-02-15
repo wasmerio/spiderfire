@@ -5,14 +5,16 @@
  */
 
 use std::convert::Infallible;
-use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{self, Display, Formatter};
 
 use bytes::Bytes;
 use futures::{StreamExt, stream};
-use hyper::Body;
+use http::header::CONTENT_TYPE;
+use http::{HeaderMap, HeaderValue};
 use hyper::body::HttpBody;
+use hyper::Body;
 use ion::class::NativeObject;
+use ion::function::Opt;
 use ion::typedarray::ArrayBuffer;
 use mozjs::c_str;
 use mozjs::jsapi::{CheckReadableStreamControllerCanCloseOrEnqueue, JSObject};
@@ -20,8 +22,8 @@ use multipart::client::multipart;
 use mozjs::jsval::JSVal;
 
 use ion::{
-	Context, Error, ErrorKind, Result, Value, Heap, ReadableStream, Exception, Promise, TracedHeap, ClassDefinition,
-	Function, Object,
+	ClassDefinition, Context, Error, ErrorKind, Exception, Function, Heap, Object, Promise, ReadableStream, Result,
+	TracedHeap, Value,
 };
 use ion::conversions::{FromValue, ToValue};
 
@@ -157,7 +159,7 @@ impl FetchBody {
 	pub async fn into_text(self, cx: Context) -> Result<String> {
 		let bytes = self.into_bytes(cx).await?;
 		String::from_utf8(bytes.unwrap_or_default().into())
-			.map_err(|e| Error::new(&format!("Invalid UTF-8 sequence: {}", e), ErrorKind::Normal))
+			.map_err(|e| Error::new(format!("Invalid UTF-8 sequence: {}", e), ErrorKind::Normal))
 	}
 
 	pub async fn into_json(self, cx: Context) -> Result<*mut JSObject> {
@@ -227,17 +229,17 @@ impl FetchBody {
 						let file = File::constructor(
 							vec![BlobPart(bytes)],
 							file_name,
-							Some(FileOptions {
+							Opt(Some(FileOptions {
 								last_modified: None,
 								blob: BlobOptions {
 									endings: crate::globals::file::Endings::Transparent,
 									kind: content_type,
 								},
-							}),
+							})),
 						);
-						let file = cx.root_object(File::new_object(&cx, Box::new(file))).into();
+						let file = cx.root(File::new_object(&cx, Box::new(file))).into();
 
-						form_data.append_native_file(name, File::get_private(&file));
+						form_data.append_native_file(name, File::get_private(&cx, &file).unwrap());
 					}
 
 					None => form_data.append_native_string(
@@ -288,11 +290,19 @@ impl FetchBody {
 			kind: self.kind.clone(),
 		})
 	}
+
+	pub(crate) fn add_content_type_header(&self, headers: &mut HeaderMap) {
+		if let Some(kind) = &self.kind {
+			if !headers.contains_key(CONTENT_TYPE) {
+				headers.append(CONTENT_TYPE, HeaderValue::from_str(&kind.to_string()).unwrap());
+			}
+		}
+	}
 }
 
 impl<'cx> FromValue<'cx> for FetchBody {
 	type Config = ();
-	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _: ()) -> Result<FetchBody> {
+	fn from_value(cx: &'cx Context, value: &Value, strict: bool, _: ()) -> ion::Result<FetchBody> {
 		if value.handle().is_string() {
 			let bytes = Bytes::from(String::from_value(cx, value, strict, ()).unwrap());
 			return Ok(FetchBody {
@@ -328,7 +338,7 @@ impl<'cx> FromValue<'cx> for FetchBody {
 						FormDataEntryValue::String(str) => form.add_text(kv.key.as_str(), str),
 						FormDataEntryValue::File(file) => {
 							// TODO: remove to_vec call
-							let file = File::get_private(&file.root(cx).into());
+							let file = File::get_private(cx, &file.root(cx).into()).unwrap();
 							form.add_reader_file(
 								kv.key.as_str(),
 								std::io::Cursor::new(file.blob.as_bytes().to_vec()),
@@ -402,19 +412,20 @@ impl NativeStreamSourceCallbacks for HyperBodyStreamSource {
 
 			Ok(future_to_promise(cx, move |cx| async move {
 				let (cx, chunk) = cx
-					.await_native(
-						NativeStreamSource::get_mut_private(&mut stream_source.to_local().into())
+					.await_native_cx(|cx| {
+						NativeStreamSource::get_mut_private(&cx, &stream_source.to_local().into())
+							.unwrap()
 							.get_typed_source_mut::<Self>()
 							.body
-							.data(),
-					)
+							.data()
+					})
 					.await;
 
 				let controller = ion::Object::from(controller.root(&cx));
 				match chunk {
 					None => {
 						let close_func =
-							Function::from_object(&cx, &controller.get(&cx, "close").unwrap().to_object(&cx)).unwrap();
+							Function::from_object(&cx, &controller.get(&cx, "close")?.unwrap().to_object(&cx)).unwrap();
 						close_func.call(&cx, &controller, &[]).map_err(|e| e.unwrap().exception)?;
 						ion::ResultExc::<_>::Ok(())
 					}
@@ -430,7 +441,7 @@ impl NativeStreamSourceCallbacks for HyperBodyStreamSource {
 						.as_value(&cx);
 
 						let enqueue_func =
-							Function::from_object(&cx, &controller.get(&cx, "enqueue").unwrap().to_object(&cx))
+							Function::from_object(&cx, &controller.get(&cx, "enqueue")?.unwrap().to_object(&cx))
 								.unwrap();
 						enqueue_func.call(&cx, &controller, &[array_buffer]).map_err(|e| e.unwrap().exception)?;
 						Ok(())
@@ -443,6 +454,6 @@ impl NativeStreamSourceCallbacks for HyperBodyStreamSource {
 
 	fn cancel(self: Box<Self>, cx: &Context, _reason: Value) -> ion::ResultExc<ion::Promise> {
 		drop(self.body);
-		Ok(Promise::new_resolved(cx, Value::undefined(cx)))
+		Ok(Promise::resolved(cx, Value::undefined(cx)))
 	}
 }

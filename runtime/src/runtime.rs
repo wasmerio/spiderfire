@@ -12,7 +12,7 @@ use mozjs::jsapi::{ContextOptionsRef, JSAutoRealm, SetJobQueue, SetPromiseReject
 
 use ion::{Context, ErrorReport, Object};
 use ion::module::{init_module_loader, ModuleLoader};
-use ion::objects::new_global;
+use ion::object::new_global;
 use mozjs::rust::{RealmOptions, SIMPLE_GLOBAL_CLASS};
 
 use crate::event_loop::{EventLoop, promise_rejection_tracker_callback};
@@ -20,7 +20,7 @@ use crate::event_loop::future::FutureQueue;
 use crate::event_loop::macrotasks::MacrotaskQueue;
 use crate::event_loop::microtasks::{JOB_QUEUE_TRAPS, MicrotaskQueue};
 use crate::globals::{init_globals, init_microtasks, init_timers};
-use crate::modules::StandardModules;
+use crate::module::StandardModules;
 
 #[derive(Default)]
 pub struct ContextPrivate {
@@ -50,7 +50,7 @@ impl ContextExt for Context {
 	}
 
 	fn get_raw_app_data(&self) -> *mut dyn Any {
-		unsafe { self.get_private().app_data.as_deref().unwrap() as *const _ as *mut _ }
+		unsafe { ptr::from_mut(self.get_private().app_data.as_deref_mut().unwrap()) }
 	}
 
 	//
@@ -75,7 +75,7 @@ impl<'cx> Runtime<'cx> {
 		&self.global
 	}
 
-	pub fn global_mut(&mut self) -> &mut Object<'cx> {
+	pub fn global_mut(&mut self) -> &Object<'cx> {
 		&mut self.global
 	}
 
@@ -138,7 +138,7 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 	}
 
 	pub fn build(self, cx: &Context) -> Runtime {
-		let mut global = new_global(
+		let global = new_global(
 			cx,
 			&SIMPLE_GLOBAL_CLASS,
 			None,
@@ -149,13 +149,13 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 
 		let global_obj = global.handle().get();
 		global.set_as(cx, "global", &global_obj);
-		init_globals(cx, &mut global);
+		init_globals(cx, &global);
 
 		let mut private = Box::<ContextPrivate>::default();
 
 		if self.microtask_queue {
 			private.event_loop.microtasks = Some(MicrotaskQueue::default());
-			init_microtasks(cx, &mut global);
+			init_microtasks(cx, &global);
 			private.event_loop.futures = Some(FutureQueue::default());
 
 			unsafe {
@@ -163,7 +163,7 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 					cx.as_ptr(),
 					CreateJobQueue(
 						&JOB_QUEUE_TRAPS,
-						private.event_loop.microtasks.as_ref().unwrap() as *const _ as *const _,
+						ptr::from_ref(private.event_loop.microtasks.as_ref().unwrap()).cast(),
 					),
 				);
 				SetPromiseRejectionTrackerCallback(
@@ -175,7 +175,7 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 		}
 		if self.macrotask_queue {
 			private.event_loop.macrotasks = Some(MacrotaskQueue::default());
-			init_timers(cx, &mut global);
+			init_timers(cx, &global);
 		}
 
 		let _options = unsafe { &mut *ContextOptionsRef(cx.as_ptr()) };
@@ -189,9 +189,9 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 
 		if let Some(standard_modules) = self.standard_modules {
 			if has_loader {
-				standard_modules.init(cx, &mut global);
+				standard_modules.init(cx, &global);
 			} else {
-				standard_modules.init_globals(cx, &mut global);
+				standard_modules.init_globals(cx, &global);
 			}
 		}
 
