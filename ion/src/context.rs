@@ -7,7 +7,6 @@
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ptr;
 use std::ptr::NonNull;
 
 use futures::Future;
@@ -39,7 +38,7 @@ pub enum GCType {
 
 /// Holds Rooted Values
 #[derive(Default)]
-struct RootedArena {
+pub struct RootedArena {
 	values: Arena<Rooted<JSVal>>,
 	objects: Arena<Rooted<*mut JSObject>>,
 	strings: Arena<Rooted<*mut JSString>>,
@@ -119,7 +118,7 @@ impl Context {
 
 	pub fn get_raw_private(&self) -> *mut dyn Any {
 		let inner = self.get_inner_data();
-		ptr::from_mut(unsafe { (*inner.as_ptr()).private.as_deref_mut().unwrap() })
+		unsafe { (*inner.as_ptr()).private.as_deref_mut().unwrap() as *mut _ }
 	}
 
 	pub fn set_private(&self, private: Box<dyn Any>) {
@@ -176,7 +175,7 @@ mod private {
 
 	use super::{GCType, RootedArena};
 
-	#[allow(clippy::mut_from_ref, private_interfaces)]
+	#[allow(clippy::mut_from_ref)]
 	pub trait Sealed: RootKind + GCMethods + Copy + Sized {
 		const GC_TYPE: GCType;
 
@@ -186,7 +185,7 @@ mod private {
 	macro_rules! impl_rootable {
 		($(($value:ty, $key:ident, $gc_type:ident)$(,)?)*) => {
 			$(
-				#[allow(clippy::mut_from_ref, private_interfaces)]
+				#[allow(clippy::mut_from_ref)]
 				impl Sealed for $value {
 					const GC_TYPE: GCType = GCType::$gc_type;
 

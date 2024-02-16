@@ -78,7 +78,7 @@ impl EventLoop {
 		}
 	}
 
-	fn is_empty(&self) -> bool {
+	pub fn is_empty(&self) -> bool {
 		self.microtasks.as_ref().map(|m| m.is_empty()).unwrap_or(true)
 			&& self.futures.as_ref().map(|f| f.is_empty()).unwrap_or(true)
 			&& self.macrotasks.as_ref().map(|m| m.is_empty()).unwrap_or(true)

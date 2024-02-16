@@ -6,7 +6,6 @@
 
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ptr;
 
 #[derive(Debug)]
 pub enum VisibleAscii {}
@@ -81,7 +80,7 @@ impl<T: BytePredicate> ByteStr<T> {
 	}
 
 	pub unsafe fn from_unchecked(bytes: &[u8]) -> &ByteStr<T> {
-		unsafe { &*(ptr::from_ref(bytes) as *const ByteStr<T>) }
+		unsafe { &*(bytes as *const _ as *const ByteStr<T>) }
 	}
 
 	pub fn as_bytes(&self) -> &[u8] {

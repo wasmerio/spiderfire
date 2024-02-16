@@ -50,7 +50,7 @@ impl ContextExt for Context {
 	}
 
 	fn get_raw_app_data(&self) -> *mut dyn Any {
-		unsafe { ptr::from_mut(self.get_private().app_data.as_deref_mut().unwrap()) }
+		unsafe { self.get_private().app_data.as_deref_mut().unwrap() as *mut _ }
 	}
 
 	//
@@ -83,6 +83,11 @@ impl<'cx> Runtime<'cx> {
 		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
 		let cx = self.cx.duplicate();
 		event_loop.run_event_loop(&cx).await
+	}
+
+	pub fn event_loop_is_empty(&self) -> bool {
+		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
+		event_loop.is_empty()
 	}
 }
 
@@ -163,7 +168,7 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 					cx.as_ptr(),
 					CreateJobQueue(
 						&JOB_QUEUE_TRAPS,
-						ptr::from_ref(private.event_loop.microtasks.as_ref().unwrap()).cast(),
+						private.event_loop.microtasks.as_ref().unwrap() as *const _ as *const _,
 					),
 				);
 				SetPromiseRejectionTrackerCallback(
