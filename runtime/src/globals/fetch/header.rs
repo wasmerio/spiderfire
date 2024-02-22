@@ -262,7 +262,7 @@ impl Headers {
 	}
 
 	#[ion(name = "forEach")]
-	pub fn for_each(&self, cx: &Context, callback: Function, this_arg: Option<Object>) -> ResultExc<()> {
+	pub fn for_each(&self, cx: &Context, callback: Function, Opt(this_arg): Opt<Object>) -> ResultExc<()> {
 		let this_arg = this_arg.unwrap_or_else(|| Object::null(cx));
 		for key in self.headers.keys() {
 			let mut value = Value::undefined(cx);
