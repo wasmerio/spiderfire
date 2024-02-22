@@ -15,8 +15,7 @@ use mozjs::jsapi::{
 use mozjs::jsval::JSVal;
 use mozjs::rust::{CompileOptionsWrapper, transform_u16_to_source_text};
 
-use crate::flags::PropertyFlags;
-use crate::{Context, Error, ErrorReport, Function, Local, Object, Promise, ThrowException, TracedHeap, Value};
+use crate::{Context, Error, ErrorReport, Local, Object, Promise, ThrowException, Value};
 use crate::conversions::{FromValue, ToValue};
 
 /// Represents private module data
@@ -242,76 +241,35 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 		cx: *mut JSContext, referencing_private: Handle<JSVal>, request: Handle<*mut JSObject>,
 		promise: Handle<*mut JSObject>,
 	) -> bool {
-		// The promise idea is taken from SpiderMonkey's own
-		// source (js/src/shell/ModuleLoader.cpp), they have
-		// this to say about it:
-		// To make this more realistic, use a promise to delay
-		// the import and make it happen asynchronously.
-
 		let cx = unsafe { Context::new_unchecked(cx) };
 
-		let referencing_private = TracedHeap::new(referencing_private.get());
-		let request = TracedHeap::new(request.get());
-		let promise = TracedHeap::new(promise.get());
+		let request_obj = Object::from(Local::from_marked(&request.get()));
+		let referencing_private_val = Value::from(Local::from_marked(&referencing_private.get()));
+		let evaluation_object: Object = match try_dynamic_import(&cx, referencing_private_val, request_obj) {
+			Ok(o) => o.root(&cx).into(),
+			Err(e) => {
+				// Exceptions during dynamic import are handled by calling
+				// FinishDynamicModuleImport with a pending exception on the context.
+				// Thus, we throw the error to make sure it's pending on the context.
+				e.exception.throw(&cx);
+				cx.root(std::ptr::null_mut()).into()
+			}
+		};
 
-		let delay_promise = Promise::resolved(&cx, Value::undefined(&cx));
-		delay_promise.add_reactions(
-			&cx,
-			Some(Function::from_closure(
-				&cx,
-				"",
-				Box::new(move |args| {
-					let cx = args.cx();
-
-					// This is where the actual importing happens
-					let evaluation_object: Object =
-						match try_dynamic_import(cx, referencing_private.clone(), request.clone()) {
-							Ok(o) => o.root(cx).into(),
-							Err(e) => {
-								// Exceptions during dynamic import are handled by calling
-								// FinishDynamicModuleImport with a pending exception on the context.
-								// Thus, we throw the error to make sure it's pending on the context.
-								e.exception.throw(cx);
-								cx.root(std::ptr::null_mut()).into()
-							}
-						};
-
-					if unsafe {
-						FinishDynamicModuleImport(
-							cx.as_ptr(),
-							evaluation_object.handle().into(),
-							referencing_private.root(cx).handle().into(),
-							request.root(cx).handle().into(),
-							promise.root(cx).handle().into(),
-						)
-					} {
-						Ok(Value::undefined(cx))
-					} else {
-						Err(crate::Exception::Error(Error::none()))
-					}
-				}),
-				1,
-				PropertyFlags::empty(),
-			)),
-			Some(Function::from_closure(
-				&cx,
-				"",
-				Box::new(move |_| panic!("This promise cannot fail")),
-				1,
-				PropertyFlags::empty(),
-			)),
-		)
+		unsafe {
+			FinishDynamicModuleImport(
+				cx.as_ptr(),
+				evaluation_object.handle().into(),
+				referencing_private,
+				request,
+				promise.into(),
+			)
+		}
 	}
 
-	fn try_dynamic_import(
-		cx: &Context, referencing_private: TracedHeap<JSVal>, request: TracedHeap<*mut JSObject>,
-	) -> Result<Promise, ErrorReport> {
-		let module = load_module(
-			cx,
-			referencing_private.root(cx).into(),
-			ModuleRequest(request.root(cx).into()),
-		)
-		.map_err(|e| ErrorReport::from_exception_with_error_stack(cx, crate::Exception::Error(e)))?;
+	fn try_dynamic_import(cx: &Context, referencing_private: Value, request: Object) -> Result<Promise, ErrorReport> {
+		let module = load_module(cx, referencing_private, ModuleRequest(request))
+			.map_err(|e| ErrorReport::from_exception_with_error_stack(cx, crate::Exception::Error(e)))?;
 
 		module.instantiate(cx)?;
 
