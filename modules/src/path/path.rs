@@ -121,8 +121,8 @@ const FUNCTIONS: &[JSFunctionSpec] = &[
 ];
 
 const PROPERTIES: &[JSPropertySpec] = &[
-	create_property_spec_string("separator", SEPARATOR, PropertyFlags::CONSTANT_ENUMERATED),
-	create_property_spec_string("delimiter", DELIMITER, PropertyFlags::CONSTANT_ENUMERATED),
+	create_property_spec_string("separator", SEPARATOR, PropertyFlags::ENUMERATE),
+	create_property_spec_string("delimiter", DELIMITER, PropertyFlags::ENUMERATE),
 	JSPropertySpec::ZERO,
 ];
 

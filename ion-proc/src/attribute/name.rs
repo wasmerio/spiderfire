@@ -35,7 +35,7 @@ impl Name {
 						attrs: Vec::new(),
 						lit: Lit::Str(LitStr::new(&name, literal.span())),
 					})),
-					parse_quote!(#ion::flags::PropertyFlags::CONSTANT_ENUMERATED),
+					parse_quote!(#ion::flags::PropertyFlags::ENUMERATE),
 				)
 			}
 			Name::Symbol(symbol) => {

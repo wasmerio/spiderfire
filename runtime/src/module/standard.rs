@@ -64,7 +64,7 @@ pub fn init_global_module<M: NativeModule>(cx: &Context, global: &Object) -> boo
 	let module = M::module(cx);
 
 	if let Some(module) = module {
-		global.define_as(cx, M::NAME, &module, PropertyFlags::CONSTANT_ENUMERATED)
+		global.define_as(cx, M::NAME, &module, PropertyFlags::ENUMERATE)
 	} else {
 		false
 	}

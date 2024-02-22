@@ -52,12 +52,7 @@ macro_rules! function_spec {
 		)
 	};
 	($function:expr, $name:expr, $nargs:expr) => {
-		function_spec!(
-			$function,
-			$name,
-			$nargs,
-			$crate::flags::PropertyFlags::CONSTANT_ENUMERATED
-		)
+		function_spec!($function, $name, $nargs, $crate::flags::PropertyFlags::ENUMERATE)
 	};
 	($function:expr, $nargs:expr) => {
 		function_spec!($function, ::std::stringify!($function), $nargs)
@@ -83,7 +78,7 @@ macro_rules! function_spec_symbol {
 			$function,
 			$symbol,
 			$nargs,
-			$crate::flags::PropertyFlags::CONSTANT_ENUMERATED
+			$crate::flags::PropertyFlags:ENUMERATE:
 		)
 	};
 }

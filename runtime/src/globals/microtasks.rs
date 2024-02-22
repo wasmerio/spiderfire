@@ -30,6 +30,6 @@ pub fn define(cx: &Context, global: &Object) -> bool {
 		cx,
 		"queueMicrotask",
 		&Function::from_spec(cx, &FUNCTION),
-		PropertyFlags::CONSTANT_ENUMERATED,
+		PropertyFlags::ENUMERATE,
 	)
 }

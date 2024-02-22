@@ -47,7 +47,7 @@ impl Method {
 					if name.is_case(Case::Snake) {
 						name = name.to_case(Case::Camel)
 					}
-					quote!(#ion::function_spec!(#class::#ident, #name, #nargs, #ion::flags::PropertyFlags::CONSTANT_ENUMERATED))
+					quote!(#ion::function_spec!(#class::#ident, #name, #nargs, #ion::flags::PropertyFlags::ENUMERATE))
 				}
 				Name::Symbol(symbol) => {
 					quote!(#ion::function_spec_symbol!(#class::#ident, #symbol, #nargs, #ion::flags::PropertyFlags::CONSTANT))
