@@ -11,9 +11,9 @@ use std::ops::{Deref, DerefMut};
 use futures::executor::block_on;
 use mozjs::glue::JS_GetPromiseResult;
 use mozjs::jsapi::{
-	AddPromiseReactions, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject, NewPromiseObject, PromiseState,
-	RejectPromise, ResolvePromise, CallOriginalPromiseResolve, CallOriginalPromiseReject,
-	AddPromiseReactionsIgnoringUnhandledRejection,
+	AddPromiseReactions, AddPromiseReactionsIgnoringUnhandledRejection, CallOriginalPromiseReject,
+	CallOriginalPromiseResolve, CallOriginalPromiseThen, GetPromiseID, GetPromiseState, IsPromiseObject, JSObject,
+	NewPromiseObject, PromiseState, RejectPromise, ResolvePromise,
 };
 use mozjs::rust::HandleObject;
 use mozjs_sys::jsapi::JS_GetPendingException;
@@ -247,6 +247,32 @@ impl Promise {
 				resolved.handle().into(),
 				rejected.handle().into(),
 			)
+		}
+	}
+
+	pub fn then(
+		&self, cx: &Context, on_resolved: Option<Function<'_>>, on_rejected: Option<Function<'_>>,
+	) -> Option<Self> {
+		let mut resolved = Object::null(cx);
+		let mut rejected = Object::null(cx);
+		if let Some(on_resolved) = on_resolved {
+			resolved.handle_mut().set(on_resolved.to_object(cx).handle().get());
+		}
+		if let Some(on_rejected) = on_rejected {
+			rejected.handle_mut().set(on_rejected.to_object(cx).handle().get());
+		}
+		let result = unsafe {
+			CallOriginalPromiseThen(
+				cx.as_ptr(),
+				self.promise.to_local().handle().into(),
+				resolved.handle().into(),
+				rejected.handle().into(),
+			)
+		};
+		if result.is_null() {
+			None
+		} else {
+			Some(Self::from_raw(result, cx).unwrap())
 		}
 	}
 

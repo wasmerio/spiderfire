@@ -111,8 +111,8 @@ fetch = [
 	"dep:sys-locale",
 ]
 
-[lints]
-workspace = true
+# [lints]
+# workspace = true
 
 [lib]
 test = false

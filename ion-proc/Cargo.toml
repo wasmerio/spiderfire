@@ -16,8 +16,8 @@ proc-macro2 = "1.0.78"
 version = "2.0.48"
 features = ["visit-mut"]
 
-[lints]
-workspace = true
+# [lints]
+# workspace = true
 
 [lib]
 proc-macro = true
