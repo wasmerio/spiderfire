@@ -245,11 +245,7 @@ impl Request {
 
 		if let Some(init) = init {
 			if let Some(window) = init.window {
-				if window.is_null() {
-					request.client_window = false;
-				} else {
-					return Err(Error::new("Received non-null window type", ErrorKind::Type));
-				}
+				request.client_window = false;
 			}
 
 			if request.mode == RequestMode::Navigate {
