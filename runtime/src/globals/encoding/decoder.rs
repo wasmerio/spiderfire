@@ -36,6 +36,8 @@ impl TextDecodeOptions {
 pub struct TextDecoder {
 	reflector: Reflector,
 	#[trace(no_trace)]
+	encoding: &'static Encoding,
+	#[trace(no_trace)]
 	decoder: Decoder,
 	pub fatal: bool,
 	pub ignore_byte_order_mark: bool,
@@ -70,6 +72,7 @@ impl TextDecoder {
 
 		Ok(TextDecoder {
 			reflector: Reflector::default(),
+			encoding,
 			decoder,
 			fatal: options.fatal,
 			ignore_byte_order_mark: options.ignore_byte_order_mark,
@@ -96,6 +99,14 @@ impl TextDecoder {
 			}
 		} else {
 			let (_, _, _) = self.decoder.decode_to_string(unsafe { buffer.as_slice() }, &mut string, !stream);
+		}
+		if !stream {
+			// Replace the decoder, since it's now in finished state.
+			self.decoder = if self.ignore_byte_order_mark {
+				self.encoding.new_decoder_without_bom_handling()
+			} else {
+				self.encoding.new_decoder()
+			};
 		}
 		Ok(string)
 	}

@@ -244,7 +244,7 @@ impl Request {
 		let mut body = None;
 
 		if let Some(init) = init {
-			if let Some(window) = init.window {
+			if let Some(_) = init.window {
 				request.client_window = false;
 			}
 
