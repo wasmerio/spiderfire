@@ -72,7 +72,7 @@ pub struct Request {
 
 impl Request {
 	pub fn url(&self) -> &Url {
-		&self.locations.last().unwrap()
+		self.locations.last().unwrap()
 	}
 
 	pub fn method(&self) -> &Method {
@@ -244,7 +244,7 @@ impl Request {
 		let mut body = None;
 
 		if let Some(init) = init {
-			if let Some(_) = init.window {
+			if init.window.is_some() {
 				request.client_window = false;
 			}
 

@@ -169,17 +169,13 @@ impl NativeStreamSourceCallbacks for TeedReadableStreamSource {
 							.ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?;
 						let controller = Object::from(controller_heap.root(cx));
 						let enqueue_func =
-							Function::from_object(&cx, &controller.get(&cx, "enqueue")?.unwrap().to_object(&cx))
-								.unwrap();
+							Function::from_object(cx, &controller.get(cx, "enqueue")?.unwrap().to_object(cx)).unwrap();
 						enqueue_func
-							.call(&cx, &controller, &[bytes_clone.as_value(cx)])
+							.call(cx, &controller, &[bytes_clone.as_value(cx)])
 							.map_err(|e| e.unwrap().exception)?;
 						let close_func =
-							Function::from_object(&cx, &controller.get(&cx, "close")?.unwrap().to_object(&cx))
-								.unwrap();
-						close_func
-							.call(&cx, &controller, &[])
-							.map_err(|e| e.unwrap().exception)?;
+							Function::from_object(cx, &controller.get(cx, "close")?.unwrap().to_object(cx)).unwrap();
+						close_func.call(cx, &controller, &[]).map_err(|e| e.unwrap().exception)?;
 						Ok(Value::undefined(cx))
 					}),
 					1,
@@ -193,9 +189,8 @@ impl NativeStreamSourceCallbacks for TeedReadableStreamSource {
 						let reason = args.access().value();
 						let controller = Object::from(controller_heap2.root(cx));
 						let cancel_func =
-							Function::from_object(&cx, &controller.get(&cx, "cancel")?.unwrap().to_object(&cx))
-								.unwrap();
-						cancel_func.call(&cx, &controller, &[reason]).map_err(|e| e.unwrap().exception)?;
+							Function::from_object(cx, &controller.get(cx, "cancel")?.unwrap().to_object(cx)).unwrap();
+						cancel_func.call(cx, &controller, &[reason]).map_err(|e| e.unwrap().exception)?;
 						Ok(Value::undefined(cx))
 					}),
 					1,
