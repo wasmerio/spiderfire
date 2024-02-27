@@ -14,7 +14,7 @@ use ion::function::{Clamp, Enforce, Opt, Rest};
 use crate::ContextExt;
 use crate::event_loop::macrotasks::{Macrotask, TimerMacrotask, UserMacrotask};
 
-const MINIMUM_DELAY: i32 = 1;
+const MINIMUM_DELAY: i32 = 0;
 const MINIMUM_DELAY_NESTED: i32 = 4;
 
 fn set_timer(
@@ -32,7 +32,7 @@ fn set_timer(
 		let timer = TimerMacrotask::new(callback, arguments, repeat, Duration::milliseconds(duration.into()));
 		Ok(queue.enqueue(Macrotask::Timer(timer), None))
 	} else {
-		Err(Error::new("Macrotask Queue has not been initialised.", None))
+		Err(Error::new("Macrotask Queue has not been initialized.", None))
 	}
 }
 
@@ -43,7 +43,7 @@ fn clear_timer(cx: &Context, id: Option<Enforce<u32>>) -> Result<()> {
 			queue.remove(id.0);
 			Ok(())
 		} else {
-			Err(Error::new("Macrotask Queue has not been initialised.", None))
+			Err(Error::new("Macrotask Queue has not been initialized.", None))
 		}
 	} else {
 		Ok(())
@@ -81,7 +81,7 @@ fn queueMacrotask(cx: &Context, callback: Function) -> Result<()> {
 		queue.enqueue(Macrotask::User(UserMacrotask::new(callback)), None);
 		Ok(())
 	} else {
-		Err(Error::new("Macrotask Queue has not been initialised.", None))
+		Err(Error::new("Macrotask Queue has not been initialized.", None))
 	}
 }
 

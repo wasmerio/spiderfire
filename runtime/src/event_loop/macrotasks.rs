@@ -97,28 +97,34 @@ pub enum Macrotask {
 pub struct MacrotaskQueue {
 	pub(crate) map: HashMap<u32, Macrotask>,
 	pub(crate) nesting: u8,
-	next: Option<u32>,
 	latest: Option<u32>,
 }
 
 impl Macrotask {
-	pub fn run(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
+	pub fn run(&mut self, cx: &Context, nesting: &mut u8) -> Result<(), Option<ErrorReport>> {
 		if let Macrotask::Signal(signal) = self {
 			if let Some(callback) = signal.callback.take() {
 				callback();
 			}
 			return Ok(());
 		}
-		let (callback, args) = match &self {
-			Macrotask::Timer(timer) => (&timer.callback, timer.arguments.clone()),
-			Macrotask::User(user) => (&user.callback, Vec::new()),
+		let (callback, args, my_nesting) = match &self {
+			Macrotask::Timer(timer) => (&timer.callback, timer.arguments.clone(), timer.nesting),
+			Macrotask::User(user) => (&user.callback, Vec::new(), 0),
 			_ => unreachable!(),
 		};
+
+		let prev_nesting = *nesting;
+		*nesting = my_nesting;
 
 		let callback = Function::from(callback.root(cx));
 		let args: Vec<_> = args.into_iter().map(|value| Value::from(value.root(cx))).collect();
 
-		callback.call(cx, &Object::global(cx), args.as_slice())?;
+		let res = callback.call(cx, &Object::global(cx), args.as_slice());
+
+		*nesting = prev_nesting;
+
+		res?;
 		Ok(())
 	}
 
@@ -147,12 +153,11 @@ impl Macrotask {
 
 impl MacrotaskQueue {
 	pub fn run_job(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
-		self.find_next();
-		if let Some(next) = self.next {
+		while let Some(next) = self.find_next() {
 			{
 				let macrotask = self.map.get_mut(&next);
 				if let Some(macrotask) = macrotask {
-					macrotask.run(cx)?;
+					macrotask.run(cx, &mut self.nesting)?;
 				}
 			}
 
@@ -171,18 +176,8 @@ impl MacrotaskQueue {
 	pub fn enqueue(&mut self, mut macrotask: Macrotask, id: Option<u32>) -> u32 {
 		let index = id.unwrap_or_else(|| self.latest.map(|l| l + 1).unwrap_or(0));
 
-		let next = self.next.and_then(|next| self.map.get(&next));
-		if let Some(next) = next {
-			if macrotask.remaining() < next.remaining() {
-				self.set_next(index, &macrotask);
-			}
-		} else {
-			self.set_next(index, &macrotask);
-		}
-
 		if let Macrotask::Timer(timer) = &mut macrotask {
-			self.nesting = self.nesting.saturating_add(1);
-			timer.nesting = self.nesting;
+			timer.nesting = self.nesting.saturating_add(1);
 		}
 
 		self.latest = Some(index);
@@ -192,16 +187,10 @@ impl MacrotaskQueue {
 	}
 
 	pub fn remove(&mut self, id: u32) {
-		if self.map.remove(&id).is_some() {
-			if let Some(next) = self.next {
-				if next == id {
-					self.next = None;
-				}
-			}
-		}
+		self.map.remove(&id);
 	}
 
-	pub fn find_next(&mut self) {
+	fn find_next(&mut self) -> Option<u32> {
 		let mut next: Option<(u32, &Macrotask)> = None;
 		let mut to_remove = Vec::new();
 		for (id, macrotask) in &self.map {
@@ -221,13 +210,7 @@ impl MacrotaskQueue {
 		for id in to_remove.iter_mut() {
 			self.map.remove(id);
 		}
-		self.next = next;
-	}
-
-	pub fn set_next(&mut self, index: u32, macrotask: &Macrotask) {
-		if macrotask.remaining() < Duration::zero() {
-			self.next = Some(index);
-		}
+		next
 	}
 
 	pub fn is_empty(&self) -> bool {
