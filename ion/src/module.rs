@@ -243,8 +243,8 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 	) -> bool {
 		let cx = unsafe { Context::new_unchecked(cx) };
 
-		let request_obj = Object::from(Local::from_marked(&request.get()));
-		let referencing_private_val = Value::from(Local::from_marked(&referencing_private.get()));
+		let request_obj = Object::from(Local::from_raw_handle(request));
+		let referencing_private_val = Value::from(Local::from_raw_handle(referencing_private));
 		let evaluation_object: Object = match try_dynamic_import(&cx, referencing_private_val, request_obj) {
 			Ok(o) => o.root(&cx).into(),
 			Err(e) => {
@@ -262,7 +262,7 @@ pub fn init_module_loader<ML: ModuleLoader + 'static>(cx: &Context, loader: ML) 
 				evaluation_object.handle().into(),
 				referencing_private,
 				request,
-				promise.into(),
+				promise,
 			)
 		}
 	}
