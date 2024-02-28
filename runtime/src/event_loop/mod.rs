@@ -12,7 +12,7 @@ use std::task::Poll;
 use futures::future::poll_fn;
 use mozjs::jsapi::{Handle, JSContext, JSObject, PromiseRejectionHandlingState};
 
-use ion::{Context, ErrorReport, Promise, TracedHeap};
+use ion::{Context, ErrorReport, Local, Promise, TracedHeap};
 use ion::format::{Config, format_value};
 
 use crate::ContextExt;
@@ -90,8 +90,9 @@ pub(crate) unsafe extern "C" fn promise_rejection_tracker_callback(
 ) {
 	let cx = unsafe { &Context::new_unchecked(cx) };
 	let unhandled = &mut unsafe { cx.get_private() }.event_loop.unhandled_rejections;
+	let promise = unsafe { Local::from_raw_handle(promise) };
 	match state {
-		PromiseRejectionHandlingState::Unhandled => unhandled.push_back(TracedHeap::new(promise.get())),
+		PromiseRejectionHandlingState::Unhandled => unhandled.push_back(TracedHeap::from_local(&promise)),
 		PromiseRejectionHandlingState::Handled => {
 			let idx = unhandled.iter().position(|unhandled| unhandled.get() == promise.get());
 			if let Some(idx) = idx {

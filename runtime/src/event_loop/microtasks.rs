@@ -10,7 +10,7 @@ use std::ffi::c_void;
 use mozjs::glue::JobQueueTraps;
 use mozjs::jsapi::{CurrentGlobalOrNull, Handle, JobQueueIsEmpty, JobQueueMayNotBeEmpty, JSContext, JSFunction, JSObject};
 
-use ion::{Context, ErrorReport, Function, Object, TracedHeap};
+use ion::{Context, ErrorReport, Function, Local, Object, TracedHeap};
 
 use crate::ContextExt;
 
@@ -85,7 +85,10 @@ unsafe extern "C" fn enqueue_promise_job(
 	let event_loop = unsafe { &mut cx.get_private().event_loop };
 	let microtasks = event_loop.microtasks.as_mut().unwrap();
 	if !job.is_null() {
-		microtasks.enqueue(cx, Microtask::Promise(TracedHeap::new(job.get())))
+		microtasks.enqueue(
+			cx,
+			Microtask::Promise(TracedHeap::from_local(unsafe { &Local::from_raw_handle(job) })),
+		)
 	} else {
 		microtasks.enqueue(cx, Microtask::None)
 	};
