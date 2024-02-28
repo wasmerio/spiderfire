@@ -21,7 +21,7 @@ pub use future::PromiseFuture;
 #[cfg(feature = "macros")]
 pub use ion_proc::*;
 pub use object::*;
-pub use root::{Local, Heap, TracedHeap, HeapPointer};
+pub use root::{Local, Heap, PermanentHeap, TracedHeap, HeapPointer};
 pub use stack::{Stack, StackRecord};
 pub use string::{String, StringRef};
 pub use symbol::Symbol;

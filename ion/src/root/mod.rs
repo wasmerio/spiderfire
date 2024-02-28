@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-pub use heap::{Heap, HeapPointer, TracedHeap};
+pub use heap::{Heap, HeapPointer, PermanentHeap, TracedHeap};
 pub use local::Local;
 
 mod heap;

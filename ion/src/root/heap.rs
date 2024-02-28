@@ -165,6 +165,16 @@ where
 	}
 }
 
+impl<T> Clone for TracedHeap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn clone(&self) -> Self {
+		Self::new(self.heap.get())
+	}
+}
+
 impl_heap_root! {
 	[TracedHeap]
 	(JSVal),
@@ -177,14 +187,64 @@ impl_heap_root! {
 	(*mut Symbol),
 }
 
-impl<T> Clone for TracedHeap<T>
+/// Value stored on the heap and traced permanently. There is
+/// no need to trace [PermanentHeap] instances, and thus there
+/// is no [Traceable] implementation for this type. This can be
+/// considered the rust parallel to PersistentRooted. This type
+/// is mainly useful for use in thread statics, since dropping a
+/// [TracedHeap] after [RootedTraceableSet] is dropped can cause
+/// threads to panic.
+#[derive(Debug)]
+pub struct PermanentHeap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable,
+{
+	heap: Box<JSHeap<T>>,
+}
+
+impl<T> PermanentHeap<T>
 where
 	T: GCMethods + Copy + 'static,
 	JSHeap<T>: Traceable + Default,
 {
-	fn clone(&self) -> Self {
-		Self::new(self.heap.get())
+	pub fn new(ptr: T) -> Self {
+		let heap = JSHeap::boxed(ptr);
+		unsafe { RootedTraceableSet::add(&*heap) };
+		Self { heap }
 	}
+
+	pub fn get(&self) -> T {
+		self.heap.get()
+	}
+}
+
+impl<T> PermanentHeap<T>
+where
+	T: GCMethods + Copy + RootKind + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	pub fn from_local(local: &Local<'_, T>) -> Self {
+		Self::new(local.get())
+	}
+
+	/// This constructs a Local from the Heap directly as opposed to rooting on the stack.
+	/// The returned Local cannot be used to construct a HandleMut.
+	pub fn to_local(&self) -> Local<'_, T> {
+		unsafe { Local::from_heap(&self.heap) }
+	}
+}
+
+impl_heap_root! {
+	[PermanentHeap]
+	(JSVal),
+	(*mut JSObject),
+	(*mut JSString),
+	(*mut JSScript),
+	(PropertyKey),
+	(*mut JSFunction),
+	(*mut BigInt),
+	(*mut Symbol),
 }
 
 pub trait HeapPointer<T> {
@@ -202,6 +262,16 @@ where
 }
 
 impl<T> HeapPointer<T> for TracedHeap<T>
+where
+	T: GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn to_ptr(&self) -> T {
+		self.heap.get()
+	}
+}
+
+impl<T> HeapPointer<T> for PermanentHeap<T>
 where
 	T: GCMethods + Copy + 'static,
 	JSHeap<T>: Traceable + Default,

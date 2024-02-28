@@ -5,7 +5,8 @@ use ion::{
 	conversions::{FromValue, ToValue},
 	flags::PropertyFlags,
 	typedarray::Uint8Array,
-	Array, Context, Error, ErrorKind, Exception, Function, Heap, Object, Promise, Result, TracedHeap, Value,
+	Array, Context, Error, ErrorKind, Exception, Function, Heap, Object, PermanentHeap, Promise, Result, TracedHeap,
+	Value,
 };
 use mozjs::{
 	jsapi::{IsReadableByteStreamController, JSFunction, JSObject, ReadableStreamGetController},
@@ -20,7 +21,7 @@ use crate::{
 use super::readable_stream_from_callbacks;
 
 thread_local! {
-	static STREAM_TEE: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
+	static STREAM_TEE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
 }
 
 pub(super) fn define(cx: &Context, global: &Object) -> bool {
@@ -53,7 +54,7 @@ pub(super) fn define(cx: &Context, global: &Object) -> bool {
 		return false;
 	};
 
-	STREAM_TEE.with(move |l| l.replace(Some(TracedHeap::from_local(&tee_fn))));
+	STREAM_TEE.with(move |l| l.replace(Some(PermanentHeap::from_local(&tee_fn))));
 
 	let new_tee_fn = readable_stream_prototype.define_method(cx, "tee", self::tee, 2, PropertyFlags::ENUMERATE);
 

@@ -2,12 +2,12 @@ use std::cell::RefCell;
 
 use ion::{
 	conversions::ToValue, flags::PropertyFlags, function::Opt, js_fn, object::WritableStream, Context, Error,
-	ErrorKind, Function, Object, Promise, ReadableStream, Result, TracedHeap, Value,
+	ErrorKind, Function, Object, Promise, ReadableStream, Result, PermanentHeap, Value,
 };
 use mozjs::jsapi::JSFunction;
 
 thread_local! {
-	static STREAM_PIPE_TO: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
+	static STREAM_PIPE_TO: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
 }
 
 #[js_fn]
@@ -116,7 +116,7 @@ pub(super) fn define(cx: &Context, global: &Object) -> bool {
 		return false;
 	};
 
-	STREAM_PIPE_TO.with(move |l| l.replace(Some(TracedHeap::from_local(&pipe_to_fn))));
+	STREAM_PIPE_TO.with(move |l| l.replace(Some(PermanentHeap::from_local(&pipe_to_fn))));
 
 	readable_stream_prototype.define_method(cx, "pipeThrough", pipe_through, 1, PropertyFlags::ENUMERATE);
 
