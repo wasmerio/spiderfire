@@ -5,16 +5,20 @@
  */
 
 use std::collections::HashMap;
-use std::fmt;
+use std::pin::Pin;
+use std::{fmt, task};
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Duration, Utc};
+use futures::Future;
 use mozjs::jsapi::JSFunction;
 use mozjs::jsval::JSVal;
 
 use ion::{Context, ErrorReport, Function, Object, Value, TracedHeap};
+
+use super::EventLoop;
 
 pub struct SignalMacrotask {
 	callback: Option<Box<dyn FnOnce()>>,
@@ -98,6 +102,7 @@ pub struct MacrotaskQueue {
 	pub(crate) map: HashMap<u32, Macrotask>,
 	pub(crate) nesting: u8,
 	latest: Option<u32>,
+	timer: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl Macrotask {
@@ -142,38 +147,53 @@ impl Macrotask {
 		}
 	}
 
-	fn remaining(&self) -> Duration {
+	fn remaining(&self, now: &DateTime<Utc>) -> Duration {
 		match self {
-			Macrotask::Signal(signal) => signal.scheduled - Utc::now(),
-			Macrotask::Timer(timer) => timer.scheduled + timer.duration - Utc::now(),
-			Macrotask::User(user) => user.scheduled - Utc::now(),
+			Macrotask::Signal(signal) => signal.scheduled - now,
+			Macrotask::Timer(timer) => timer.scheduled + timer.duration - now,
+			Macrotask::User(user) => user.scheduled - now,
 		}
 	}
 }
 
 impl MacrotaskQueue {
-	pub fn run_job(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
-		while let Some(next) = self.find_next() {
-			{
+	pub fn poll_jobs(&mut self, cx: &Context, wcx: &mut task::Context) -> Result<(), Option<ErrorReport>> {
+		while let Some((next, remaining)) = self.find_earliest(&Utc::now()) {
+			if remaining <= Duration::zero() {
+				{
+					let macrotask = self.map.get_mut(&next);
+					if let Some(macrotask) = macrotask {
+						macrotask.run(cx, &mut self.nesting)?;
+					}
+				}
+
+				// The previous reference may be invalidated by running the macrotask.
 				let macrotask = self.map.get_mut(&next);
 				if let Some(macrotask) = macrotask {
-					macrotask.run(cx, &mut self.nesting)?;
+					if macrotask.remove() {
+						self.map.remove(&next);
+					}
 				}
-			}
+			} else {
+				let mut timer = Box::pin(tokio::time::sleep(
+					remaining.to_std().expect("Duration should have been greater than zero"),
+				));
 
-			// The previous reference may be invalidated by running the macrotask.
-			let macrotask = self.map.get_mut(&next);
-			if let Some(macrotask) = macrotask {
-				if macrotask.remove() {
-					self.map.remove(&next);
-				}
+				// The assumption is that the event loop will be polled until it is empty
+				// and it is clearly not empty at this point, so returning a Poll::Pending
+				// doesn't really accomplish anything.
+				_ = timer.as_mut().poll(wcx);
+
+				self.timer = Some(timer);
+
+				break;
 			}
 		}
 
 		Ok(())
 	}
 
-	pub fn enqueue(&mut self, mut macrotask: Macrotask, id: Option<u32>) -> u32 {
+	pub fn enqueue(&mut self, cx: &Context, mut macrotask: Macrotask, id: Option<u32>) -> u32 {
 		let index = id.unwrap_or_else(|| self.latest.map(|l| l + 1).unwrap_or(0));
 
 		if let Macrotask::Timer(timer) = &mut macrotask {
@@ -183,6 +203,9 @@ impl MacrotaskQueue {
 		self.latest = Some(index);
 		self.map.insert(index, macrotask);
 
+		// We must wake the task up, if only to register a new timer.
+		EventLoop::from_context(cx).wake();
+
 		index
 	}
 
@@ -190,26 +213,27 @@ impl MacrotaskQueue {
 		self.map.remove(&id);
 	}
 
-	fn find_next(&mut self) -> Option<u32> {
-		let mut next: Option<(u32, &Macrotask)> = None;
+	fn find_earliest(&mut self, now: &DateTime<Utc>) -> Option<(u32, Duration)> {
+		let mut next: Option<(u32, Duration)> = None;
 		let mut to_remove = Vec::new();
 		for (id, macrotask) in &self.map {
 			if macrotask.terminate() {
 				to_remove.push(*id);
 				continue;
 			}
-			if let Some((_, next_macrotask)) = next {
-				if macrotask.remaining() < next_macrotask.remaining() {
-					next = Some((*id, macrotask));
-				}
-			} else if macrotask.remaining() <= Duration::zero() {
-				next = Some((*id, macrotask));
+
+			let remaining = macrotask.remaining(now);
+
+			match next {
+				Some((_, rem)) if rem < remaining => (),
+				_ => next = Some((*id, remaining)),
 			}
 		}
-		let next = next.map(|(id, _)| id);
+
 		for id in to_remove.iter_mut() {
 			self.map.remove(id);
 		}
+
 		next
 	}
 

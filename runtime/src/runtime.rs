@@ -82,7 +82,13 @@ impl<'cx> Runtime<'cx> {
 	pub async fn run_event_loop(&self) -> Result<(), Option<ErrorReport>> {
 		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
 		let cx = self.cx.duplicate();
-		event_loop.run_event_loop(&cx).await
+		event_loop.run_to_end(&cx).await
+	}
+
+	pub fn step_event_loop(&self, wcx: &mut std::task::Context) -> Result<(), Option<ErrorReport>> {
+		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
+		let cx = self.cx.duplicate();
+		event_loop.step(&cx, wcx)
 	}
 
 	pub fn event_loop_is_empty(&self) -> bool {

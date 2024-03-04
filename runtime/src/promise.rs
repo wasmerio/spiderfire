@@ -59,7 +59,7 @@ where
 
 	let event_loop = unsafe { &cx.get_private().event_loop };
 	event_loop.futures.as_ref().map(|futures| {
-		futures.enqueue(handle);
+		futures.enqueue(cx, handle);
 		promise
 	})
 }

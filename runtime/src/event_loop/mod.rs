@@ -6,10 +6,9 @@
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::task;
+use std::task::{self, Waker};
 use std::task::Poll;
 
-use futures::future::poll_fn;
 use mozjs::jsapi::{Handle, JSContext, JSObject, PromiseRejectionHandlingState};
 
 use ion::{Context, ErrorReport, Local, Promise, TracedHeap};
@@ -30,20 +29,45 @@ pub struct EventLoop {
 	pub(crate) microtasks: Option<MicrotaskQueue>,
 	pub(crate) macrotasks: Option<MacrotaskQueue>,
 	pub(crate) unhandled_rejections: VecDeque<TracedHeap<*mut JSObject>>,
+	pub(crate) waker: Option<Waker>,
 }
 
 impl EventLoop {
-	pub async fn run_event_loop(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
-		let mut complete = false;
-		poll_fn(|wcx| self.poll_event_loop(cx, wcx, &mut complete)).await
+	#[allow(clippy::mut_from_ref)]
+	pub(crate) fn from_context(cx: &Context) -> &mut Self {
+		unsafe { &mut cx.get_private().event_loop }
 	}
 
-	fn poll_event_loop(
-		&mut self, cx: &Context, wcx: &mut task::Context, complete: &mut bool,
-	) -> Poll<Result<(), Option<ErrorReport>>> {
+	pub(crate) fn wake(&mut self) {
+		if let Some(waker) = self.waker.take() {
+			waker.wake();
+		}
+	}
+
+	pub(crate) fn run_to_end(&mut self, cx: &Context) -> RunToEnd {
+		RunToEnd { event_loop: self, cx: cx.as_ptr() }
+	}
+
+	pub(crate) fn step(&mut self, cx: &Context, wcx: &mut task::Context) -> Result<(), Option<ErrorReport>> {
+		let res = self.step_inner(cx, wcx);
+
+		match self.waker {
+			Some(ref w) if w.will_wake(wcx.waker()) => (),
+			_ => self.waker = Some(wcx.waker().clone()),
+		}
+
+		// If we were interrupted by an error, there may still be more to do
+		if res.is_err() {
+			self.wake();
+		}
+
+		res
+	}
+
+	fn step_inner(&mut self, cx: &Context, wcx: &mut task::Context) -> Result<(), Option<ErrorReport>> {
 		if let Some(futures) = &mut self.futures {
 			if !futures.is_empty() {
-				futures.run_futures(cx, wcx)?;
+				futures.poll_futures(cx, wcx)?;
 			}
 		}
 
@@ -55,7 +79,7 @@ impl EventLoop {
 
 		if let Some(macrotasks) = &mut self.macrotasks {
 			if !macrotasks.is_empty() {
-				macrotasks.run_job(cx)?;
+				macrotasks.poll_jobs(cx, wcx)?;
 			}
 		}
 
@@ -68,20 +92,31 @@ impl EventLoop {
 			);
 		}
 
-		let empty = self.is_empty();
-		if empty && *complete {
-			Poll::Ready(Ok(()))
-		} else {
-			wcx.waker().wake_by_ref();
-			*complete = empty;
-			Poll::Pending
-		}
+		Ok(())
 	}
 
 	pub fn is_empty(&self) -> bool {
 		self.microtasks.as_ref().map(|m| m.is_empty()).unwrap_or(true)
 			&& self.futures.as_ref().map(|f| f.is_empty()).unwrap_or(true)
 			&& self.macrotasks.as_ref().map(|m| m.is_empty()).unwrap_or(true)
+	}
+}
+
+pub struct RunToEnd<'e> {
+	event_loop: &'e mut EventLoop,
+	cx: *mut JSContext,
+}
+
+impl<'e> futures::Future for RunToEnd<'e> {
+	type Output = Result<(), Option<ErrorReport>>;
+
+	fn poll(mut self: std::pin::Pin<&mut Self>, wcx: &mut task::Context<'_>) -> Poll<Self::Output> {
+		let cx = unsafe { Context::new_unchecked(self.cx) };
+		match self.event_loop.step(&cx, wcx) {
+			Err(e) => Poll::Ready(Err(e)),
+			Ok(()) if self.event_loop.is_empty() => Poll::Ready(Ok(())),
+			Ok(()) => Poll::Pending,
+		}
 	}
 }
 

@@ -14,6 +14,8 @@ use ion::{Context, ErrorReport, Function, Local, Object, TracedHeap};
 
 use crate::ContextExt;
 
+use super::EventLoop;
+
 #[derive(Clone, Debug)]
 pub enum Microtask {
 	Promise(TracedHeap<*mut JSObject>),
@@ -48,6 +50,7 @@ impl Microtask {
 impl MicrotaskQueue {
 	pub fn enqueue(&mut self, cx: &Context, microtask: Microtask) {
 		self.queue.push_back(microtask);
+		EventLoop::from_context(cx).wake();
 		unsafe { JobQueueMayNotBeEmpty(cx.as_ptr()) }
 	}
 

@@ -30,7 +30,7 @@ fn set_timer(
 
 		let duration = duration.map(|t| t.0.max(minimum)).unwrap_or(minimum);
 		let timer = TimerMacrotask::new(callback, arguments, repeat, Duration::milliseconds(duration.into()));
-		Ok(queue.enqueue(Macrotask::Timer(timer), None))
+		Ok(queue.enqueue(cx, Macrotask::Timer(timer), None))
 	} else {
 		Err(Error::new("Macrotask Queue has not been initialized.", None))
 	}
@@ -78,7 +78,7 @@ fn clearInterval(cx: &Context, Opt(id): Opt<Enforce<u32>>) -> Result<()> {
 fn queueMacrotask(cx: &Context, callback: Function) -> Result<()> {
 	let event_loop = unsafe { &mut cx.get_private().event_loop };
 	if let Some(queue) = &mut event_loop.macrotasks {
-		queue.enqueue(Macrotask::User(UserMacrotask::new(callback)), None);
+		queue.enqueue(cx, Macrotask::User(UserMacrotask::new(callback)), None);
 		Ok(())
 	} else {
 		Err(Error::new("Macrotask Queue has not been initialized.", None))
