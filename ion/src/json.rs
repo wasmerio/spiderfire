@@ -2,25 +2,26 @@ use core::slice;
 
 use bytemuck::cast_slice;
 use byteorder::NativeEndian;
-use mozjs::jsapi::ToJSON;
+use mozjs::jsapi::{JS_ParseJSON1, ToJSON};
 use mozjs_sys::jsapi::JSObject;
 use utf16string::WStr;
 
-use crate::{Context, Result, Value, Error, ErrorKind, Object};
+use crate::{Context, Error, ErrorKind, Exception, Object, ResultExc, Value};
 
-pub fn parse(cx: &Context, text: String) -> Result<Object> {
+pub fn parse(cx: &Context, text: String) -> ResultExc<Object> {
 	let Some(str) = crate::String::copy_from_str(cx, text.as_str()) else {
-		return Err(Error::new("Failed to allocate string", ErrorKind::Normal));
+		return Err(Error::new("Failed to allocate string", ErrorKind::Normal).into());
 	};
 	let mut result = Value::undefined(cx);
-	if !unsafe { mozjs::jsapi::JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) } {
-		return Err(Error::none());
+	if !unsafe { JS_ParseJSON1(cx.as_ptr(), str.handle().into(), result.handle_mut().into()) } {
+		let exc = Exception::new(cx)?;
+		return Err(exc.unwrap_or_else(|| Error::new("Failed to parse JSON", ErrorKind::Normal).into()));
 	}
 
 	Ok(result.to_object(cx))
 }
 
-pub fn stringify(cx: &Context, value: Value) -> Result<String> {
+pub fn stringify(cx: &Context, value: Value) -> ResultExc<String> {
 	let mut string = String::new();
 	let replacer = cx.root::<*mut JSObject>(std::ptr::null_mut());
 	let space = Value::undefined(cx);
@@ -34,7 +35,8 @@ pub fn stringify(cx: &Context, value: Value) -> Result<String> {
 			&mut string as *mut String as *mut _,
 		)
 	} {
-		return Err(Error::none());
+		let exc = Exception::new(cx)?;
+		return Err(exc.unwrap_or_else(|| Error::new("Failed to stringify JSON", ErrorKind::Normal).into()));
 	}
 
 	Ok(string)

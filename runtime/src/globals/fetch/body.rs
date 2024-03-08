@@ -23,7 +23,7 @@ use mozjs::jsval::JSVal;
 
 use ion::{
 	ClassDefinition, Context, Error, ErrorKind, Exception, Function, Heap, Object, Promise, ReadableStream, Result,
-	TracedHeap, Value,
+	ResultExc, TracedHeap, Value,
 };
 use ion::conversions::{FromValue, ToValue};
 
@@ -162,7 +162,7 @@ impl FetchBody {
 			.map_err(|e| Error::new(format!("Invalid UTF-8 sequence: {}", e), ErrorKind::Normal))
 	}
 
-	pub async fn into_json(self, cx: Context) -> Result<*mut JSObject> {
+	pub async fn into_json(self, cx: Context) -> ResultExc<*mut JSObject> {
 		let (cx, text) = cx.await_native_cx(|cx| self.into_text(cx)).await;
 		let text = text?;
 		Ok((*ion::json::parse(&cx, text)?).get())

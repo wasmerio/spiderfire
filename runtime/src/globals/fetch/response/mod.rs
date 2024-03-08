@@ -15,7 +15,7 @@ use mozjs::conversions::ConversionBehavior;
 use mozjs::jsapi::JSObject;
 use url::Url;
 
-use ion::{ClassDefinition, Context, Error, ErrorKind, Object, Promise, Result, TracedHeap, Heap, HeapPointer};
+use ion::{ClassDefinition, Context, Error, ErrorKind, Heap, HeapPointer, Object, Promise, Result, ResultExc, TracedHeap};
 use ion::class::{NativeObject, Reflector};
 use ion::function::Opt;
 use ion::typedarray::ArrayBufferWrapper;
@@ -251,7 +251,7 @@ impl Response {
 	}
 
 	#[ion(name = "json")]
-	pub fn static_json(cx: &Context, data: Object, Opt(options): Opt<ResponseInit>) -> Result<*mut JSObject> {
+	pub fn static_json(cx: &Context, data: Object, Opt(options): Opt<ResponseInit>) -> ResultExc<*mut JSObject> {
 		let text = ion::json::stringify(cx, data.as_value(cx))?;
 		let text_bytes: Vec<_> = text.into();
 		let body = FetchBody {

@@ -87,6 +87,10 @@ impl Request {
 		Headers::get_private(cx, &self.headers.root(cx).into()).unwrap()
 	}
 
+	pub fn get_headers_object_mut<'cx>(&self, cx: &'cx Context) -> &'cx mut Headers {
+		Headers::get_mut_private(cx, &self.headers.root(cx).into()).unwrap()
+	}
+
 	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
 		match &self.body {
 			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
@@ -320,21 +324,26 @@ impl Request {
 			HeadersKind::Request
 		};
 
-		let mut headers = if let Some(headers) = headers {
-			headers.into_headers(HeaderMap::new(), kind)?
-		} else {
-			Headers {
-				reflector: Reflector::default(),
-				headers: HeaderMap::new(),
-				kind,
-			}
+		if let Some(headers) = headers {
+			request.headers.set(Headers::new_object(
+				cx,
+				Box::new(headers.into_headers(HeaderMap::new(), kind)?),
+			));
+		} else if request.headers.get().is_null() {
+			request.headers.set(Headers::new_object(
+				cx,
+				Box::new(Headers {
+					reflector: Reflector::default(),
+					headers: HeaderMap::new(),
+					kind,
+				}),
+			));
 		};
 
 		if let Some(body) = body {
-			body.add_content_type_header(&mut headers.headers);
+			body.add_content_type_header(&mut request.get_headers_object_mut(cx).headers);
 			request.body = Some(body);
 		}
-		request.headers.set(Headers::new_object(cx, Box::new(headers)));
 
 		Ok(request)
 	}
