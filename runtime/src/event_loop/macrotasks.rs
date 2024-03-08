@@ -18,7 +18,7 @@ use mozjs::jsval::JSVal;
 
 use ion::{Context, ErrorReport, Function, Object, Value, TracedHeap};
 
-use super::EventLoop;
+use super::{EventLoop, EventLoopPollResult};
 
 pub struct SignalMacrotask {
 	callback: Option<Box<dyn FnOnce()>>,
@@ -157,9 +157,15 @@ impl Macrotask {
 }
 
 impl MacrotaskQueue {
-	pub fn poll_jobs(&mut self, cx: &Context, wcx: &mut task::Context) -> Result<(), Option<ErrorReport>> {
+	pub fn poll_jobs(
+		&mut self, cx: &Context, wcx: &mut task::Context,
+	) -> Result<EventLoopPollResult, Option<ErrorReport>> {
+		let mut result = EventLoopPollResult::NothingToDo;
+
 		while let Some((next, remaining)) = self.find_earliest(&Utc::now()) {
 			if remaining <= Duration::zero() {
+				result = EventLoopPollResult::DidWork;
+
 				{
 					let macrotask = self.map.get_mut(&next);
 					if let Some(macrotask) = macrotask {
@@ -190,7 +196,7 @@ impl MacrotaskQueue {
 			}
 		}
 
-		Ok(())
+		Ok(result)
 	}
 
 	pub fn enqueue(&mut self, cx: &Context, mut macrotask: Macrotask, id: Option<u32>) -> u32 {

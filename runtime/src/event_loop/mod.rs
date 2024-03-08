@@ -23,6 +23,33 @@ pub(crate) mod future;
 pub(crate) mod macrotasks;
 pub(crate) mod microtasks;
 
+pub enum EventLoopPollResult {
+	NothingToDo,
+	DidWork,
+}
+
+impl EventLoopPollResult {
+	fn from_bool(did_work: bool) -> Self {
+		if did_work {
+			Self::DidWork
+		} else {
+			Self::NothingToDo
+		}
+	}
+
+	fn did_work(&self) -> bool {
+		matches!(self, Self::DidWork)
+	}
+
+	fn compound_with(&mut self, other: &Self) {
+		*self = if self.did_work() || other.did_work() {
+			Self::DidWork
+		} else {
+			Self::NothingToDo
+		};
+	}
+}
+
 #[derive(Default)]
 pub struct EventLoop {
 	pub(crate) futures: Option<FutureQueue>,
@@ -65,21 +92,23 @@ impl EventLoop {
 	}
 
 	fn step_inner(&mut self, cx: &Context, wcx: &mut task::Context) -> Result<(), Option<ErrorReport>> {
+		let mut poll_result = EventLoopPollResult::NothingToDo;
+
 		if let Some(futures) = &mut self.futures {
 			if !futures.is_empty() {
-				futures.poll_futures(cx, wcx)?;
+				poll_result.compound_with(&futures.poll_futures(cx, wcx)?);
 			}
 		}
 
 		if let Some(microtasks) = &mut self.microtasks {
 			if !microtasks.is_empty() {
-				microtasks.run_jobs(cx)?;
+				poll_result.compound_with(&microtasks.run_jobs(cx)?);
 			}
 		}
 
 		if let Some(macrotasks) = &mut self.macrotasks {
 			if !macrotasks.is_empty() {
-				macrotasks.poll_jobs(cx, wcx)?;
+				poll_result.compound_with(&macrotasks.poll_jobs(cx, wcx)?);
 			}
 		}
 
@@ -92,7 +121,15 @@ impl EventLoop {
 			);
 		}
 
-		Ok(())
+		// TODO: Is it necessary to run the entire event loop again? Just running new
+		// microtasks may be enough here.
+		if poll_result.did_work() {
+			// Make another pass on the event loop, since doing work may lead to new work
+			// being enqueued in the event loop
+			self.step_inner(cx, wcx)
+		} else {
+			Ok(())
+		}
 	}
 
 	pub fn is_empty(&self) -> bool {

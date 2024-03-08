@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use ion::{Context, Error, ErrorKind, ErrorReport, Promise, ThrowException, Value, TracedHeap};
 use ion::conversions::BoxedIntoValue;
 
-use super::EventLoop;
+use super::{EventLoop, EventLoopPollResult};
 
 type FutureOutput = (Result<BoxedIntoValue, BoxedIntoValue>, TracedHeap<*mut JSObject>);
 
@@ -25,7 +25,9 @@ pub struct FutureQueue {
 }
 
 impl FutureQueue {
-	pub fn poll_futures(&mut self, cx: &Context, wcx: &mut task::Context) -> Result<(), Option<ErrorReport>> {
+	pub fn poll_futures(
+		&mut self, cx: &Context, wcx: &mut task::Context,
+	) -> Result<EventLoopPollResult, Option<ErrorReport>> {
 		let mut results = Vec::new();
 
 		while let Poll::Ready(Some(item)) = self.queue.poll_next_unpin(wcx) {
@@ -37,6 +39,8 @@ impl FutureQueue {
 				}
 			}
 		}
+
+		let result = EventLoopPollResult::from_bool(!results.is_empty());
 
 		for (result, promise) in results {
 			let mut value = Value::undefined(cx);
@@ -58,7 +62,7 @@ impl FutureQueue {
 			}
 		}
 
-		Ok(())
+		Ok(result)
 	}
 
 	pub fn enqueue(&self, cx: &Context, handle: JoinHandle<FutureOutput>) {

@@ -14,7 +14,7 @@ use ion::{Context, ErrorReport, Function, Local, Object, TracedHeap};
 
 use crate::ContextExt;
 
-use super::EventLoop;
+use super::{EventLoop, EventLoopPollResult};
 
 #[derive(Clone, Debug)]
 pub enum Microtask {
@@ -54,21 +54,27 @@ impl MicrotaskQueue {
 		unsafe { JobQueueMayNotBeEmpty(cx.as_ptr()) }
 	}
 
-	pub fn run_jobs(&mut self, cx: &Context) -> Result<(), Option<ErrorReport>> {
+	pub fn run_jobs(&mut self, cx: &Context) -> Result<EventLoopPollResult, Option<ErrorReport>> {
+		let mut result = EventLoopPollResult::NothingToDo;
+
 		if self.draining {
-			return Ok(());
+			return Ok(result);
 		}
 
 		self.draining = true;
 
 		while let Some(microtask) = self.queue.pop_front() {
-			microtask.run(cx)?;
+			result = EventLoopPollResult::DidWork;
+			if let Err(e) = microtask.run(cx) {
+				self.draining = false;
+				return Err(e);
+			}
 		}
 
 		self.draining = false;
 		unsafe { JobQueueIsEmpty(cx.as_ptr()) };
 
-		Ok(())
+		Ok(result)
 	}
 
 	pub fn is_empty(&self) -> bool {
