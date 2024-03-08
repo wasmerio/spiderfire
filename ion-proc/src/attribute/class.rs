@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use syn::{LitStr, Result};
+use syn::{Ident, LitStr, Result};
 use syn::meta::ParseNestedMeta;
 
 use crate::attribute::{ArgumentError, ParseArgument, ParseArgumentWith, ParseAttribute};
@@ -29,6 +29,7 @@ pub(crate) struct MethodAttribute {
 	pub(crate) name: Option<Name>,
 	pub(crate) alias: Vec<LitStr>,
 	pub(crate) kind: Option<MethodKind>,
+	pub(crate) post_construct: Option<Ident>,
 	pub(crate) skip: bool,
 }
 
@@ -43,6 +44,7 @@ impl ParseAttribute for MethodAttribute {
 			.parse_argument_with(meta, MethodKind::Constructor, "constructor", METHOD_KIND_ERROR)?;
 		self.kind.parse_argument_with(meta, MethodKind::Getter, "get", METHOD_KIND_ERROR)?;
 		self.kind.parse_argument_with(meta, MethodKind::Setter, "set", METHOD_KIND_ERROR)?;
+		self.post_construct.parse_argument(meta, "post_construct", None)?;
 		self.skip.parse_argument(meta, "skip", "Method")?;
 
 		Ok(())

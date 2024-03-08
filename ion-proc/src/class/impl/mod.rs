@@ -104,7 +104,7 @@ fn parse_class_method(
 	let mut names = vec![];
 
 	let attribute = MethodAttribute::from_attributes_mut("ion", &mut r#fn.attrs)?;
-	let MethodAttribute { name, alias, kind, skip } = attribute;
+	let MethodAttribute { name, alias, kind, post_construct, skip } = attribute;
 	for alias in alias {
 		names.push(Name::String(alias));
 	}
@@ -136,7 +136,12 @@ fn parse_class_method(
 
 	match kind {
 		Some(MethodKind::Constructor) => {
-			let constructor = impl_constructor(ion, method, r#type)?;
+			let constructor = impl_constructor(
+				ion,
+				method,
+				r#type,
+				post_construct.map(|p| p.to_token_stream()).as_ref(),
+			)?;
 			return Ok(Some(Method { names, ..constructor }));
 		}
 		Some(MethodKind::Getter) => {
