@@ -55,6 +55,10 @@ where
 	pub fn set(&self, v: T) {
 		self.heap.set(v)
 	}
+
+	pub fn to_traced(&self) -> TracedHeap<T> {
+		TracedHeap::new(self.heap.get())
+	}
 }
 
 impl<T> Heap<T>

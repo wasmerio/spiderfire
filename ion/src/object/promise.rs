@@ -311,3 +311,9 @@ impl DerefMut for Promise {
 		&mut self.promise
 	}
 }
+
+impl Clone for Promise {
+	fn clone(&self) -> Self {
+		Self { promise: self.promise.clone() }
+	}
+}
