@@ -35,7 +35,7 @@ impl TextDecoderStreamTransformer {
 	) -> Result<()> {
 		let stream = TextDecoderStream::get_private(cx, &self.stream.root(cx).into()).unwrap();
 		let decoder = TextDecoder::get_mut_private(cx, &stream.decoder.root(cx).into()).unwrap();
-		match decoder.decode(chunk, Opt(Some(TextDecodeOptions::new(!final_chunk)))) {
+		match decoder.decode(Opt(Some(chunk)), Opt(Some(TextDecodeOptions::new(!final_chunk)))) {
 			Ok(string) if string.is_empty() => (),
 			Ok(string) => controller.enqueue(cx, string.as_value(cx)).map_err(|e| e.to_error())?,
 			Err(e) => controller.error(cx, Opt(Some(e.as_value(cx))))?,

@@ -80,17 +80,26 @@ impl TextDecoder {
 	}
 
 	pub fn decode(
-		&mut self, #[ion(convert = true)] buffer: BufferSource, Opt(options): Opt<TextDecodeOptions>,
+		&mut self, #[ion(convert = true)] Opt(buffer): Opt<BufferSource>, Opt(options): Opt<TextDecodeOptions>,
 	) -> Result<String> {
-		let mut string = String::with_capacity(self.decoder.max_utf8_buffer_length(buffer.len()).unwrap());
+		let mut string = String::with_capacity(
+			self.decoder
+				.max_utf8_buffer_length(buffer.as_ref().map(|b| b.len()).unwrap_or_default())
+				.unwrap(),
+		);
 		let stream = options.unwrap_or_default().stream;
 		if self.fatal {
 			let vec_buffer;
-			let buffer = if buffer.is_shared() {
-				vec_buffer = buffer.to_vec();
-				&vec_buffer
-			} else {
-				unsafe { buffer.as_slice() }
+			let buffer = match buffer {
+				Some(ref b) => {
+					if b.is_shared() {
+						vec_buffer = b.to_vec();
+						&vec_buffer
+					} else {
+						unsafe { b.as_slice() }
+					}
+				}
+				None => &[],
 			};
 
 			let (result, _) = self.decoder.decode_to_string_without_replacement(buffer, &mut string, !stream);
@@ -98,7 +107,11 @@ impl TextDecoder {
 				return Err(Error::new("TextDecoder.decode: Decoding Failed", ErrorKind::Type));
 			}
 		} else {
-			let (_, _, _) = self.decoder.decode_to_string(unsafe { buffer.as_slice() }, &mut string, !stream);
+			let buffer = match buffer {
+				Some(ref b) => unsafe { b.as_slice() },
+				None => &[],
+			};
+			let (_, _, _) = self.decoder.decode_to_string(buffer, &mut string, !stream);
 		}
 		if !stream {
 			// Replace the decoder, since it's now in finished state.
