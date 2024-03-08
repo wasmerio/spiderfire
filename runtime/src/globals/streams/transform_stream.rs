@@ -1,5 +1,5 @@
 use ion::{
-	class::Reflector,
+	class::{NativeObject, Reflector},
 	conversions::{FromValue, ToValue},
 	flags::PropertyFlags,
 	function::Opt,
@@ -157,7 +157,7 @@ impl TransformStreamDefaultController {
 	}
 
 	pub fn enqueue(&self, cx: &Context, chunk: Value) -> ResultExc<()> {
-		let stream = TransformStream::from_heap(cx, &self.stream);
+		let stream = TransformStream::from_heap_mut(cx, &self.stream);
 		let readable = stream.readable.root(cx);
 		let controller = stream.get_readable_controller(cx);
 		unsafe {
@@ -189,12 +189,13 @@ impl TransformStreamDefaultController {
 		Ok(())
 	}
 
-	pub fn error(&self, cx: &Context, e: Value) -> Result<()> {
-		TransformStream::from_heap(cx, &self.stream).error(cx, &e)
+	pub fn error(&self, cx: &Context, Opt(e): Opt<Value>) -> Result<()> {
+		let e = e.unwrap_or_else(|| Value::undefined(cx));
+		TransformStream::from_heap_mut(cx, &self.stream).error(cx, &e)
 	}
 
 	pub fn terminate(&self, cx: &Context) -> Result<()> {
-		let stream = TransformStream::from_heap(cx, &self.stream);
+		let stream = TransformStream::from_heap_mut(cx, &self.stream);
 		let readable = stream.readable.root(cx);
 		let controller = stream.get_readable_controller(cx);
 
@@ -233,7 +234,7 @@ impl TransformStreamDefaultController {
 }
 
 struct Source {
-	stream: Heap<*mut JSObject>,
+	stream: TracedHeap<*mut JSObject>,
 	start_promise: Promise,
 }
 
@@ -254,9 +255,46 @@ impl NativeStreamSourceCallbacks for Source {
 	}
 
 	fn cancel(self: Box<Self>, cx: &Context, reason: Value) -> ResultExc<Promise> {
-		let ts = TransformStream::from_heap(cx, &self.stream);
-		ts.error_writable_and_unblock_write(cx, &reason)?;
-		Ok(Promise::resolved(cx, Value::undefined(cx)))
+		let ts = TransformStream::from_traced_heap_mut(cx, &self.stream);
+
+		let reason_heap = TracedHeap::from_local(&reason);
+		let ts_heap1 = self.stream.clone();
+		let ts_heap2 = self.stream.clone();
+
+		let (finish_promise, just_created) = ts.get_or_create_finish_promise(cx, reason);
+
+		if just_created {
+			finish_promise.add_reactions(
+				cx,
+				Some(Function::from_closure(
+					cx,
+					"",
+					Box::new(move |args| {
+						let cx = args.cx();
+						let ts = TransformStream::from_traced_heap_mut(cx, &ts_heap1);
+						_ = ts.error_writable_and_unblock_write(cx, &reason_heap.root(cx).into());
+						Ok(Value::undefined(cx))
+					}),
+					1,
+					PropertyFlags::empty(),
+				)),
+				Some(Function::from_closure(
+					cx,
+					"",
+					Box::new(move |args| {
+						let cx = args.cx();
+						let error = args.access().value();
+						let ts = TransformStream::from_traced_heap_mut(cx, &ts_heap2);
+						_ = ts.error_writable_and_unblock_write(cx, &error);
+						Ok(Value::undefined(cx))
+					}),
+					1,
+					PropertyFlags::empty(),
+				)),
+			);
+		}
+
+		Ok(finish_promise)
 	}
 }
 
@@ -332,7 +370,7 @@ impl NativeStreamSinkCallbacks for Sink {
 
 					let reason = accessor.value();
 
-					let ts = TransformStream::from_traced_heap(args.cx(), &ts_heap);
+					let ts = TransformStream::from_traced_heap_mut(args.cx(), &ts_heap);
 					ts.error(args.cx(), &reason)?;
 
 					Err(Exception::Other(reason.get()))
@@ -346,10 +384,15 @@ impl NativeStreamSinkCallbacks for Sink {
 	}
 
 	fn close(&self, cx: &Context) -> ResultExc<Promise> {
+		let ts = TransformStream::from_traced_heap_mut(cx, &self.stream);
+		if let Some(ref p) = ts.finish_promise {
+			return Ok(p.clone());
+		}
+
 		let stream = self.stream.clone();
 
-		unsafe {
-			Ok(future_to_promise(cx, move |cx| async move {
+		let promise = unsafe {
+			future_to_promise(cx, move |cx| async move {
 				let ts = TransformStream::from_traced_heap(&cx, &stream);
 				let controller_object = Object::from(ts.controller.root(&cx));
 				let controller = ts.get_controller(&cx);
@@ -360,7 +403,15 @@ impl NativeStreamSinkCallbacks for Sink {
 					// Run the flush algorithm
 					Some((o, f)) => {
 						let flush_result = match f.call(&cx, &o, &[controller_object.as_value(&cx)]) {
-							Err(_) => return Err(Exception::Error(Error::none())),
+							Err(Some(e)) => {
+								ReadableStreamError(
+									cx.as_ptr(),
+									ts.readable.root(&cx).handle().into(),
+									e.exception.as_value(&cx).handle().into(),
+								);
+								return Err(e.exception);
+							}
+							Err(None) => return Err(Error::none().into()),
 							Ok(f) => f,
 						};
 
@@ -376,15 +427,19 @@ impl NativeStreamSinkCallbacks for Sink {
 									let (cx, promise_result) = PromiseFuture::new(cx, &p).await;
 									match promise_result {
 										Err(e) => {
+											let e = e.root(&cx).into();
+
 											// ... if it failed, fail the entire process
-											let ts = TransformStream::from_traced_heap(&cx, &stream);
-											ts.error(&cx, &e.root(&cx).into())?;
+											let ts = TransformStream::from_traced_heap_mut(&cx, &stream);
+											ts.error(&cx, &e)?;
 
-											let readable = ts.readable.root(&cx);
-											let error =
-												ReadableStreamGetStoredError(cx.as_ptr(), readable.handle().into());
+											ReadableStreamError(
+												cx.as_ptr(),
+												ts.readable.root(&cx).handle().into(),
+												e.handle().into(),
+											);
 
-											return Err(Exception::Other(error));
+											return Err(Exception::Other(e.get()));
 										}
 										// ... it ran successfully, carry on
 										Ok(_) => cx,
@@ -425,30 +480,53 @@ impl NativeStreamSinkCallbacks for Sink {
 
 				Ok(())
 			})
-			.expect("future queue must be initialized"))
-		}
+			.expect("future queue must be initialized")
+		};
+		ts.finish_promise = Some(promise.clone());
+		Ok(promise)
 	}
 
 	fn abort(&self, cx: &Context, reason: Value) -> ResultExc<Promise> {
-		let ts = TransformStream::from_traced_heap(cx, &self.stream);
-		if let Err(e) = ts.error(cx, &reason) {
-			return Ok(Promise::rejected(cx, e));
+		let ts = TransformStream::from_traced_heap_mut(cx, &self.stream);
+
+		let reason_heap = TracedHeap::from_local(&reason);
+		let ts_heap1 = self.stream.clone();
+		let ts_heap2 = self.stream.clone();
+
+		let (finish_promise, just_created) = ts.get_or_create_finish_promise(cx, reason);
+
+		if just_created {
+			finish_promise.add_reactions(
+				cx,
+				Some(Function::from_closure(
+					cx,
+					"",
+					Box::new(move |args| {
+						let cx = args.cx();
+						let ts = TransformStream::from_traced_heap_mut(cx, &ts_heap1);
+						_ = ts.error(cx, &reason_heap.root(cx).into());
+						Ok(Value::undefined(cx))
+					}),
+					1,
+					PropertyFlags::empty(),
+				)),
+				Some(Function::from_closure(
+					cx,
+					"",
+					Box::new(move |args| {
+						let cx = args.cx();
+						let error = args.access().value();
+						let ts = TransformStream::from_traced_heap_mut(cx, &ts_heap2);
+						_ = ts.error(cx, &error);
+						Ok(Value::undefined(cx))
+					}),
+					1,
+					PropertyFlags::empty(),
+				)),
+			);
 		}
 
-		match ts.get_controller(cx).transformer.cancel_function(cx) {
-			None => Ok(Promise::resolved(cx, Value::undefined(cx))),
-			Some((o, f)) => {
-				let result = f.call(cx, &o, &[reason]);
-				match result {
-					Err(_) => Ok(Promise::rejected_with_pending_exception(cx)),
-					Ok(v) if v.get().is_object() => match Promise::from(v.to_object(cx).into_local()) {
-						Some(p) => Ok(p),
-						None => Ok(Promise::resolved(cx, Value::undefined(cx))),
-					},
-					Ok(_) => Ok(Promise::resolved(cx, Value::undefined(cx))),
-				}
-			}
-		}
+		Ok(finish_promise)
 	}
 }
 
@@ -456,10 +534,17 @@ impl NativeStreamSinkCallbacks for Sink {
 pub struct TransformStream {
 	reflector: Reflector,
 
+	#[trace(no_trace)]
+	start_promise: Promise,
+
 	controller: Heap<*mut JSObject>,
 
 	readable: Heap<*mut JSObject>,
 	writable: Heap<*mut JSObject>,
+
+	#[trace(no_trace)]
+	finish_promise: Option<Promise>,
+	error: Option<Heap<JSVal>>,
 }
 
 impl TransformStream {
@@ -467,8 +552,16 @@ impl TransformStream {
 		<Self as ClassDefinition>::get_private(cx, &heap.root(cx).into()).unwrap()
 	}
 
+	pub fn from_heap_mut<'cx>(cx: &'cx Context, heap: &Heap<*mut JSObject>) -> &'cx mut Self {
+		<Self as ClassDefinition>::get_mut_private(cx, &heap.root(cx).into()).unwrap()
+	}
+
 	pub fn from_traced_heap<'cx>(cx: &'cx Context, heap: &TracedHeap<*mut JSObject>) -> &'cx Self {
 		<Self as ClassDefinition>::get_private(cx, &heap.root(cx).into()).unwrap()
+	}
+
+	pub fn from_traced_heap_mut<'cx>(cx: &'cx Context, heap: &TracedHeap<*mut JSObject>) -> &'cx mut Self {
+		<Self as ClassDefinition>::get_mut_private(cx, &heap.root(cx).into()).unwrap()
 	}
 
 	pub fn get_controller<'cx>(&self, cx: &'cx Context) -> &'cx TransformStreamDefaultController {
@@ -496,7 +589,79 @@ impl TransformStream {
 		)
 	}
 
-	pub fn error(&self, cx: &Context, e: &Value) -> Result<()> {
+	pub fn get_or_create_finish_promise(&mut self, cx: &Context, reason: Value) -> (Promise, bool) {
+		fn finish_promise_inner(ts: &TransformStream, cx: &Context) -> Promise {
+			match ts.error {
+				Some(ref e) => Promise::rejected(cx, Value::from(e.root(cx))),
+				None => Promise::resolved(cx, Value::undefined(cx)),
+			}
+		}
+
+		match self.finish_promise {
+			Some(ref p) => (p.clone(), false),
+			None => {
+				let promise = match self.get_controller(cx).transformer.cancel_function(cx) {
+					None => finish_promise_inner(self, cx),
+					Some((o, f)) => {
+						let result = f.call(cx, &o, &[reason]);
+						match result {
+							Err(Some(e)) => Promise::rejected(cx, e.exception.as_value(cx)),
+							Err(None) => Promise::rejected(cx, Value::undefined(cx)),
+							Ok(v) if v.get().is_object() => match Promise::from(v.to_object(cx).into_local()) {
+								Some(p) => {
+									let finish_promise = Promise::new(cx);
+									let fp1 = finish_promise.clone();
+									let fp2 = finish_promise.clone();
+									let this_heap1 = TracedHeap::new(self.reflector().get());
+									let this_heap2 = TracedHeap::new(self.reflector().get());
+									p.add_reactions(
+										cx,
+										Some(Function::from_closure(
+											cx,
+											"",
+											Box::new(move |args| {
+												let cx = args.cx();
+												let this = Self::from_traced_heap(cx, &this_heap1);
+												match this.error {
+													Some(ref e) => fp1.reject(cx, &e.root(cx).into()),
+													None => fp1.resolve(cx, &Value::undefined(cx)),
+												};
+												Ok(Value::undefined(cx))
+											}),
+											1,
+											PropertyFlags::empty(),
+										)),
+										Some(Function::from_closure(
+											cx,
+											"",
+											Box::new(move |args| {
+												let cx = args.cx();
+												let this = Self::from_traced_heap(cx, &this_heap2);
+												match this.error {
+													Some(ref e) => fp2.reject(cx, &e.root(cx).into()),
+													None => fp2.reject(cx, &args.access().value()),
+												};
+												Ok(Value::undefined(cx))
+											}),
+											1,
+											PropertyFlags::empty(),
+										)),
+									);
+									finish_promise
+								}
+								None => finish_promise_inner(self, cx),
+							},
+							Ok(_) => finish_promise_inner(self, cx),
+						}
+					}
+				};
+				self.finish_promise = Some(unsafe { Promise::from_unchecked(cx.root(promise.get())) });
+				(promise, true)
+			}
+		}
+	}
+
+	pub fn error(&mut self, cx: &Context, e: &Value) -> Result<()> {
 		unsafe {
 			if !ReadableStreamError(cx.as_ptr(), self.readable.root(cx).handle().into(), e.handle().into()) {
 				return Err(Error::none());
@@ -506,7 +671,9 @@ impl TransformStream {
 		self.error_writable_and_unblock_write(cx, e)
 	}
 
-	pub fn error_writable_and_unblock_write(&self, cx: &Context, e: &Value) -> Result<()> {
+	pub fn error_writable_and_unblock_write(&mut self, cx: &Context, e: &Value) -> Result<()> {
+		self.error = Some(Heap::new(e.get()));
+
 		TransformStreamDefaultController::from_heap_mut(cx, &self.controller).clear_algorithms();
 
 		let writable = self.writable.root(cx);
@@ -521,44 +688,50 @@ impl TransformStream {
 
 		Ok(())
 	}
+
+	fn call_start(cx: &Context, this: &mut Object) -> ResultExc<()> {
+		let ts = Self::get_private(cx, this).unwrap();
+		let controller = TransformStreamDefaultController::get_private(cx, &ts.controller.root(cx).into()).unwrap();
+		let controller_value = Object::from(ts.controller.root(cx)).as_value(cx);
+		match controller.transformer.start_function(cx) {
+			Some((o, f)) => match f.call(cx, &o, &[controller_value]) {
+				Ok(val) => {
+					ts.start_promise.resolve(cx, &val);
+					Ok(())
+				}
+				Err(Some(e)) => {
+					ts.start_promise.reject(cx, &e.exception.as_value(cx));
+					Err(e.exception)
+				}
+				Err(None) => {
+					ts.start_promise.reject(cx, &Value::undefined(cx));
+					Err(Error::none().into())
+				}
+			},
+			None => {
+				ts.start_promise.resolve(cx, &Value::undefined(cx));
+				Ok(())
+			}
+		}
+	}
 }
 
 #[js_class]
 impl TransformStream {
-	#[ion(constructor)]
+	#[ion(constructor, post_construct = call_start)]
 	pub fn constructor<'cx>(
 		cx: &'cx Context, #[ion(this)] this: &Object<'cx>, Opt(transformer_object): Opt<Object<'cx>>,
-	) -> Result<TransformStream> {
+	) -> ResultExc<TransformStream> {
 		let transformer = HeapTransformer::from_transformer(cx, transformer_object)?;
+
+		let start_promise = Promise::new(cx);
 
 		let controller =
 			ClassDefinition::new_object(cx, Box::new(TransformStreamDefaultController::new(this, transformer)));
 
-		// For use in the start promise, below
-		let controller_heap = TracedHeap::new(controller);
-
-		// We need to turn this into a promise so it gets run later as part of the event loop, once
-		// construction of the TransformStream is complete. Otherwise, if the transformer.start_function
-		// accesses this stream, the private slot will not be set and everything will fail.
-		let start_promise = unsafe {
-			future_to_promise(cx, move |cx| async move {
-				let controller =
-					TransformStreamDefaultController::get_private(&cx, &controller_heap.root(&cx).into()).unwrap();
-				let controller_value = Object::from(controller_heap.root(&cx)).as_value(&cx);
-				match controller.transformer.start_function(&cx) {
-					Some((o, f)) => match f.call(&cx, &o, &[controller_value]) {
-						Ok(val) => Ok(val.get()),
-						Err(_) => Err(Exception::Error(Error::none())),
-					},
-					None => Ok(mozjs::jsval::UndefinedValue()),
-				}
-			})
-			.expect("future queue must be initialized")
-		};
-
 		let sink = Sink {
 			stream: TracedHeap::from_local(this),
-			start_promise: unsafe { Promise::from_unchecked(start_promise.root(cx)) },
+			start_promise: start_promise.clone(),
 		};
 		let sink_obj = cx.root(NativeStreamSink::new_object(
 			cx,
@@ -576,32 +749,27 @@ impl TransformStream {
 		};
 
 		if writable.get().is_null() {
-			return Err(Error::new(
-				"Failed to create writable half of stream",
-				ErrorKind::Normal,
-			));
+			return Err(Error::new("Failed to create writable half of stream", ErrorKind::Normal).into());
 		}
 
 		let source = Source {
-			stream: Heap::from_local(this),
-			start_promise,
+			stream: TracedHeap::from_local(this),
+			start_promise: start_promise.clone(),
 		};
 
 		let readable = match super::readable_stream_extensions::readable_stream_from_callbacks(cx, Box::new(source)) {
 			Some(readable) => readable,
-			None => {
-				return Err(Error::new(
-					"Failed to create readable half of stream",
-					ErrorKind::Normal,
-				))
-			}
+			None => return Err(Error::new("Failed to create readable half of stream", ErrorKind::Normal).into()),
 		};
 
 		Ok(Self {
 			reflector: Default::default(),
+			start_promise,
 			controller: Heap::new(controller),
 			readable: Heap::new(readable.get()),
 			writable: Heap::from_local(&writable),
+			finish_promise: None,
+			error: None,
 		})
 	}
 

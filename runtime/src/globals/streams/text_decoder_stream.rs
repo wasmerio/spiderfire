@@ -38,7 +38,7 @@ impl TextDecoderStreamTransformer {
 		match decoder.decode(chunk, Opt(Some(TextDecodeOptions::new(!final_chunk)))) {
 			Ok(string) if string.is_empty() => (),
 			Ok(string) => controller.enqueue(cx, string.as_value(cx)).map_err(|e| e.to_error())?,
-			Err(e) => controller.error(cx, e.as_value(cx))?,
+			Err(e) => controller.error(cx, Opt(Some(e.as_value(cx))))?,
 		}
 		Ok(())
 	}
