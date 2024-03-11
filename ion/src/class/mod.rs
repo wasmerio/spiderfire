@@ -23,6 +23,7 @@ use mozjs_sys::jsapi::JS_GetFunctionObject;
 use crate::{Context, Error, ErrorKind, Function, Local, Object, Value, Exception, Result};
 pub use crate::class::native::{MAX_PROTO_CHAIN_LENGTH, NativeClass, PrototypeChain, TypeIdWrapper};
 pub use crate::class::reflect::{Castable, DerivedFrom, NativeObject, Reflector};
+use crate::conversions::ToValue;
 use crate::function::NativeFunction;
 
 mod native;
@@ -204,9 +205,7 @@ pub trait ClassDefinition: NativeObject {
 	}
 
 	fn get_private<'a>(cx: &Context, object: &Object<'a>) -> Result<&'a Self> {
-		if Self::instance_of(cx, object) // Fast path, most native objects don't have base classes and this check is way faster
-		|| Self::instance_or_subtype_of(cx, object)?
-		{
+		if Self::instance_of(cx, object) || Self::has_instance(cx, object)? {
 			Ok(unsafe { Self::get_private_unchecked(object) })
 		} else {
 			Err(private_error(Self::class()))
@@ -224,9 +223,7 @@ pub trait ClassDefinition: NativeObject {
 
 	#[allow(clippy::mut_from_ref)]
 	fn get_mut_private<'a>(cx: &Context, object: &Object<'a>) -> Result<&'a mut Self> {
-		if Self::instance_of(cx, object) // Fast path, most native objects don't have base classes and this check is way faster
-		|| Self::instance_or_subtype_of(cx, object)?
-		{
+		if Self::instance_of(cx, object) || Self::has_instance(cx, object)? {
 			Ok(unsafe { Self::get_mut_private_unchecked(object) })
 		} else {
 			Err(private_error(Self::class()))
@@ -251,21 +248,26 @@ pub trait ClassDefinition: NativeObject {
 		}
 	}
 
-	fn instance_or_subtype_of(cx: &Context, object: &Object) -> Result<bool> {
-		let constructor: Function = cx.root(Self::class_info(cx).constructor).into();
-		let constructor_obj = constructor.to_object(cx);
-		let mut result = false;
-		unsafe {
-			if !JS_HasInstance(
+	fn has_instance(cx: &Context, object: &Object) -> Result<bool> {
+		let infos = unsafe { &mut (*cx.get_inner_data().as_ptr()).class_infos };
+		let constructor =
+			Function::from(cx.root(infos.get(&TypeId::of::<Self>()).expect("Uninitialised Class").constructor))
+				.to_object(cx);
+		let object = object.as_value(cx);
+		let mut has_instance = false;
+		let result = unsafe {
+			JS_HasInstance(
 				cx.as_ptr(),
-				constructor_obj.handle().into(),
-				Value::object(cx, object).handle().into(),
-				&mut result as *mut bool,
-			) {
-				return Err(Error::none());
-			}
+				constructor.handle().into(),
+				object.handle().into(),
+				&mut has_instance,
+			)
+		};
+		if result {
+			Ok(has_instance)
+		} else {
+			Err(Error::none())
 		}
-		Ok(result)
 	}
 }
 
