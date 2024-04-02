@@ -204,6 +204,11 @@ impl URLSearchParams {
 		let thisv = this.as_value(cx);
 		ion::Iterator::new(SearchParamsIterator::default(), &thisv)
 	}
+
+	pub fn values(cx: &Context, #[ion(this)] this: &Object) -> ion::Iterator {
+		let thisv = this.as_value(cx);
+		ion::Iterator::new(SearchParamsValueIterator::default(), &thisv)
+	}
 }
 
 #[derive(Default)]
@@ -217,6 +222,21 @@ impl JSIterator for SearchParamsIterator {
 		pair.map(move |(k, v)| {
 			self.0 += 1;
 			[k, v].as_value(cx)
+		})
+	}
+}
+
+#[derive(Default)]
+pub struct SearchParamsValueIterator(usize);
+
+impl JSIterator for SearchParamsValueIterator {
+	fn next_value<'cx>(&mut self, cx: &'cx Context, private: &Value<'cx>) -> Option<Value<'cx>> {
+		let object = private.to_object(cx);
+		let search_params = URLSearchParams::get_private(cx, &object).unwrap();
+		let pair = search_params.pairs.get(self.0);
+		pair.map(move |(_, v)| {
+			self.0 += 1;
+			v.as_value(cx)
 		})
 	}
 }
