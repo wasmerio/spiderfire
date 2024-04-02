@@ -189,6 +189,27 @@ impl Headers {
 	pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &HeaderValue)> {
 		self.headers.iter()
 	}
+
+	fn js_iterator(&self, cx: &Context, mode: HeadersIteratorMode) -> ion::Iterator {
+		let cookies: Vec<_> = self.headers.get_all(&SET_COOKIE).iter().map(HeaderValue::clone).collect();
+
+		let mut keys: Vec<_> = self.headers.keys().map(|name| name.as_str().to_ascii_lowercase()).collect();
+		keys.reserve(cookies.len());
+		for _ in 0..cookies.len() {
+			keys.push(String::from(SET_COOKIE.as_str()));
+		}
+		keys.sort();
+
+		let this = self.reflector.get().as_value(cx);
+		ion::Iterator::new(
+			HeadersIterator {
+				keys: keys.into_iter(),
+				cookies: cookies.into_iter(),
+				mode,
+			},
+			&this,
+		)
+	}
 }
 
 #[js_class]
@@ -282,29 +303,39 @@ impl Headers {
 
 	#[ion(name = WellKnownSymbolCode::Iterator, alias = ["entries"])]
 	pub fn iterator(&self, cx: &Context) -> ion::Iterator {
-		let cookies: Vec<_> = self.headers.get_all(&SET_COOKIE).iter().map(HeaderValue::clone).collect();
-
-		let mut keys: Vec<_> = self.headers.keys().map(|name| name.as_str().to_ascii_lowercase()).collect();
-		keys.reserve(cookies.len());
-		for _ in 0..cookies.len() {
-			keys.push(String::from(SET_COOKIE.as_str()));
-		}
-		keys.sort();
-
-		let this = self.reflector.get().as_value(cx);
-		ion::Iterator::new(
-			HeadersIterator {
-				keys: keys.into_iter(),
-				cookies: cookies.into_iter(),
-			},
-			&this,
-		)
+		self.js_iterator(cx, HeadersIteratorMode::Pair)
 	}
+
+	pub fn keys(&self, cx: &Context) -> ion::Iterator {
+		self.js_iterator(cx, HeadersIteratorMode::Key)
+	}
+
+	pub fn values(&self, cx: &Context) -> ion::Iterator {
+		self.js_iterator(cx, HeadersIteratorMode::Value)
+	}
+}
+
+#[derive(Clone, Copy)]
+enum HeadersIteratorMode {
+	Pair,
+	Key,
+	Value,
 }
 
 pub struct HeadersIterator {
 	keys: vec::IntoIter<String>,
 	cookies: vec::IntoIter<HeaderValue>,
+	mode: HeadersIteratorMode,
+}
+
+impl HeadersIterator {
+	fn to_return_value<'cx>(&self, cx: &'cx Context, key: &str, value: &str) -> Value<'cx> {
+		match self.mode {
+			HeadersIteratorMode::Pair => [key, value].as_value(cx),
+			HeadersIteratorMode::Key => key.as_value(cx),
+			HeadersIteratorMode::Value => value.as_value(cx),
+		}
+	}
 }
 
 impl JSIterator for HeadersIterator {
@@ -314,10 +345,12 @@ impl JSIterator for HeadersIterator {
 		let key = self.keys.next();
 		key.and_then(|key| {
 			if key == SET_COOKIE.as_str() {
-				self.cookies.next().map(|value| [key.as_str(), value.to_str().unwrap()].as_value(cx))
+				self.cookies
+					.next()
+					.map(|value| self.to_return_value(cx, key.as_str(), value.to_str().unwrap()))
 			} else {
 				get_header(&headers.headers, &HeaderName::from_bytes(key.as_bytes()).unwrap())
-					.map(|value| [key.as_str(), &value.to_string()].as_value(cx))
+					.map(|value| self.to_return_value(cx, key.as_str(), &value.to_string()))
 			}
 		})
 	}
