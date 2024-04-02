@@ -3,7 +3,7 @@ use ion::{
 	conversions::{FromValue, ToValue},
 	function::{Opt, Wrap},
 	symbol::WellKnownSymbolCode,
-	ClassDefinition, Context, JSIterator, Object, Result, TracedHeap,
+	ClassDefinition, Context, Error, ErrorKind, Function, JSIterator, Object, Result, ResultExc, TracedHeap, Value,
 };
 use mozjs::jsapi::{JSObject, ToStringSlow};
 
@@ -184,6 +184,22 @@ impl FormData {
 			None => self.kv_pairs.push(KvPair { key: name, value }),
 		}
 
+		Ok(())
+	}
+
+	#[ion(name = "forEach")]
+	pub fn for_each(&self, cx: &Context, callback: Function, Opt(this_arg): Opt<Object>) -> ResultExc<()> {
+		let this_arg = this_arg.unwrap_or_else(|| Object::null(cx));
+		for pair in &self.kv_pairs {
+			let this = Value::object(cx, &cx.root(self.reflector.get()).into());
+			callback
+				.call(cx, &this_arg, &[pair.value.as_value(cx), pair.key.as_value(cx), this])
+				.map_err(|e| {
+					e.map(|e| e.exception).unwrap_or_else(|| {
+						ion::Exception::Error(Error::new("Unknown failure in callback", ErrorKind::Normal))
+					})
+				})?;
+		}
 		Ok(())
 	}
 
