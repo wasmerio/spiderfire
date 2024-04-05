@@ -1244,7 +1244,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs?branch=wasi-gecko#91349dc0efa5f1484c05d1f07bde8b5b348f4747"
+source = "git+https://github.com/wasmerio/mozjs?branch=wasi-gecko#5e3485eccf3fe6520862c470d771d16516088a3e"
 dependencies = [
  "bindgen",
  "cc",
@@ -1258,7 +1258,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs?branch=wasi-gecko#91349dc0efa5f1484c05d1f07bde8b5b348f4747"
+source = "git+https://github.com/wasmerio/mozjs?branch=wasi-gecko#5e3485eccf3fe6520862c470d771d16516088a3e"
 dependencies = [
  "bindgen",
  "cc",
