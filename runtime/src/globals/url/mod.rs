@@ -61,6 +61,19 @@ impl URL {
 		Url::options().base_url(base.as_ref()).parse(&input).is_ok()
 	}
 
+	pub fn parse(cx: &Context, input: String, base: Opt<String>) -> Object {
+		let obj = cx.root(URL::new_raw_object(cx)).into();
+		match URL::constructor(&obj, cx, input, base) {
+			Ok(url) => {
+				unsafe {
+					URL::set_private((*obj).get(), Box::new(url));
+				};
+				obj
+			}
+			Err(_) => Object::null(cx),
+		}
+	}
+
 	pub fn format(&self, Opt(options): Opt<FormatOptions>) -> Result<String> {
 		let mut url = self.url.clone();
 
