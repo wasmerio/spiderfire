@@ -52,7 +52,7 @@ mod header;
 mod request;
 mod response;
 
-const DEFAULT_USER_AGENT: &str = concatcp!("Spiderfire/", VERSION);
+const DEFAULT_USER_AGENT: &str = concatcp!("WinterJS/", VERSION);
 
 // TODO: replace all of the `network_error()`s with better errors
 
@@ -67,8 +67,9 @@ fn fetch(cx: &Context, resource: RequestInfo, init: Opt<RequestInit>) -> Option<
 
 	let signal = Object::from(request.signal_object.to_local());
 	let signal = AbortSignal::get_private(cx, &signal).unwrap();
-	if let Some(reason) = signal.get_reason() {
-		return Some(Promise::rejected(cx, reason));
+	let signal_reason = signal.get_reason();
+	if !signal_reason.is_undefined() {
+		return Some(Promise::rejected(cx, signal_reason));
 	}
 
 	let headers = Object::from(request.headers.to_local());

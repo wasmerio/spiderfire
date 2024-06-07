@@ -20,14 +20,15 @@ use ion::{Context, ErrorReport, Function, Object, Value, TracedHeap};
 
 use super::{EventLoop, EventLoopPollResult};
 
+#[allow(clippy::type_complexity)]
 pub struct SignalMacrotask {
-	callback: Option<Box<dyn FnOnce()>>,
+	callback: Option<Box<dyn FnOnce(&Context)>>,
 	terminate: Arc<AtomicBool>,
 	scheduled: DateTime<Utc>,
 }
 
 impl SignalMacrotask {
-	pub fn new(callback: Box<dyn FnOnce()>, terminate: Arc<AtomicBool>, duration: Duration) -> SignalMacrotask {
+	pub fn new(callback: Box<dyn FnOnce(&Context)>, terminate: Arc<AtomicBool>, duration: Duration) -> SignalMacrotask {
 		SignalMacrotask {
 			callback: Some(callback),
 			terminate,
@@ -109,7 +110,7 @@ impl Macrotask {
 	pub fn run(&mut self, cx: &Context, nesting: &mut u8) -> Result<(), Option<ErrorReport>> {
 		if let Macrotask::Signal(signal) = self {
 			if let Some(callback) = signal.callback.take() {
-				callback();
+				callback(cx);
 			}
 			return Ok(());
 		}
