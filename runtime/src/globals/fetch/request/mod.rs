@@ -12,7 +12,7 @@ use http::header::CONTENT_TYPE;
 use hyper::Method;
 use ion::string::byte::ByteString;
 use ion::{TracedHeap, HeapPointer, Heap, Object};
-use ion::typedarray::ArrayBuffer;
+use ion::typedarray::{ArrayBufferWrapper, Uint8ArrayWrapper};
 use mozjs::jsapi::JSObject;
 use url::Url;
 
@@ -451,14 +451,22 @@ impl Request {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
 				let body = this.take_body()?;
-				let (cx, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
-				let array = match bytes? {
-					Some(ref bytes) => ArrayBuffer::copy_from_bytes(&cx, bytes.as_ref())
-						.ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?,
-					None => ArrayBuffer::copy_from_bytes(&cx, b"")
-						.ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?,
-				};
-				Ok(array.get())
+				let (_, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
+				let bytes = bytes?.unwrap_or_default();
+				Ok(ArrayBufferWrapper::from(bytes.as_ref()))
+			})
+		}
+	}
+
+	pub fn bytes<'cx>(&'cx mut self, cx: &'cx Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector.get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
+				let body = this.take_body()?;
+				let (_, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
+				let bytes = bytes?.unwrap_or_default();
+				Ok(Uint8ArrayWrapper::from(bytes.as_ref()))
 			})
 		}
 	}

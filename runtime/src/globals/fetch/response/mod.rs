@@ -18,7 +18,7 @@ use url::Url;
 use ion::{ClassDefinition, Context, Error, ErrorKind, Heap, HeapPointer, Object, Promise, Result, ResultExc, TracedHeap};
 use ion::class::{NativeObject, Reflector};
 use ion::function::Opt;
-use ion::typedarray::ArrayBufferWrapper;
+use ion::typedarray::{ArrayBufferWrapper, Uint8ArrayWrapper};
 pub use options::*;
 
 use crate::globals::fetch::body::FetchBody;
@@ -357,6 +357,16 @@ impl Response {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let bytes = Self::take_body_bytes(&this, cx).await?;
 				Ok(ArrayBufferWrapper::from(Vec::from(bytes)))
+			})
+		}
+	}
+
+	pub fn bytes(&mut self, cx: &Context) -> Option<Promise> {
+		let this = TracedHeap::new(self.reflector().get());
+		unsafe {
+			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+				let bytes = Self::take_body_bytes(&this, cx).await?;
+				Ok(Uint8ArrayWrapper::from(Vec::from(bytes)))
 			})
 		}
 	}
