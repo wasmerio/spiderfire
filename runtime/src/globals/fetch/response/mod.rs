@@ -361,15 +361,18 @@ impl Response {
 		}
 	}
 
-	pub fn bytes(&mut self, cx: &Context) -> Option<Promise> {
-		let this = TracedHeap::new(self.reflector().get());
-		unsafe {
-			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
-				let bytes = Self::take_body_bytes(&this, cx).await?;
-				Ok(Uint8ArrayWrapper::from(Vec::from(bytes)))
-			})
-		}
-	}
+	// TODO: the inclusion of this method causes problems with requests
+	// not finishing (undefined behavior?), commented out for 1.2.0 release
+
+	// pub fn bytes(&mut self, cx: &Context) -> Option<Promise> {
+	// 	let this = TracedHeap::new(self.reflector().get());
+	// 	unsafe {
+	// 		future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
+	// 			let bytes = Self::take_body_bytes(&this, cx).await?;
+	// 			Ok(Uint8ArrayWrapper::from(Vec::from(bytes)))
+	// 		})
+	// 	}
+	// }
 
 	pub fn blob(&mut self, cx: &Context) -> Option<Promise> {
 		let this = TracedHeap::new(self.reflector.get());
