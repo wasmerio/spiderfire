@@ -10,9 +10,9 @@ use std::ops::{Deref, DerefMut};
 
 use mozjs::jsapi::{
 	ArrayBufferClone, ArrayBufferCopyData, DetachArrayBuffer, IsDetachedArrayBufferObject, JSObject,
-	NewArrayBufferWithContents, NewExternalArrayBuffer, StealArrayBufferContents, GetArrayBufferLengthAndData,
-	IsArrayBufferObject,
+	StealArrayBufferContents, GetArrayBufferLengthAndData, IsArrayBufferObject,
 };
+use mozjs::glue::{NewArrayBufferWithContents_Compat, NewExternalArrayBuffer_Compat};
 use mozjs::typedarray::CreateWith;
 
 use crate::{Context, Error, ErrorKind, Local, Object, Result};
@@ -52,7 +52,7 @@ impl<'ab> ArrayBuffer<'ab> {
 
 		let (ptr, len) = unsafe { Box::into_raw_parts(bytes) };
 		let buffer = unsafe {
-			NewExternalArrayBuffer(
+			NewExternalArrayBuffer_Compat(
 				cx.as_ptr(),
 				len,
 				ptr.cast(),
@@ -154,7 +154,7 @@ impl<'ab> ArrayBuffer<'ab> {
 		if data.is_null() {
 			return Err(Error::new("ArrayBuffer transfer failed", ErrorKind::Normal));
 		}
-		let buffer = cx.root(unsafe { NewArrayBufferWithContents(cx.as_ptr(), len, data) });
+		let buffer = cx.root(unsafe { NewArrayBufferWithContents_Compat(cx.as_ptr(), len, data) });
 		if buffer.handle().is_null() {
 			return Err(Error::new("ArrayBuffer transfer failed", ErrorKind::Normal));
 		}

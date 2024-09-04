@@ -9,8 +9,8 @@ use std::ops::Deref;
 
 use mozjs::conversions::jsstr_to_string;
 use mozjs::jsapi::{
-	HandleValueArray, JS_CallFunction, JS_DecompileFunction, JS_GetFunctionArity, JS_GetFunctionDisplayId,
-	JS_GetFunctionId, JS_GetFunctionLength, JS_GetFunctionObject, JS_GetObjectFunction, JS_IsBuiltinEvalFunction,
+	HandleValueArray, JS_CallFunction, JS_DecompileFunction, JS_GetFunctionArity, JS_GetMaybePartialFunctionDisplayId,
+	JS_GetMaybePartialFunctionId, JS_GetFunctionLength, JS_GetFunctionObject, JS_GetObjectFunction, JS_IsBuiltinEvalFunction,
 	JS_IsBuiltinFunctionConstructor, JS_IsConstructor, JS_NewFunction, JS_ObjectIsFunction, JSContext, JSFunction,
 	JSFunctionSpec, JSObject, NewFunctionFromSpec1, NewFunctionWithReserved, SetFunctionNativeReserved,
 };
@@ -128,7 +128,7 @@ impl<'f> Function<'f> {
 
 	/// Returns the name of the function.
 	pub fn name(&self, cx: &Context) -> Option<String> {
-		let id = unsafe { JS_GetFunctionId(self.get()) };
+		let id = unsafe { JS_GetMaybePartialFunctionId(self.get()) };
 		(!id.is_null()).then(|| unsafe { jsstr_to_string(cx.as_ptr(), id) })
 	}
 
@@ -136,7 +136,7 @@ impl<'f> Function<'f> {
 	/// Function display names are a non-standard feature.
 	/// Refer to [MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/displayName) for more details.
 	pub fn display_name(&self, cx: &Context) -> Option<String> {
-		let id = unsafe { JS_GetFunctionDisplayId(self.get()) };
+		let id = unsafe { JS_GetMaybePartialFunctionDisplayId(self.get()) };
 		(!id.is_null()).then(|| unsafe { jsstr_to_string(cx.as_ptr(), id) })
 	}
 

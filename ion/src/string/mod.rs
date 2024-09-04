@@ -15,7 +15,7 @@ use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTrap
 use mozjs::jsapi::{
 	JS_CompareStrings, JS_ConcatStrings, JS_DeprecatedStringHasLatin1Chars, JS_GetEmptyString,
 	JS_GetLatin1StringCharsAndLength, JS_GetStringCharAt, JS_GetTwoByteStringCharsAndLength, JS_NewDependentString,
-	JS_NewExternalString, JS_NewUCStringCopyN, JS_StringIsLinear, JSString,
+	JS_NewExternalUCString, JS_NewUCStringCopyN, JS_StringIsLinear, JSString,
 };
 use mozjs::jsapi::mozilla::MallocSizeOf;
 use utf16string::{WStr, WString};
@@ -92,9 +92,21 @@ impl<'s> String<'s> {
 			data as usize
 		}
 
+		extern "C" fn finalize_external_string_latin1(_data: *const c_void, _chars: *mut mozjs::jsapi::Latin1Char) {
+			panic!("Should not be used as we don't create Latin1 strings")
+		}
+
+		extern "C" fn size_of_external_string_latin1(
+			_data: *const c_void, _chars: *const mozjs::jsapi::Latin1Char, _malloc_size_of: MallocSizeOf,
+		) -> usize {
+			panic!("Should not be used as we don't create Latin1 strings")
+		}
+
 		static EXTERNAL_STRING_CALLBACKS_TRAPS: JSExternalStringCallbacksTraps = JSExternalStringCallbacksTraps {
 			finalize: Some(finalise_external_string),
 			sizeOfBuffer: Some(size_of_external_string),
+			finalize_latin1char: Some(finalize_external_string_latin1),
+			sizeOfBuffer_latin1char: Some(size_of_external_string_latin1),
 		};
 
 		let vec = string.into_bytes();
@@ -104,7 +116,7 @@ impl<'s> String<'s> {
 
 		unsafe {
 			let callbacks = CreateJSExternalStringCallbacks(&EXTERNAL_STRING_CALLBACKS_TRAPS, len as *mut c_void);
-			let jsstr = JS_NewExternalString(cx.as_ptr(), chars.cast::<u16>(), len / 2, callbacks);
+			let jsstr = JS_NewExternalUCString(cx.as_ptr(), chars.cast::<u16>(), len / 2, callbacks);
 
 			if jsstr.is_null() {
 				let slice = slice::from_raw_parts_mut(chars, len);

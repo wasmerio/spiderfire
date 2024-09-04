@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use mozjs::jsapi::{CallArgs, JS_GetFunctionId, JS_GetObjectFunction};
+use mozjs::jsapi::{CallArgs, JS_GetMaybePartialFunctionId, JS_GetObjectFunction};
 use mozjs::jsval::JSVal;
 
 use crate::{Context, Error, ErrorKind, Local, Object, Result, Value};
@@ -39,7 +39,7 @@ impl<'cx> Arguments<'cx> {
 	pub fn check_args(&self, cx: &Context, min: u16) -> Result<()> {
 		if self.args < min {
 			let func = crate::String::from(unsafe {
-				Local::from_marked(&JS_GetFunctionId(JS_GetObjectFunction(self.callee.handle().get())))
+				Local::from_marked(&JS_GetMaybePartialFunctionId(JS_GetObjectFunction(self.callee.handle().get())))
 			})
 			.to_owned(cx)?;
 

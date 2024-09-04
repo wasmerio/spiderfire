@@ -70,7 +70,7 @@ impl<'b> BigInt<'b> {
 			},
 			_phantom_0: PhantomData,
 		};
-		let bi = unsafe { StringToBigInt1(cx.as_ptr(), chars) };
+		let bi = unsafe { StringToBigInt1(cx.as_ptr(), &chars as *const _) };
 		if !bi.is_null() {
 			Ok(BigInt::from(cx.root(bi)))
 		} else {

@@ -15,8 +15,9 @@ use mozjs::jsapi::{
 	JS_GetArrayBufferViewByteLength, JS_GetArrayBufferViewByteOffset, JS_GetArrayBufferViewType,
 	JS_IsArrayBufferViewObject, JS_NewFloat32ArrayWithBuffer, JS_NewFloat64ArrayWithBuffer, JS_NewInt16ArrayWithBuffer,
 	JS_NewInt32ArrayWithBuffer, JS_NewInt8ArrayWithBuffer, JS_NewUint16ArrayWithBuffer, JS_NewUint32ArrayWithBuffer,
-	JS_NewUint8ArrayWithBuffer, JS_NewUint8ClampedArrayWithBuffer, JSContext, JSObject, NewExternalArrayBuffer, Type,
+	JS_NewUint8ArrayWithBuffer, JS_NewUint8ClampedArrayWithBuffer, JSContext, JSObject, Type,
 };
+use mozjs::glue::NewExternalArrayBuffer_Compat;
 use mozjs::typedarray as jsta;
 use mozjs::typedarray::{
 	ArrayBufferViewU8, ClampedU8, CreateWith, Float32, Float64, Int16, Int32, Int8, Uint16, Uint32, Uint8,
@@ -124,7 +125,7 @@ impl<'bv, T: TypedArrayElementCreator> TypedArray<'bv, T> {
 
 		let (ptr, len) = unsafe { Box::into_raw_parts(bytes) };
 		let buffer = unsafe {
-			NewExternalArrayBuffer(
+			NewExternalArrayBuffer_Compat(
 				cx.as_ptr(),
 				len * size_of::<T::Element>(),
 				ptr.cast(),

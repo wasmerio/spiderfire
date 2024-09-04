@@ -109,8 +109,13 @@ unsafe extern "C" fn empty(extra: *const c_void) -> bool {
 	queue.queue.is_empty()
 }
 
+extern "C" fn is_draining_stopped(_: *const c_void) -> bool {
+	false
+}
+
 pub(crate) static JOB_QUEUE_TRAPS: JobQueueTraps = JobQueueTraps {
 	getIncumbentGlobal: Some(get_incumbent_global),
 	enqueuePromiseJob: Some(enqueue_promise_job),
 	empty: Some(empty),
+	isDrainingStopped: Some(is_draining_stopped),
 };
