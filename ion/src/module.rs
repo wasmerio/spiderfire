@@ -111,7 +111,14 @@ impl<'cx> Module<'cx> {
 		let script: Vec<u16> = script.encode_utf16().collect();
 		let mut source = transform_u16_to_source_text(script.as_slice());
 		let filename = path.and_then(Path::to_str).unwrap_or(filename);
-		let options = unsafe { CompileOptionsWrapper::new(cx.as_ptr(), filename, 1) };
+
+		let options = unsafe {
+			let options = CompileOptionsWrapper::new(cx.as_ptr(), filename, 1);
+			if let Some(modify_compile_options) = cx.get_modify_compile_options_callback() {
+				modify_compile_options(&mut *options.ptr);
+			}
+			options
+		};
 
 		let module = unsafe { CompileModule(cx.as_ptr(), options.ptr.cast_const(), &mut source) };
 

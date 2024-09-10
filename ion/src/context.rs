@@ -12,8 +12,8 @@ use std::ptr::NonNull;
 use futures::Future;
 use mozjs::gc::{GCMethods, RootedTraceableSet};
 use mozjs::jsapi::{
-	BigInt, Heap, JS_GetContextPrivate, JS_SetContextPrivate, JSContext, JSFunction, JSObject, JSScript, JSString,
-	PropertyDescriptor, PropertyKey, Rooted, Symbol,
+	BigInt, Heap, JSContext, JSFunction, JSObject, JSScript, JSString, JS_GetContextPrivate, JS_SetContextPrivate,
+	PropertyDescriptor, PropertyKey, ReadOnlyCompileOptions, Rooted, Symbol,
 };
 use mozjs::jsval::JSVal;
 use mozjs::rust::Runtime;
@@ -61,6 +61,7 @@ pub struct ContextInner {
 	pub class_infos: HashMap<TypeId, ClassInfo>,
 	pub module_loader: Option<Box<dyn ModuleLoader>>,
 	persistent: Persistent,
+	modify_compile_options_callback: Option<fn(&mut ReadOnlyCompileOptions)>,
 	private: Option<Box<dyn Any>>,
 }
 
@@ -114,6 +115,16 @@ impl Context {
 
 	pub fn get_inner_data(&self) -> NonNull<ContextInner> {
 		self.private
+	}
+
+	pub fn get_modify_compile_options_callback(&self) -> Option<&fn(&mut ReadOnlyCompileOptions)> {
+		let inner = self.get_inner_data();
+		unsafe { (*inner.as_ptr()).modify_compile_options_callback.as_ref() }
+	}
+
+	pub fn set_modify_compile_options_callback(&self, callback: Option<fn(&mut ReadOnlyCompileOptions)>) {
+		let inner = self.get_inner_data();
+		unsafe { (*inner.as_ptr()).modify_compile_options_callback = callback };
 	}
 
 	pub fn get_raw_private(&self) -> *mut dyn Any {

@@ -18,7 +18,7 @@ use url::Url;
 use ion::{ClassDefinition, Context, Error, ErrorKind, Heap, HeapPointer, Object, Promise, Result, ResultExc, TracedHeap};
 use ion::class::{NativeObject, Reflector};
 use ion::function::Opt;
-use ion::typedarray::{ArrayBufferWrapper, Uint8ArrayWrapper};
+use ion::typedarray::ArrayBufferWrapper;
 pub use options::*;
 
 use crate::globals::fetch::body::FetchBody;

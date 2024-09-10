@@ -22,7 +22,14 @@ impl<'s> Script<'s> {
 	pub fn compile<'cx>(cx: &'cx Context, path: &Path, script: &str) -> Result<Script<'cx>, ErrorReport> {
 		let script: Vec<u16> = script.encode_utf16().collect();
 		let mut source = transform_u16_to_source_text(script.as_slice());
-		let options = unsafe { CompileOptionsWrapper::new(cx.as_ptr(), path.to_str().unwrap(), 1) };
+
+		let options = unsafe {
+			let options = CompileOptionsWrapper::new(cx.as_ptr(), path.to_str().unwrap(), 1);
+			if let Some(modify_compile_options) = cx.get_modify_compile_options_callback() {
+				modify_compile_options(&mut *options.ptr);
+			}
+			options
+		};
 
 		let script = unsafe { Compile(cx.as_ptr(), options.ptr, &mut source) };
 
