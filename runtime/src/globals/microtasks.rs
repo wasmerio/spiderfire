@@ -14,7 +14,7 @@ use crate::event_loop::microtasks::Microtask;
 
 #[js_fn]
 fn queueMicrotask(cx: &Context, callback: Function) -> Result<()> {
-	let event_loop = unsafe { &mut cx.get_private().event_loop };
+	let event_loop = cx.get_event_loop();
 	if let Some(queue) = &mut event_loop.microtasks {
 		queue.enqueue(cx, Microtask::User(TracedHeap::new(callback.get())));
 		Ok(())

@@ -19,9 +19,14 @@ use super::{EventLoop, EventLoopPollResult};
 
 type FutureOutput = (Result<BoxedIntoValue, BoxedIntoValue>, TracedHeap<*mut JSObject>);
 
-#[derive(Default)]
 pub struct FutureQueue {
-	queue: FuturesUnordered<JoinHandle<FutureOutput>>,
+	queue: Option<FuturesUnordered<JoinHandle<FutureOutput>>>,
+}
+
+impl Default for FutureQueue {
+	fn default() -> Self {
+		Self { queue: Some(Default::default()) }
+	}
 }
 
 impl FutureQueue {
@@ -30,7 +35,8 @@ impl FutureQueue {
 	) -> Result<EventLoopPollResult, Option<ErrorReport>> {
 		let mut results = Vec::new();
 
-		while let Poll::Ready(Some(item)) = self.queue.poll_next_unpin(wcx) {
+		let queue = self.get_queue_mut();
+		while let Poll::Ready(Some(item)) = queue.poll_next_unpin(wcx) {
 			match item {
 				Ok(item) => results.push(item),
 				Err(error) => {
@@ -66,11 +72,32 @@ impl FutureQueue {
 	}
 
 	pub fn enqueue(&self, cx: &Context, handle: JoinHandle<FutureOutput>) {
-		self.queue.push(handle);
+		self.get_queue().push(handle);
 		EventLoop::from_context(cx).wake();
 	}
 
 	pub fn is_empty(&self) -> bool {
-		self.queue.is_empty()
+		self.get_queue().is_empty()
+	}
+
+	fn get_queue(&self) -> &FuturesUnordered<JoinHandle<FutureOutput>> {
+		self.queue.as_ref().expect("Future queue was dropped but not recreated")
+	}
+
+	fn get_queue_mut(&mut self) -> &mut FuturesUnordered<JoinHandle<FutureOutput>> {
+		self.queue.as_mut().expect("Future queue was dropped but not recreated")
+	}
+
+	pub fn recreate_queue(&mut self) {
+		if self.queue.is_none() {
+			self.queue = Some(Default::default());
+		}
+	}
+
+	pub fn drop_queue(&mut self) {
+		if self.queue.is_some() {
+			assert!(self.is_empty());
+			self.queue = None;
+		}
 	}
 }

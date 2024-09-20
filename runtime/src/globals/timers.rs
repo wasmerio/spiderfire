@@ -20,7 +20,7 @@ const MINIMUM_DELAY_NESTED: i32 = 4;
 fn set_timer(
 	cx: &Context, callback: Function, duration: Option<Clamp<i32>>, arguments: &[JSVal], repeat: bool,
 ) -> Result<u32> {
-	let event_loop = unsafe { &mut cx.get_private().event_loop };
+	let event_loop = cx.get_event_loop();
 	if let Some(queue) = &mut event_loop.macrotasks {
 		let minimum = if queue.nesting > 5 {
 			MINIMUM_DELAY_NESTED
@@ -38,7 +38,7 @@ fn set_timer(
 
 fn clear_timer(cx: &Context, id: Option<Enforce<u32>>) -> Result<()> {
 	if let Some(id) = id {
-		let event_loop = unsafe { &mut cx.get_private().event_loop };
+		let event_loop = cx.get_event_loop();
 		if let Some(queue) = &mut event_loop.macrotasks {
 			queue.remove(id.0);
 			Ok(())
@@ -76,7 +76,7 @@ fn clearInterval(cx: &Context, Opt(id): Opt<Enforce<u32>>) -> Result<()> {
 
 #[js_fn]
 fn queueMacrotask(cx: &Context, callback: Function) -> Result<()> {
-	let event_loop = unsafe { &mut cx.get_private().event_loop };
+	let event_loop = cx.get_event_loop();
 	if let Some(queue) = &mut event_loop.macrotasks {
 		queue.enqueue(cx, Macrotask::User(UserMacrotask::new(callback)), None);
 		Ok(())

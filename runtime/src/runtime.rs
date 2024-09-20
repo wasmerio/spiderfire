@@ -24,11 +24,14 @@ use crate::module::StandardModules;
 
 #[derive(Default)]
 pub struct ContextPrivate {
-	pub(crate) event_loop: EventLoop,
+	event_loop: EventLoop,
 	pub app_data: Option<Box<dyn Any>>,
 }
 
 pub trait ContextExt {
+	#[allow(clippy::mut_from_ref)]
+	fn get_event_loop(&self) -> &mut EventLoop;
+
 	#[allow(clippy::mut_from_ref)]
 	unsafe fn get_private(&self) -> &mut ContextPrivate;
 
@@ -41,6 +44,10 @@ pub trait ContextExt {
 }
 
 impl ContextExt for Context {
+	fn get_event_loop(&self) -> &mut EventLoop {
+		&mut unsafe { self.get_private() }.event_loop
+	}
+
 	unsafe fn get_private(&self) -> &mut ContextPrivate {
 		unsafe { (*self.get_raw_private()).downcast_mut().unwrap() }
 	}
@@ -53,7 +60,6 @@ impl ContextExt for Context {
 		unsafe { self.get_private().app_data.as_deref_mut().unwrap() as *mut _ }
 	}
 
-	//
 	unsafe fn get_app_data<T: 'static>(&self) -> &mut T {
 		unsafe { (*self.get_raw_app_data()).downcast_mut().unwrap() }
 	}
@@ -80,20 +86,35 @@ impl<'cx> Runtime<'cx> {
 	}
 
 	pub async fn run_event_loop(&self) -> Result<(), Option<ErrorReport>> {
-		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
+		let event_loop = self.cx.get_event_loop();
 		let cx = self.cx.duplicate();
 		event_loop.run_to_end(&cx).await
 	}
 
 	pub fn step_event_loop(&self, wcx: &mut std::task::Context) -> Result<(), Option<ErrorReport>> {
-		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
+		let event_loop = self.cx.get_event_loop();
 		let cx = self.cx.duplicate();
 		event_loop.step(&cx, wcx)
 	}
 
 	pub fn event_loop_is_empty(&self) -> bool {
-		let event_loop = unsafe { &mut self.cx.get_private().event_loop };
-		event_loop.is_empty()
+		self.cx.get_event_loop().is_empty()
+	}
+
+	// This is useful when the event loop needs to be transferred from one tokio runtime to another,
+	// such as when pre-evaluating code in one runtime and then running the resulting module separately.
+	pub fn remove_from_tokio_runtime(&self) {
+		let event_loop = self.cx.get_event_loop();
+		drop(event_loop.waker.take());
+		if let Some(ref mut queue) = event_loop.futures {
+			queue.drop_queue();
+		}
+	}
+
+	pub fn install_in_tokio_runtime(&self) {
+		if let Some(ref mut queue) = self.cx.get_event_loop().futures {
+			queue.recreate_queue();
+		}
 	}
 }
 

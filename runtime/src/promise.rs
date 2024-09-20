@@ -57,7 +57,7 @@ where
 		(result, heap)
 	});
 
-	let event_loop = unsafe { &cx.get_private().event_loop };
+	let event_loop = cx.get_event_loop();
 	event_loop.futures.as_ref().map(|futures| {
 		futures.enqueue(cx, handle);
 		promise

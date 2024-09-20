@@ -173,7 +173,7 @@ impl AbortSignal {
 		});
 
 		let duration = Duration::milliseconds(time as i64);
-		let event_loop = unsafe { &mut cx.get_private().event_loop };
+		let event_loop = cx.get_event_loop();
 		if let Some(queue) = &mut event_loop.macrotasks {
 			queue.enqueue(
 				cx,

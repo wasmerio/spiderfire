@@ -91,7 +91,7 @@ unsafe extern "C" fn enqueue_promise_job(
 	_: Handle<*mut JSObject>, _: Handle<*mut JSObject>,
 ) -> bool {
 	let cx = unsafe { &Context::new_unchecked(cx) };
-	let event_loop = unsafe { &mut cx.get_private().event_loop };
+	let event_loop = cx.get_event_loop();
 	let microtasks = event_loop.microtasks.as_mut().unwrap();
 	if !job.is_null() {
 		microtasks.enqueue(

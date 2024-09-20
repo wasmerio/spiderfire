@@ -62,7 +62,7 @@ pub struct EventLoop {
 impl EventLoop {
 	#[allow(clippy::mut_from_ref)]
 	pub(crate) fn from_context(cx: &Context) -> &mut Self {
-		unsafe { &mut cx.get_private().event_loop }
+		cx.get_event_loop()
 	}
 
 	pub(crate) fn wake(&mut self) {
@@ -161,7 +161,7 @@ pub(crate) unsafe extern "C" fn promise_rejection_tracker_callback(
 	cx: *mut JSContext, _: bool, promise: Handle<*mut JSObject>, state: PromiseRejectionHandlingState, _: *mut c_void,
 ) {
 	let cx = unsafe { &Context::new_unchecked(cx) };
-	let unhandled = &mut unsafe { cx.get_private() }.event_loop.unhandled_rejections;
+	let unhandled = &mut cx.get_event_loop().unhandled_rejections;
 	let promise = unsafe { Local::from_raw_handle(promise) };
 	match state {
 		PromiseRejectionHandlingState::Unhandled => unhandled.push_back(TracedHeap::from_local(&promise)),
