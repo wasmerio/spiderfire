@@ -30,21 +30,25 @@ impl ModuleLoader for Loader {
 	) -> ion::Result<Module<'cx>> {
 		let specifier = request.specifier(cx).to_owned(cx)?;
 
-		// Do a registry look-up before canonicalizing paths, since the
-		// canonicalization process is incompatible with built-in modules
-		// that don't have an address on disk.
-		if let Some(heap) = self.registry.get(&specifier) {
-			return Ok(Module::from_local(heap.root(cx)));
+		// If the request looks like it's for a built-in module, look it up now.
+		if specifier.starts_with("__") || specifier.contains(':') {
+			if let Some(heap) = self.registry.get(&specifier) {
+				return Ok(Module::from_local(heap.root(cx)));
+			}
 		}
 
-		let path = if !specifier.starts_with('/') {
-			Path::new(referencing_module.and_then(|d| d.path.as_ref()).unwrap())
-				.parent()
-				.unwrap()
-				.join(&specifier)
-		} else {
-			Path::new(&specifier).to_path_buf()
+		let path = match referencing_module.and_then(|d| d.path.as_ref()) {
+			Some(path) if !specifier.starts_with('/') => Path::new(path).parent().unwrap().join(&specifier),
+			_ => Path::new(&specifier).to_path_buf(),
 		};
+
+		// Perform a look-up of the uncanonicalized path of the module. This helps
+		// when the module was loaded before but its file is no longer available,
+		// such as when resuming a pre-initialized WASM binary.
+		let uncanonicalized_path_string = String::from(path.to_str().unwrap());
+		if let Some(heap) = self.registry.get(&uncanonicalized_path_string) {
+			return Ok(Module::from_local(heap.root(cx)));
+		}
 
 		let path = canonicalize_path(&path).or_else(|e| {
 			if path.extension() == Some(OsStr::new("js")) {
@@ -65,9 +69,17 @@ impl ModuleLoader for Loader {
 			canonicalize_path(&parent.join(file_name))
 		})?;
 
-		let str = String::from(path.to_str().unwrap());
-		match self.registry.get(&str) {
-			Some(heap) => Ok(Module::from_local(heap.root(cx))),
+		let path_string = String::from(path.to_str().unwrap());
+		match self.registry.get(&path_string) {
+			Some(heap) => {
+				let module_obj = Object::from(heap.root(cx));
+				if path_string != uncanonicalized_path_string {
+					// Register the module under the new specifier as well
+					// to keep future lookups happy
+					self.register(cx, &module_obj, uncanonicalized_path_string)?;
+				}
+				Ok(Module::from_local(module_obj.into_local()))
+			}
 			None => {
 				let script = read_to_string(&path).map_err(|e| {
 					Error::new(
@@ -93,8 +105,14 @@ impl ModuleLoader for Loader {
 				let module = Module::compile(cx, &specifier, Some(path.as_path()), &script);
 
 				if let Ok(module) = module {
-					let request = ModuleRequest::new(cx, path.to_str().unwrap());
-					self.register(cx, module.module_object(), &request)?;
+					// Register the module under both the canonical path and the specifier,
+					// so that we find in both of these situations:
+					//   * when a different import call refers to the same module file with a different specifier
+					//   * when re-importing with the same specifier, without needing to touch the file system
+					if path_string != uncanonicalized_path_string {
+						self.register(cx, module.module_object(), uncanonicalized_path_string)?;
+					}
+					self.register(cx, module.module_object(), path_string)?;
 					Ok(module)
 				} else {
 					Err(Error::new(format!("Unable to compile module: {}\0", specifier), None))
@@ -103,14 +121,16 @@ impl ModuleLoader for Loader {
 		}
 	}
 
-	fn register(&mut self, cx: &Context, module: &Object, request: &ModuleRequest) -> ion::Result<()> {
-		let specifier = request.specifier(cx).to_owned(cx)?;
+	fn register(&mut self, _cx: &Context, module: &Object, specifier: String) -> ion::Result<()> {
 		match self.registry.entry(specifier) {
 			Entry::Vacant(v) => {
 				v.insert(TracedHeap::from_local(module));
 				Ok(())
 			}
-			Entry::Occupied(_) => Err(Error::none()),
+			Entry::Occupied(o) => Err(Error::new(
+				format!("Internal error: cannot re-register module with specifier {}", o.key()),
+				None,
+			)),
 		}
 	}
 

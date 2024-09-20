@@ -205,7 +205,7 @@ pub trait ModuleLoader {
 	) -> crate::Result<Module<'cx>>;
 
 	/// Registers a new module in the module registry. Useful for native modules.
-	fn register(&mut self, cx: &Context, module: &Object, request: &ModuleRequest) -> crate::Result<()>;
+	fn register(&mut self, cx: &Context, module: &Object, request: String) -> crate::Result<()>;
 
 	/// Returns metadata of a module, used to populate `import.meta`.
 	fn metadata(&self, cx: &Context, data: Option<&ModuleData>, meta: &mut Object) -> crate::Result<()>;
@@ -218,7 +218,7 @@ impl ModuleLoader for () {
 		Err(Error::new("Modules are unsupported by this loader.", None))
 	}
 
-	fn register(&mut self, _: &Context, _: &Object, _: &ModuleRequest) -> crate::Result<()> {
+	fn register(&mut self, _: &Context, _: &Object, _: String) -> crate::Result<()> {
 		Ok(())
 	}
 

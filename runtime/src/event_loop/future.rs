@@ -40,8 +40,9 @@ impl FutureQueue {
 			match item {
 				Ok(item) => results.push(item),
 				Err(error) => {
+					// TODO: can't we return the error directly here?
 					Error::new(error.to_string(), ErrorKind::Normal).throw(cx);
-					return Err(None);
+					return Err(ErrorReport::new_with_exception_stack(cx).unwrap());
 				}
 			}
 		}
