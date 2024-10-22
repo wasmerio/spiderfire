@@ -21,7 +21,7 @@ use crate::{
 use super::readable_stream_from_callbacks;
 
 thread_local! {
-	static STREAM_TEE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+	static STREAM_TEE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
 }
 
 pub(super) fn define(cx: &Context, global: &Object) -> bool {

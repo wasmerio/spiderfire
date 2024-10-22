@@ -4,7 +4,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::collections::hash_map::{Entry, HashMap};
+use std::{
+	borrow::Cow,
+	collections::hash_map::{Entry, HashMap},
+};
 use std::ffi::OsStr;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
@@ -41,56 +44,50 @@ impl ModuleLoader for Loader {
 			}
 		}
 
-		let path = match referencing_path {
+		let raw_path = match referencing_path {
 			Some(path) if !specifier.starts_with('/') => Path::new(path).parent().unwrap().join(&specifier),
 			_ => Path::new(&specifier).to_path_buf(),
 		};
 
-		// Perform a look-up of the uncanonicalized path of the module. This helps
-		// when the module was loaded before but its file is no longer available,
-		// such as when resuming a pre-initialized WASM binary.
-		let uncanonicalized_path_string = String::from(crate::wasi_polyfills::normalize(&path)?.to_str().unwrap());
-		tracing::debug!(%uncanonicalized_path_string);
-		if let Some(heap) = self.registry.get(&uncanonicalized_path_string) {
-			tracing::debug!("Found uncanonicalized path in registry");
+		// Perform a look-up using the path of the module. This helps when the module was
+		// loaded before but its file is no longer available, such as when resuming a
+		// pre-initialized WASM binary.
+		if let Some(heap) = try_locate_registered_module_from_path(&raw_path, &self.registry) {
 			return Ok(Module::from_local(heap.root(cx)));
 		}
 
-		let path = canonicalize_path(&path).or_else(|e| {
-			if path.extension() == Some(OsStr::new("js")) {
-				return Err(e);
-			}
-
-			// Try appending a .js extension
-			let Some(file_name) = path.file_name() else {
-				return Err(e);
-			};
-			let Some(parent) = path.parent() else {
-				return Err(e);
+		let path = canonicalize_path(&raw_path).or_else(|e| {
+			let path_with_ext = match ensure_extension(&raw_path, "js") {
+				Some(Cow::Owned(path)) => path,
+				_ => return Err(e),
 			};
 
-			let mut file_name = file_name.to_owned();
-			file_name.push(".js");
-			let full_path = parent.join(file_name);
+			tracing::debug!(?path_with_ext, "Failed to find module file, trying with .js extension");
 
-			tracing::debug!(?full_path, "Failed to find module file, trying with .js extension");
-
-			canonicalize_path(&full_path)
+			canonicalize_path(&path_with_ext)
 		})?;
 
 		let path_string = String::from(path.to_str().unwrap());
 		tracing::debug!(path_string, "Loading module from file");
 
+		let mut raw_path_string = String::from(raw_path.to_str().unwrap());
+		if !raw_path_string.ends_with(".js") {
+			raw_path_string.push_str(".js");
+		}
+		let normalized_raw_path_string = crate::wasi_polyfills::normalize(raw_path)
+			.map(|p| String::from(p.to_str().unwrap()))
+			.ok()
+			.unwrap_or(raw_path_string);
+
 		match self.registry.get(&path_string) {
 			Some(heap) => {
 				tracing::debug!("Found module in registry");
 				let module_obj = Object::from(heap.root(cx));
-				if path_string != uncanonicalized_path_string {
-					tracing::debug!("Unknown uncanoncalized path, adding to registry");
-					// Register the module under the new specifier as well
-					// to keep future lookups happy
-					self.register(cx, &module_obj, uncanonicalized_path_string)?;
-				}
+
+				// Register the module under the new specifier as well
+				// to keep future lookups happy
+				_ = self.register(cx, &module_obj, normalized_raw_path_string);
+
 				Ok(Module::from_local(module_obj.into_local()))
 			}
 			None => {
@@ -124,10 +121,8 @@ impl ModuleLoader for Loader {
 					// so that we find in both of these situations:
 					//   * when a different import call refers to the same module file with a different specifier
 					//   * when re-importing with the same specifier, without needing to touch the file system
-					if path_string != uncanonicalized_path_string {
-						self.register(cx, module.module_object(), uncanonicalized_path_string)?;
-					}
 					self.register(cx, module.module_object(), path_string)?;
+					_ = self.register(cx, module.module_object(), normalized_raw_path_string);
 					Ok(module)
 				} else {
 					Err(Error::new(format!("Unable to compile module: {}\0", specifier), None))
@@ -168,6 +163,51 @@ impl ModuleLoader for Loader {
 
 		Ok(())
 	}
+}
+
+fn try_locate_registered_module_from_path(
+	path: impl AsRef<Path>, registry: &HashMap<String, TracedHeap<*mut JSObject>>,
+) -> Option<&TracedHeap<*mut JSObject>> {
+	// Raw paths are always registered with a .js suffix, so add that now
+	let path = ensure_extension(path.as_ref(), "js")?;
+
+	let path_string = String::from(path.as_ref().to_str().unwrap());
+
+	tracing::debug!(path_string, "Trying to locate module");
+
+	// First, try the path directly
+	if let Some(heap) = registry.get(&path_string) {
+		tracing::debug!("Found module in registry with its raw path");
+		return Some(heap);
+	}
+
+	// Next, try normalizing the path without checking it exists, to handle
+	// cases such as './' or '../'
+	if let Some(normalized_path_string) =
+		crate::wasi_polyfills::normalize(&path).ok().map(|p| String::from(p.to_str().unwrap()))
+	{
+		tracing::debug!(normalized_path_string, "Trying to locate module with normalized path");
+
+		if let Some(heap) = registry.get(&normalized_path_string) {
+			tracing::debug!("Found module in registry with its normalized raw path");
+			return Some(heap);
+		}
+	}
+
+	None
+}
+
+fn ensure_extension<'a>(path: &'a Path, extension: &str) -> Option<Cow<'a, Path>> {
+	if path.extension() == Some(OsStr::new(extension)) {
+		return Some(Cow::Borrowed(path));
+	}
+
+	// Try appending a .js extension
+	let mut file_name = path.file_name()?.to_owned();
+	file_name.push(".");
+	file_name.push(extension);
+
+	Some(Cow::Owned(path.parent()?.join(file_name)))
 }
 
 fn canonicalize_path(path: impl AsRef<Path> + Copy) -> ion::Result<PathBuf> {

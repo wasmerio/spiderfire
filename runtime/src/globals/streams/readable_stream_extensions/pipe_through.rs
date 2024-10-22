@@ -7,7 +7,7 @@ use ion::{
 use mozjs::jsapi::JSFunction;
 
 thread_local! {
-	static STREAM_PIPE_TO: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+	static STREAM_PIPE_TO: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
 }
 
 #[js_fn]
