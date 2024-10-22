@@ -1563,6 +1563,7 @@ dependencies = [
  "mozjs",
  "mozjs_sys",
  "sourcemap",
+ "tracing",
  "typed-arena",
  "utf16string",
 ]
@@ -2202,6 +2203,7 @@ dependencies = [
  "sys-locale",
  "term-table",
  "tokio",
+ "tracing",
  "uri-url",
  "url",
 ]

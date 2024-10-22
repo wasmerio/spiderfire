@@ -115,9 +115,9 @@ impl EventLoop {
 		while let Some(promise) = self.unhandled_rejections.pop_front() {
 			let promise = Promise::from(promise.to_local()).unwrap();
 			let result = promise.result(cx);
-			eprintln!(
-				"Unhandled Promise Rejection: {}",
-				format_value(cx, Config::default(), &result)
+			tracing::error!(
+				rejection_value = %format_value(cx, Config::default(), &result),
+				"Unhandled Promise Rejection",
 			);
 		}
 

@@ -13,6 +13,7 @@ bitflags = "2.4.2"
 byteorder = "1.5.0"
 bytemuck = "1.14.3"
 itoa = "1.0.10"
+memoffset = "0.9.0"
 typed-arena = "2.0.2"
 utf16string = "0.2.0"
 
@@ -23,7 +24,7 @@ encoding_rs.workspace = true
 indent.workspace = true
 mozjs.workspace = true
 mozjs_sys.workspace = true
-memoffset = "0.9.0"
+tracing.workspace = true
 
 [dependencies.futures]
 workspace = true

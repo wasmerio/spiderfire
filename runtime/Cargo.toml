@@ -25,6 +25,7 @@ indent.workspace = true
 mozjs.workspace = true
 paste.workspace = true
 sourcemap.workspace = true
+tracing.workspace = true
 url.workspace = true
 hyper-multipart-rfc7578 = "0.8.0"
 as-any = "0.3.1"

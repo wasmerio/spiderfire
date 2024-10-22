@@ -98,13 +98,13 @@ impl Promise {
 					Ok(output) => {
 						let value = output.as_value(cx);
 						if let Err(Some(error)) = resolve.call(cx, &null, &[value]) {
-							println!("{}", error.format(cx));
+							tracing::error!(error = error.format(cx), "Failed to resolve future promise");
 						}
 					}
 					Err(error) => {
 						let value = error.as_value(cx);
 						if let Err(Some(error)) = reject.call(cx, &null, &[value]) {
-							println!("{}", error.format(cx));
+							tracing::error!(error = error.format(cx), "Failed to reject future promise");
 						}
 					}
 				}

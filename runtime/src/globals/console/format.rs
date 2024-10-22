@@ -14,7 +14,6 @@ use ion::conversions::FromValue;
 use ion::format::{format_value, ValueDisplay};
 use ion::format::Config as FormatConfig;
 
-use crate::config::{Config, LogLevel};
 use crate::globals::console::INDENTS;
 
 pub(crate) enum FormatArg<'cx> {
@@ -154,9 +153,7 @@ pub(crate) fn format_args<'cx>(cx: &'cx Context, args: &'cx [Value<'cx>]) -> Vec
 	}
 
 	inner(cx, args).unwrap_or_else(|error| {
-		if Config::global().log_level >= LogLevel::Warn {
-			eprintln!("{}", error.format());
-		}
+		tracing::warn!(error = error.format(), "Failed to format arguments");
 		Vec::new()
 	})
 }

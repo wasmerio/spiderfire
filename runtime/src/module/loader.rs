@@ -29,15 +29,19 @@ impl ModuleLoader for Loader {
 		&mut self, cx: &'cx Context, referencing_module: Option<&ModuleData>, request: &ModuleRequest,
 	) -> ion::Result<Module<'cx>> {
 		let specifier = request.specifier(cx).to_owned(cx)?;
+		let referencing_path = referencing_module.and_then(|d| d.path.as_ref());
+
+		tracing::info!(specifier, referencing_path, "Resolving module");
 
 		// If the request looks like it's for a built-in module, look it up now.
 		if specifier.starts_with("__") || specifier.contains(':') {
 			if let Some(heap) = self.registry.get(&specifier) {
+				tracing::debug!("Built-in module found in registry");
 				return Ok(Module::from_local(heap.root(cx)));
 			}
 		}
 
-		let path = match referencing_module.and_then(|d| d.path.as_ref()) {
+		let path = match referencing_path {
 			Some(path) if !specifier.starts_with('/') => Path::new(path).parent().unwrap().join(&specifier),
 			_ => Path::new(&specifier).to_path_buf(),
 		};
@@ -45,8 +49,10 @@ impl ModuleLoader for Loader {
 		// Perform a look-up of the uncanonicalized path of the module. This helps
 		// when the module was loaded before but its file is no longer available,
 		// such as when resuming a pre-initialized WASM binary.
-		let uncanonicalized_path_string = String::from(path.to_str().unwrap());
+		let uncanonicalized_path_string = String::from(crate::wasi_polyfills::normalize(&path)?.to_str().unwrap());
+		tracing::debug!(%uncanonicalized_path_string);
 		if let Some(heap) = self.registry.get(&uncanonicalized_path_string) {
+			tracing::debug!("Found uncanonicalized path in registry");
 			return Ok(Module::from_local(heap.root(cx)));
 		}
 
@@ -65,15 +71,22 @@ impl ModuleLoader for Loader {
 
 			let mut file_name = file_name.to_owned();
 			file_name.push(".js");
+			let full_path = parent.join(file_name);
 
-			canonicalize_path(&parent.join(file_name))
+			tracing::debug!(?full_path, "Failed to find module file, trying with .js extension");
+
+			canonicalize_path(&full_path)
 		})?;
 
 		let path_string = String::from(path.to_str().unwrap());
+		tracing::debug!(path_string, "Loading module from file");
+
 		match self.registry.get(&path_string) {
 			Some(heap) => {
+				tracing::debug!("Found module in registry");
 				let module_obj = Object::from(heap.root(cx));
 				if path_string != uncanonicalized_path_string {
+					tracing::debug!("Unknown uncanoncalized path, adding to registry");
 					// Register the module under the new specifier as well
 					// to keep future lookups happy
 					self.register(cx, &module_obj, uncanonicalized_path_string)?;
@@ -81,6 +94,8 @@ impl ModuleLoader for Loader {
 				Ok(Module::from_local(module_obj.into_local()))
 			}
 			None => {
+				tracing::debug!("Module not found in registry, loading and compiling");
+
 				let script = read_to_string(&path).map_err(|e| {
 					Error::new(
 						format!(
@@ -121,9 +136,15 @@ impl ModuleLoader for Loader {
 		}
 	}
 
-	fn register(&mut self, _cx: &Context, module: &Object, specifier: String) -> ion::Result<()> {
+	fn register(&mut self, cx: &Context, module: &Object, specifier: String) -> ion::Result<()> {
 		match self.registry.entry(specifier) {
 			Entry::Vacant(v) => {
+				tracing::trace!(
+					specifier = %v.key(),
+					module_object =
+						%ion::format::format_value(cx, ion::format::Config::default(), &ion::Value::object(cx, module)),
+					"Registring module"
+				);
 				v.insert(TracedHeap::from_local(module));
 				Ok(())
 			}
