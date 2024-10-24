@@ -197,15 +197,15 @@ fn try_locate_registered_module_from_path(
 	None
 }
 
-fn ensure_extension<'a>(path: &'a Path, extension: &str) -> Option<Cow<'a, Path>> {
-	if path.extension() == Some(OsStr::new(extension)) {
+fn ensure_extension<'a>(path: &'a Path, default_extension: &str) -> Option<Cow<'a, Path>> {
+	if path.extension().is_some() {
 		return Some(Cow::Borrowed(path));
 	}
 
 	// Try appending a .js extension
 	let mut file_name = path.file_name()?.to_owned();
 	file_name.push(".");
-	file_name.push(extension);
+	file_name.push(default_extension);
 
 	Some(Cow::Owned(path.parent()?.join(file_name)))
 }
