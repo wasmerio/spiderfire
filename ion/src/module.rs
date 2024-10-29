@@ -8,8 +8,8 @@ use std::ops::Deref;
 use std::path::Path;
 
 use mozjs::jsapi::{
-	CompileModule, CreateModuleRequest, FinishDynamicModuleImport, GetModuleRequestSpecifier, Handle, JSContext,
-	JSObject, JS_GetRuntime, ModuleEvaluate, ModuleLink, SetModuleDynamicImportHook, SetModuleMetadataHook,
+	CompileModule, CreateModuleRequest, FinishDynamicModuleImport, GetModuleRequestSpecifier, Handle, ModuleIsLinked,
+	JSContext, JSObject, JS_GetRuntime, ModuleEvaluate, ModuleLink, SetModuleDynamicImportHook, SetModuleMetadataHook,
 	SetModulePrivate, SetModuleResolveHook,
 };
 use mozjs::jsval::JSVal;
@@ -179,6 +179,11 @@ impl<'cx> Module<'cx> {
 		} else {
 			Err(ErrorReport::new_with_exception_stack(cx)?.unwrap())
 		}
+	}
+
+	/// Has this module been linked already?
+	pub fn is_linked(&self) -> bool {
+		unsafe { ModuleIsLinked((*self.0).get()) }
 	}
 
 	pub fn module_object(&self) -> &Object {

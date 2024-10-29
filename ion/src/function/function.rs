@@ -9,10 +9,11 @@ use std::ops::Deref;
 
 use mozjs::conversions::jsstr_to_string;
 use mozjs::jsapi::{
-	HandleValueArray, JS_CallFunction, JS_DecompileFunction, JS_GetFunctionArity, JS_GetMaybePartialFunctionDisplayId,
-	JS_GetMaybePartialFunctionId, JS_GetFunctionLength, JS_GetFunctionObject, JS_GetObjectFunction, JS_IsBuiltinEvalFunction,
-	JS_IsBuiltinFunctionConstructor, JS_IsConstructor, JS_NewFunction, JS_ObjectIsFunction, JSContext, JSFunction,
-	JSFunctionSpec, JSObject, NewFunctionFromSpec1, NewFunctionWithReserved, SetFunctionNativeReserved,
+	HandleValueArray, JS_CallFunction, Construct1, JS_DecompileFunction, JS_GetFunctionArity,
+	JS_GetMaybePartialFunctionDisplayId, JS_GetMaybePartialFunctionId, JS_GetFunctionLength, JS_GetFunctionObject,
+	JS_GetObjectFunction, JS_IsBuiltinEvalFunction, JS_IsBuiltinFunctionConstructor, JS_IsConstructor, JS_NewFunction,
+	JS_ObjectIsFunction, JSContext, JSFunction, JSFunctionSpec, JSObject, NewFunctionFromSpec1,
+	NewFunctionWithReserved, SetFunctionNativeReserved,
 };
 use mozjs::jsval::{JSVal, ObjectValue};
 
@@ -182,6 +183,27 @@ impl<'f> Function<'f> {
 			Ok(rval)
 		} else {
 			Err(ErrorReport::new_with_exception_stack(cx).unwrap())
+		}
+	}
+
+	pub fn construct<'cx>(&self, cx: &'cx Context, args: &[Value]) -> crate::ResultExc<Object<'cx>> {
+		unsafe {
+			let ctor_object = Value::object(cx, &cx.root(JS_GetFunctionObject(self.get())).into());
+
+			let args: Vec<_> = args.iter().map(|a| a.get()).collect();
+
+			let mut res = Object::null(cx);
+
+			if Construct1(
+				cx.as_ptr(),
+				ctor_object.handle().into(),
+				&HandleValueArray::from_rooted_slice(args.as_slice()),
+				res.handle_mut().into(),
+			) {
+				Ok(res)
+			} else {
+				Err(crate::Exception::new(cx)?.expect("There should be a pending exception after a failure"))
+			}
 		}
 	}
 

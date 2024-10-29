@@ -14,7 +14,7 @@ use mozjs::{
 	rust::{RootedTraceableSet, Traceable},
 };
 
-use crate::{Context, Local};
+use crate::{conversions::ToValue, Context, Local};
 
 macro_rules! impl_heap_root {
 	([$class:ident] $(($pointer:ty)$(,)?)*) => {
@@ -109,6 +109,16 @@ where
 	}
 }
 
+impl<'cx, T> ToValue<'cx> for Heap<T>
+where
+	T: ToValue<'cx> + GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn to_value(&self, cx: &'cx Context, value: &mut crate::Value) {
+		ToValue::to_value(&self.heap.get(), cx, value)
+	}
+}
+
 /// Value stored on the heap and traced automatically. There is
 /// no need to trace [TracedHeap<T>] instances, and thus there
 /// is no [Traceable] implementation for this type.
@@ -179,6 +189,16 @@ where
 	}
 }
 
+impl<'cx, T> ToValue<'cx> for TracedHeap<T>
+where
+	T: ToValue<'cx> + GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn to_value(&self, cx: &'cx Context, value: &mut crate::Value) {
+		ToValue::to_value(&self.heap.get(), cx, value)
+	}
+}
+
 impl_heap_root! {
 	[TracedHeap]
 	(JSVal),
@@ -236,6 +256,16 @@ where
 	/// The returned Local cannot be used to construct a HandleMut.
 	pub fn to_local(&self) -> Local<'_, T> {
 		unsafe { Local::from_heap(&self.heap) }
+	}
+}
+
+impl<'cx, T> ToValue<'cx> for PermanentHeap<T>
+where
+	T: ToValue<'cx> + GCMethods + Copy + 'static,
+	JSHeap<T>: Traceable + Default,
+{
+	fn to_value(&self, cx: &'cx Context, value: &mut crate::Value) {
+		ToValue::to_value(&self.heap.get(), cx, value)
 	}
 }
 
