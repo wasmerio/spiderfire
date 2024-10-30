@@ -23,6 +23,7 @@ pub struct FileOptions {
 }
 
 #[js_class]
+#[derive(Debug)]
 pub struct File {
 	pub blob: Blob,
 	pub name: String,

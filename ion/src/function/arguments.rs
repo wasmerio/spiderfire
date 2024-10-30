@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt::Debug;
+
 use mozjs::jsapi::{CallArgs, JS_GetMaybePartialFunctionId, JS_GetObjectFunction};
 use mozjs::jsval::JSVal;
 
@@ -39,7 +41,9 @@ impl<'cx> Arguments<'cx> {
 	pub fn check_args(&self, cx: &Context, min: u16) -> Result<()> {
 		if self.args < min {
 			let func = crate::String::from(unsafe {
-				Local::from_marked(&JS_GetMaybePartialFunctionId(JS_GetObjectFunction(self.callee.handle().get())))
+				Local::from_marked(&JS_GetMaybePartialFunctionId(JS_GetObjectFunction(
+					self.callee.handle().get(),
+				)))
 			})
 			.to_owned(cx)?;
 
@@ -112,6 +116,20 @@ impl<'cx> Arguments<'cx> {
 
 	pub fn access<'a>(&'a mut self) -> Accessor<'a, 'cx> {
 		Accessor { args: self, index: 0 }
+	}
+}
+
+impl<'a> Debug for Arguments<'a> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let mut s = f.debug_struct("Arguments");
+
+		for i in 0..self.len() {
+			s.field(&format!("arg_{i}"), &self.value(i));
+		}
+
+		s.finish()
+
+		// .field("cx", &self.cx).field("args", &self.args).field("callee", &self.callee).field("call_args", &self.call_args).finish()
 	}
 }
 

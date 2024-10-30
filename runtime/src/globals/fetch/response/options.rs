@@ -15,7 +15,7 @@ use ion::conversions::FromValue;
 
 use crate::globals::fetch::header::HeadersInit;
 
-#[derive(Default, FromValue)]
+#[derive(Default, FromValue, Debug)]
 pub struct ResponseInit<'cx> {
 	#[ion(default)]
 	pub(crate) headers: HeadersInit<'cx>,

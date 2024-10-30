@@ -10,7 +10,7 @@ use mozjs::jsapi::{JSObject, ToStringSlow};
 use super::file::{Blob, File, BlobPart, FileOptions, BlobOptions, Endings};
 
 // TODO: maintain the same File instance instead of Bytes
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum FormDataEntryValue {
 	String(String),
 	File(TracedHeap<*mut JSObject>),
@@ -85,12 +85,14 @@ impl<'cx> ToValue<'cx> for FormDataEntryValue {
 	}
 }
 
+#[derive(Debug)]
 pub struct KvPair {
 	pub key: String,
 	pub value: FormDataEntryValue,
 }
 
 #[js_class]
+#[derive(Debug)]
 pub struct FormData {
 	reflector: Reflector,
 

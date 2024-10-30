@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt::Debug;
+
 use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_8};
 
 use ion::{Error, ErrorKind, Result};
@@ -12,7 +14,7 @@ use ion::function::Opt;
 
 use crate::globals::file::BufferSource;
 
-#[derive(Default, FromValue)]
+#[derive(Default, FromValue, Debug)]
 pub struct TextDecoderOptions {
 	#[ion(default)]
 	fatal: bool,
@@ -20,7 +22,7 @@ pub struct TextDecoderOptions {
 	ignore_byte_order_mark: bool,
 }
 
-#[derive(Default, FromValue)]
+#[derive(Default, FromValue, Debug)]
 pub struct TextDecodeOptions {
 	#[ion(default)]
 	stream: bool,
@@ -43,6 +45,15 @@ pub struct TextDecoder {
 	pub ignore_byte_order_mark: bool,
 }
 
+impl Debug for TextDecoder {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TextDecoder")
+			.field("encoding", &self.encoding)
+			.field("fatal", &self.fatal)
+			.field("ignore_byte_order_mark", &self.ignore_byte_order_mark)
+			.finish()
+	}
+}
 #[js_class]
 impl TextDecoder {
 	#[ion(constructor)]

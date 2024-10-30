@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ion::{
 	class::Reflector, conversions::ToValue, function::Opt, ClassDefinition, Context, Error, ErrorKind, Heap, Object,
 	Result, Value,
@@ -55,11 +57,23 @@ impl TextEncoderStreamTransformer {
 	}
 }
 
+impl Debug for TextEncoderStreamTransformer {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TextEncoderStreamTransformer").finish()
+	}
+}
+
 #[js_class]
 pub struct TextEncoderStream {
 	reflector: Reflector,
 	transform_stream: Heap<*mut JSObject>,
 	encoder: Heap<*mut JSObject>,
+}
+
+impl Debug for TextEncoderStream {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TextEncoderStream").finish()
+	}
 }
 
 impl TextEncoderStream {

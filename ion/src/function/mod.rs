@@ -66,14 +66,17 @@ fn handle_unwind_error(cx: &Context, unwind_error: Box<dyn Any + Send>) -> bool 
 }
 
 /// Helper type for optional arguments.
+#[derive(Debug)]
 pub struct Opt<T>(pub Option<T>);
 
 /// Helper type for rest/spread/variable arguments.
+#[derive(Debug)]
 pub struct Rest<T>(pub Box<[T]>);
 
 pub type VarArgs<T> = Rest<T>;
 
 /// Helper type for strict arguments.
+#[derive(Debug)]
 pub struct Strict<T>(pub T);
 
 impl<'cx, T: FromValue<'cx>> FromValue<'cx> for Strict<T> {

@@ -16,6 +16,7 @@ use ion::symbol::WellKnownSymbolCode;
 
 use crate::globals::url::URL;
 
+#[derive(Debug)]
 pub struct URLSearchParamsInit(Vec<(String, String)>);
 
 impl<'cx> FromValue<'cx> for URLSearchParamsInit {
@@ -61,6 +62,7 @@ impl<'cx> FromValue<'cx> for URLSearchParamsInit {
 }
 
 #[js_class]
+#[derive(Debug)]
 pub struct URLSearchParams {
 	reflector: Reflector,
 	pairs: Vec<(String, String)>,

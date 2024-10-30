@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::{ptr, task};
+use std::{fmt::Debug, ptr, task};
 use std::future::Future;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
@@ -84,6 +84,12 @@ pub struct AbortController {
 	sender: Sender<Option<TracedHeap<JSVal>>>,
 }
 
+impl Debug for AbortController {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("AbortController").finish()
+	}
+}
+
 #[js_class]
 impl AbortController {
 	#[ion(constructor)]
@@ -116,6 +122,12 @@ pub struct AbortSignal {
 	reflector: Reflector,
 	#[trace(no_trace)]
 	pub(crate) signal: Signal,
+}
+
+impl Debug for AbortSignal {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("AbortSignal").finish()
+	}
 }
 
 #[js_class]

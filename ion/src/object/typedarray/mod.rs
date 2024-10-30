@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::ops::Deref;
+use std::{fmt::Debug, ops::Deref};
 
 use mozjs::typedarray::{ArrayBufferU8, ClampedU8, Float32, Float64, Int16, Int32, Int8, Uint16, Uint32, Uint8};
 use mozjs::typedarray as jsta;
@@ -20,6 +20,12 @@ mod view;
 
 pub struct ArrayBufferWrapper {
 	buf: Box<[<ArrayBufferU8 as jsta::TypedArrayElement>::Element]>,
+}
+
+impl Debug for ArrayBufferWrapper {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("ArrayBufferWrapper").finish()
+	}
 }
 
 impl ArrayBufferWrapper {
@@ -53,6 +59,7 @@ impl<'cx> IntoValue<'cx> for ArrayBufferWrapper {
 macro_rules! impl_typedarray_wrapper {
 	($(($typedarray:ident, $element:ty)$(,)?)*) => {
 		$(
+			#[derive(Debug)]
 			pub struct $typedarray {
 				buf: Box<[<$element as jsta::TypedArrayElement>::Element]>,
 			}

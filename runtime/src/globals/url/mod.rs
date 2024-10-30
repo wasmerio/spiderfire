@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt::Debug};
 
 use mozjs::jsapi::{Heap, JSObject};
 use url::Url;
@@ -16,7 +16,7 @@ pub use search_params::URLSearchParams;
 
 mod search_params;
 
-#[derive(Default, FromValue)]
+#[derive(Default, FromValue, Debug)]
 pub struct FormatOptions {
 	#[ion(default)]
 	auth: bool,
@@ -32,6 +32,12 @@ pub struct URL {
 	#[trace(no_trace)]
 	pub(crate) url: Url,
 	search_params: Box<Heap<*mut JSObject>>,
+}
+
+impl Debug for URL {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("URL").field("url", &self.url).finish()
+	}
 }
 
 #[js_class]

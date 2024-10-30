@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ion::{Object, Value, Promise, class::Reflector, Context, ResultExc};
 
 #[js_class]
@@ -6,6 +8,12 @@ pub struct NativeStreamSink {
 
 	#[trace(no_trace)]
 	callbacks: Box<dyn NativeStreamSinkCallbacks>,
+}
+
+impl Debug for NativeStreamSink {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("NativeStreamSink").finish()
+	}
 }
 
 pub trait NativeStreamSinkCallbacks {

@@ -4,7 +4,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::any::{Any, TypeId};
+use std::{
+	any::{Any, TypeId},
+	fmt::Debug,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -172,6 +175,12 @@ impl Context {
 		let root = T::alloc(&self.rooted, Rooted::new_unrooted());
 		self.order.borrow_mut().push(T::GC_TYPE);
 		Local::new(self, root, value)
+	}
+}
+
+impl Debug for Context {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Context").field("context_ptr", &self.context).finish()
 	}
 }
 

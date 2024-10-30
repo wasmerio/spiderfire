@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::str::FromStr;
+use std::{fmt::Debug, str::FromStr};
 
 use bytes::Bytes;
 use encoding_rs::UTF_8;
@@ -22,6 +22,15 @@ use crate::promise::future_to_promise;
 pub enum BufferSource<'cx> {
 	Buffer(ArrayBuffer<'cx>),
 	View(ArrayBufferView<'cx>),
+}
+
+impl<'a> Debug for BufferSource<'a> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Buffer(_) => f.debug_tuple("Buffer").finish(),
+			Self::View(_) => f.debug_tuple("View").finish(),
+		}
+	}
 }
 
 impl BufferSource<'_> {
@@ -140,6 +149,12 @@ pub struct Blob {
 	#[trace(no_trace)]
 	bytes: Bytes,
 	kind: Option<String>,
+}
+
+impl Debug for Blob {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Blob").field("bytes", &self.bytes).field("kind", &self.kind).finish()
+	}
 }
 
 impl Blob {

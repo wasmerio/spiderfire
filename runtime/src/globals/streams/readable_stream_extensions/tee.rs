@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, fmt::Debug};
 
 use ion::{
 	class::Reflector,
@@ -108,6 +108,12 @@ impl TeeState {
 	#[ion(constructor)]
 	pub fn constructor() -> Result<TeeState> {
 		Err(Error::new("Cannot construct this type", ErrorKind::Type))
+	}
+}
+
+impl Debug for TeeState {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TeeState").finish()
 	}
 }
 

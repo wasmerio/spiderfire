@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt::Debug;
+
 use bytes::Bytes;
 use http::{HeaderValue, StatusCode};
 use http::header::{CONTENT_TYPE, LOCATION};
@@ -48,6 +50,16 @@ pub struct Response {
 	pub(crate) status_text: Option<String>,
 
 	pub(crate) range_requested: bool,
+}
+
+impl Debug for Response {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Response")
+			.field("url", &self.url)
+			.field("status", &self.status)
+			.field("status_text", &self.status_text)
+			.finish()
+	}
 }
 
 impl Response {

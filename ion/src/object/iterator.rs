@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::iter;
+use std::{fmt::Debug, iter};
 use std::ptr;
 
 use mozjs::gc::Traceable;
@@ -61,6 +61,12 @@ pub struct Iterator {
 	reflector: Reflector,
 	iter: Box<dyn JSIterator>,
 	private: Box<Heap<JSVal>>,
+}
+
+impl Debug for Iterator {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Iterator").finish()
+	}
 }
 
 impl Iterator {

@@ -13,6 +13,7 @@ bytes.workspace = true
 futures.workspace = true
 mozjs.workspace = true
 paste.workspace = true
+tracing.workspace = true
 url.workspace = true
 runtime.workspace = true
 

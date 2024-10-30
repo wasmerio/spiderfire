@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ion::{
 	class::{NativeObject, Reflector},
 	conversions::{FromValue, ToValue},
@@ -106,6 +108,12 @@ pub struct TransformStreamDefaultController {
 	reflector: Reflector,
 	stream: Heap<*mut JSObject>,
 	transformer: HeapTransformer,
+}
+
+impl Debug for TransformStreamDefaultController {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TransformStreamDefaultController").finish()
+	}
 }
 
 impl TransformStreamDefaultController {
@@ -545,6 +553,12 @@ pub struct TransformStream {
 	#[trace(no_trace)]
 	finish_promise: Option<Promise>,
 	error: Option<Heap<JSVal>>,
+}
+
+impl Debug for TransformStream {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TransformStream").finish()
+	}
 }
 
 impl TransformStream {

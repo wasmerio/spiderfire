@@ -29,7 +29,7 @@ use ion::function::Opt;
 use ion::string::byte::{ByteString, VisibleAscii};
 use ion::symbol::WellKnownSymbolCode;
 
-#[derive(FromValue)]
+#[derive(Debug, FromValue)]
 pub enum Header {
 	#[ion(inherit)]
 	Multiple(Vec<String>),
@@ -52,6 +52,7 @@ impl ToValue<'_> for Header {
 	}
 }
 
+#[derive(Debug)]
 pub struct HeaderEntry {
 	pub name: ByteString<VisibleAscii>,
 	pub value: ByteString<VisibleAscii>,
@@ -78,6 +79,7 @@ impl ToValue<'_> for HeaderEntry {
 	}
 }
 
+#[derive(Debug)]
 pub struct HeadersObject(HeaderMap);
 
 impl<'cx> FromValue<'cx> for HeadersObject {
@@ -90,7 +92,7 @@ impl<'cx> FromValue<'cx> for HeadersObject {
 	}
 }
 
-#[derive(Default, FromValue)]
+#[derive(Default, FromValue, Debug)]
 pub enum HeadersInit<'cx> {
 	#[ion(inherit)]
 	Existing(&'cx Headers),

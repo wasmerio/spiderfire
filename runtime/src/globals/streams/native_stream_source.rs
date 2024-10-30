@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, fmt::Debug};
 
 use as_any::AsAny;
 use ion::{Object, Value, Promise, class::Reflector, Context, ResultExc};
@@ -9,6 +9,12 @@ pub struct NativeStreamSource {
 
 	#[trace(no_trace)]
 	callbacks: Option<Box<dyn NativeStreamSourceCallbacks>>,
+}
+
+impl Debug for NativeStreamSource {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("NativeStreamSource").finish()
+	}
 }
 
 pub trait NativeStreamSourceCallbacks: AsAny {

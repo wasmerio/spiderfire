@@ -6,7 +6,7 @@
 
 use proc_macro2::TokenStream;
 use quote::ToTokens;
-use syn::{Error, FnArg, GenericParam, ItemFn, parse2, Result, ReturnType, Type};
+use syn::{parse2, Error, FnArg, GenericParam, ItemFn, Result, ReturnType, Type};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
@@ -16,6 +16,7 @@ use crate::utils::{new_token, path_ends_with};
 
 pub(crate) fn impl_wrapper_fn(
 	ion: &TokenStream, mut function: ItemFn, class_ty: Option<&Type>, is_constructor: bool,
+	instrument: Option<TokenStream>,
 ) -> Result<(ItemFn, Parameters)> {
 	if function.sig.asyncness.is_some() {
 		return Err(Error::new(
@@ -70,7 +71,14 @@ pub(crate) fn impl_wrapper_fn(
 		quote!(#result.map(|__result| #ion::ClassDefinition::set_private(__this.handle().get(), __result)))
 	};
 
-	let wrapper_inner = class_ty.is_none().then_some(&inner);
+	let instrument_attr = instrument.map(|i| quote!(#[::tracing::instrument(#i)]));
+	let wrapper_inner = match class_ty {
+		None => Some(quote!(
+			#instrument_attr
+			#inner
+		)),
+		Some(_) => None,
+	};
 
 	let ident = &function.sig.ident;
 	let call = if let Some(class) = class_ty {

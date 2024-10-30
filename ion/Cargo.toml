@@ -44,6 +44,11 @@ debugmozjs = ["mozjs/debugmozjs"]
 macros = ["dep:ion-proc"]
 sourcemap = ["dep:sourcemap"]
 
+instrument = ["ion-proc?/instrument"]
+instrument-level-trace = ["ion-proc?/instrument-level-trace"]
+instrument-level-debug = ["ion-proc?/instrument-level-debug"]
+instrument-level-info = ["ion-proc?/instrument-level-info"]
+
 [lib]
 doctest = false
 

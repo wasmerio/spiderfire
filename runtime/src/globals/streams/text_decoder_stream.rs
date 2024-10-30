@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ion::{
 	class::Reflector, conversions::ToValue, function::Opt, typedarray::ArrayBuffer, ClassDefinition, Context, Error,
 	ErrorKind, Heap, Object, Result,
@@ -18,6 +20,12 @@ use super::{TransformStream, TransformStreamDefaultController};
 pub(super) struct TextDecoderStreamTransformer {
 	reflector: Reflector,
 	stream: Heap<*mut JSObject>,
+}
+
+impl Debug for TextDecoderStreamTransformer {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TextDecoderStreamTransformer").finish()
+	}
 }
 
 impl TextDecoderStreamTransformer {
@@ -70,6 +78,12 @@ pub struct TextDecoderStream {
 	reflector: Reflector,
 	transform_stream: Heap<*mut JSObject>,
 	decoder: Heap<*mut JSObject>,
+}
+
+impl Debug for TextDecoderStream {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TextDecoderStream").finish()
+	}
 }
 
 impl TextDecoderStream {

@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use std::{ptr, slice};
+use std::{fmt::Debug, ptr, slice};
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::mem::size_of;
@@ -88,6 +88,12 @@ typed_array_elements! {
 pub struct TypedArray<'bv, T: TypedArrayElement> {
 	view: Local<'bv, *mut JSObject>,
 	_phantom: PhantomData<T>,
+}
+
+impl<'a, T: TypedArrayElement> Debug for TypedArray<'a, T> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TypedArray").finish()
+	}
 }
 
 impl<'bv, T: TypedArrayElementCreator> TypedArray<'bv, T> {

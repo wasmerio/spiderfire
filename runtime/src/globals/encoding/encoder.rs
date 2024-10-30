@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt::Debug;
+
 use encoding_rs::{Encoder, UTF_8};
 
 use ion::{Context, Object, Value, Error, ErrorKind, Result};
@@ -12,6 +14,7 @@ use ion::conversions::ToValue;
 use ion::function::Opt;
 use ion::typedarray::Uint8Array;
 
+#[derive(Debug)]
 pub struct EncodeResult {
 	read: u64,
 	written: u64,
@@ -31,6 +34,12 @@ pub struct TextEncoder {
 	reflector: Reflector,
 	#[trace(no_trace)]
 	encoder: Encoder,
+}
+
+impl Debug for TextEncoder {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("TextEncoder").finish()
+	}
 }
 
 #[js_class]

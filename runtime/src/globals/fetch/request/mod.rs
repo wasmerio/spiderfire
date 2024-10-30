@@ -31,7 +31,7 @@ use super::body::FetchBodyInner;
 
 mod options;
 
-#[derive(FromValue, Clone)]
+#[derive(FromValue, Clone, Debug)]
 pub enum RequestInfo<'cx> {
 	#[ion(inherit)]
 	Request(&'cx Request),
@@ -40,6 +40,7 @@ pub enum RequestInfo<'cx> {
 }
 
 #[js_class]
+#[derive(Debug)]
 pub struct Request {
 	reflector: Reflector,
 

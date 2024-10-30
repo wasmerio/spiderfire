@@ -9,6 +9,9 @@
 #[macro_use]
 extern crate mozjs;
 
+#[cfg(feature = "instrument")]
+pub use tracing;
+
 use std::result;
 
 pub use bigint::BigInt;
