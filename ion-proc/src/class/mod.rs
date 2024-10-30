@@ -30,7 +30,6 @@ pub(super) fn impl_js_class(item: Item) -> Result<TokenStream> {
 		Item::Impl(mut r#impl) => {
 			let impls = impl_js_class_impl(&mut r#impl)?;
 			Ok(quote_spanned!(r#impl.span() =>
-				#r#impl
 				#(#impls)*
 			))
 		}

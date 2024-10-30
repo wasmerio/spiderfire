@@ -6,10 +6,10 @@
 
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::ToTokens;
-use syn::{Error, FnArg, ImplItem, ImplItemFn, ItemFn, ItemImpl, parse2, Result, Type, Visibility};
+use syn::{parse2, Error, FnArg, ImplItem, ImplItemFn, ItemFn, ItemImpl, Result, Type, Visibility};
 use syn::spanned::Spanned;
 
-use crate::attribute::class::MethodAttribute;
+use crate::attribute::{class::MethodAttribute, instrument::instrument_from_attributes};
 use crate::attribute::krate::crate_from_attributes;
 use crate::attribute::name::Name;
 use crate::attribute::ParseAttribute;
@@ -21,7 +21,7 @@ use crate::class::r#impl::spec::PrototypeSpecs;
 
 mod spec;
 
-pub(super) fn impl_js_class_impl(r#impl: &mut ItemImpl) -> Result<[ItemImpl; 2]> {
+pub(super) fn impl_js_class_impl(r#impl: &mut ItemImpl) -> Result<[ItemImpl; 3]> {
 	let ion = &crate_from_attributes(&mut r#impl.attrs);
 
 	if !r#impl.generics.params.is_empty() {
@@ -38,6 +38,7 @@ pub(super) fn impl_js_class_impl(r#impl: &mut ItemImpl) -> Result<[ItemImpl; 2]>
 		));
 	}
 
+	let mut rewritten_impl_block = vec![];
 	let r#type = *r#impl.self_ty.clone();
 	let mut constructor: Option<Method> = None;
 	let mut specs = PrototypeSpecs::default();
@@ -52,9 +53,11 @@ pub(super) fn impl_js_class_impl(r#impl: &mut ItemImpl) -> Result<[ItemImpl; 2]>
 						specs.properties.0.push(property);
 					}
 				}
+				rewritten_impl_block.push(quote!(#item));
 			}
 			ImplItem::Fn(r#fn) => {
-				if let Some(parsed_constructor) = parse_class_method(ion, r#fn, &mut specs, &r#type)? {
+				let (parsed_constructor, instrument) = parse_class_method(ion, r#fn, &mut specs, &r#type)?;
+				if let Some(parsed_constructor) = parsed_constructor {
 					if let Some(constructor) = constructor.as_ref() {
 						return Err(Error::new(
 							r#fn.span(),
@@ -67,8 +70,15 @@ pub(super) fn impl_js_class_impl(r#impl: &mut ItemImpl) -> Result<[ItemImpl; 2]>
 						constructor = Some(parsed_constructor);
 					}
 				}
+				let instrument_attribute = instrument.map(|i| quote!(#[::tracing::instrument(#i)]));
+				rewritten_impl_block.push(quote!(
+					#instrument_attribute
+					#r#fn
+				));
 			}
-			_ => (),
+			other => {
+				rewritten_impl_block.push(quote!(#other));
+			}
 		}
 	}
 	specs.properties.0.push(Property {
@@ -90,26 +100,33 @@ pub(super) fn impl_js_class_impl(r#impl: &mut ItemImpl) -> Result<[ItemImpl; 2]>
 	};
 
 	let ident: Ident = parse2(quote_spanned!(r#type.span() => #r#type))?;
-	class_definition(ion, r#impl.span(), &r#type, &ident, constructor, specs)
+	let rewritten_impl_block = parse2(quote!(impl #r#type {
+		#(#rewritten_impl_block)*
+	}))?;
+	let [item1, item2] = class_definition(ion, r#impl.span(), &r#type, &ident, constructor, specs)?;
+	Ok([rewritten_impl_block, item1, item2])
 }
 
 fn parse_class_method(
 	ion: &TokenStream, r#fn: &mut ImplItemFn, specs: &mut PrototypeSpecs, r#type: &Type,
-) -> Result<Option<Method>> {
+) -> Result<(Option<Method>, Option<TokenStream>)> {
+	let attribute = MethodAttribute::from_attributes_mut("ion", &mut r#fn.attrs)?;
+
+	let instrument = instrument_from_attributes(&mut r#fn.attrs, &format!("{}::{}", quote!(#r#type), r#fn.sig.ident))?;
+	let MethodAttribute { name, alias, kind, post_construct, skip } = attribute;
+
 	match &r#fn.vis {
 		Visibility::Public(_) => (),
-		_ => return Ok(None),
+		_ => return Ok((None, instrument)),
 	}
 
 	let mut names = vec![];
 
-	let attribute = MethodAttribute::from_attributes_mut("ion", &mut r#fn.attrs)?;
-	let MethodAttribute { name, alias, kind, post_construct, skip } = attribute;
 	for alias in alias {
 		names.push(Name::String(alias));
 	}
 	if skip {
-		return Ok(None);
+		return Ok((None, instrument));
 	}
 
 	let name = name.unwrap_or_else(|| {
@@ -142,7 +159,7 @@ fn parse_class_method(
 				r#type,
 				post_construct.map(|p| p.to_token_stream()).as_ref(),
 			)?;
-			return Ok(Some(Method { names, ..constructor }));
+			return Ok((Some(Method { names, ..constructor }), instrument));
 		}
 		Some(MethodKind::Getter) => {
 			let (getter, parameters) = impl_accessor(ion, method, r#type, false)?;
@@ -176,7 +193,7 @@ fn parse_class_method(
 		}
 	}
 
-	Ok(None)
+	Ok((None, instrument))
 }
 
 fn class_definition(

@@ -63,7 +63,7 @@ pub(super) fn impl_method<F>(
 where
 	F: FnOnce(&Signature) -> Result<()>,
 {
-	let (wrapper, parameters) = impl_wrapper_fn(ion, method.clone(), Some(ty), false)?;
+	let (wrapper, parameters) = impl_wrapper_fn(ion, method.clone(), Some(ty), false, None)?;
 
 	predicate(&method.sig).and_then(|_| {
 		check_abi(&mut method)?;

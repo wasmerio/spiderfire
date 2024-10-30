@@ -1,11 +1,5 @@
 [workspace]
-members = [
-	"cli",
-	"ion",
-	"ion-proc",
-	"modules",
-	"runtime",
-]
+members = ["cli", "ion", "ion-proc", "modules", "runtime"]
 resolver = "2"
 
 [workspace.package]
@@ -13,19 +7,22 @@ edition = "2021"
 license = "MPL-2.0"
 
 [workspace.dependencies]
-ion-proc = { path = "./ion-proc"}
-ion = { path = "./ion"}
-runtime = { path = "./runtime"}
-modules = { path = "./modules"}
-cli = { path = "./cli"}
+ion-proc = { path = "./ion-proc" }
+ion = { path = "./ion" }
+runtime = { path = "./runtime" }
+modules = { path = "./modules" }
+cli = { path = "./cli" }
 
 bytes = "1.5.0"
+cfg-if = "1.0.0"
 colored = "2.1.0"
 dunce = "1.0.4"
 encoding_rs = "0.8.33"
 futures = "0.3.30"
 indent = "0.1.1"
-mozjs = { package = "mozjs", git = "https://github.com/wasmerio/mozjs", branch = "wasi-gecko-127-0-2-squashed", features = ["streams"]}
+mozjs = { package = "mozjs", git = "https://github.com/wasmerio/mozjs", branch = "wasi-gecko-127-0-2-squashed", features = [
+	"streams",
+] }
 mozjs_sys = { package = "mozjs_sys", git = "https://github.com/wasmerio/mozjs", branch = "wasi-gecko-127-0-2-squashed" }
 paste = "1.0.14"
 sourcemap = "6.4.1"

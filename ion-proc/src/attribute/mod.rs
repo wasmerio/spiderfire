@@ -12,6 +12,7 @@ use syn::punctuated::Punctuated;
 
 pub(crate) mod class;
 pub(crate) mod function;
+pub(crate) mod instrument;
 pub(crate) mod krate;
 pub(crate) mod name;
 pub(crate) mod property;

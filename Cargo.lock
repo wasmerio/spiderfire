@@ -1572,6 +1572,7 @@ dependencies = [
 name = "ion-proc"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "convert_case",
  "prettyplease",
  "proc-macro2",
@@ -1747,6 +1748,7 @@ dependencies = [
  "runtime",
  "tokio",
  "tokio-stream",
+ "tracing",
  "url",
 ]
 

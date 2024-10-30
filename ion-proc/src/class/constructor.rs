@@ -14,7 +14,7 @@ use crate::function::wrapper::impl_wrapper_fn;
 pub(super) fn impl_constructor(
 	ion: &TokenStream, mut constructor: ItemFn, ty: &Type, post_construct: Option<&TokenStream>,
 ) -> Result<Method> {
-	let (wrapper, parameters) = impl_wrapper_fn(ion, constructor.clone(), Some(ty), true)?;
+	let (wrapper, parameters) = impl_wrapper_fn(ion, constructor.clone(), Some(ty), true, None)?;
 
 	check_abi(&mut constructor)?;
 	set_signature(&mut constructor)?;

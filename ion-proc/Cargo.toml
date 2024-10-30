@@ -12,9 +12,17 @@ quote = "1.0.35"
 prettyplease = "0.2.16"
 proc-macro2 = "1.0.78"
 
+cfg-if.workspace = true
+
 [dependencies.syn]
 version = "2.0.48"
 features = ["visit-mut"]
+
+[features]
+instrument = []
+instrument-level-trace = []
+instrument-level-debug = []
+instrument-level-info = []
 
 # [lints]
 # workspace = true

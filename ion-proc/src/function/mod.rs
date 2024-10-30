@@ -8,7 +8,7 @@ use proc_macro2::TokenStream;
 use syn::{Abi, Block, Error, FnArg, Generics, ItemFn, parse2, Result};
 use syn::punctuated::Punctuated;
 
-use crate::attribute::krate::crate_from_attributes;
+use crate::attribute::{instrument::instrument_from_attributes, krate::crate_from_attributes};
 use crate::function::wrapper::impl_wrapper_fn;
 use crate::utils::new_token;
 
@@ -19,7 +19,8 @@ pub(crate) mod wrapper;
 // TODO: Partially Remove Error Handling in Infallible Functions
 pub(crate) fn impl_js_fn(mut function: ItemFn) -> Result<ItemFn> {
 	let ion = &crate_from_attributes(&mut function.attrs);
-	let (wrapper, _) = impl_wrapper_fn(ion, function.clone(), None, false)?;
+	let instrument = instrument_from_attributes(&mut function.attrs, &format!("{}", function.sig.ident))?;
+	let (wrapper, _) = impl_wrapper_fn(ion, function.clone(), None, false, instrument)?;
 
 	check_abi(&mut function)?;
 	set_signature(&mut function)?;
