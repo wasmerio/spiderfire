@@ -14,7 +14,7 @@ use mozjs::jsval::{JSVal, ObjectValue};
 #[cfg(feature = "sourcemap")]
 use sourcemap::SourceMap;
 
-use crate::{Context, Error, ErrorKind, Object, Result, Stack, Value};
+use crate::{Context, Error, ErrorKind, Heap, Object, Result, Stack, Value};
 use crate::conversions::{FromValue, ToValue};
 use crate::format::{Config, format_value, NEWLINE};
 use crate::stack::Location;
@@ -78,7 +78,7 @@ impl Exception {
 					kind,
 					message: message.into(),
 					location: Some(location),
-					object: Some(handle.get()),
+					object: Some(Heap::new(handle.get())),
 				};
 				Ok(Exception::Error(error))
 			} else {
@@ -135,8 +135,8 @@ impl ThrowException for Exception {
 	fn throw(&self, cx: &Context) {
 		match self {
 			Exception::Error(error) => {
-				if let Error { object: Some(object), .. } = error {
-					let exception = Value::from(cx.root(ObjectValue(*object)));
+				if let Error { object: Some(ref object), .. } = error {
+					let exception = Value::object(cx, &Object::from(object.root(cx)));
 					unsafe {
 						JS_SetPendingException(
 							cx.as_ptr(),
@@ -223,9 +223,9 @@ impl ErrorReport {
 
 	/// Creates an [ErrorReport] from an existing [Exception], with the [Error]'s exception stack.
 	pub fn from_exception_with_error_stack(cx: &Context, exception: Exception) -> ErrorReport {
-		let stack = if let Exception::Error(Error { object: Some(object), .. }) = exception {
+		let stack = if let Exception::Error(Error { object: Some(ref object), .. }) = exception {
 			unsafe {
-				rooted!(in(cx.as_ptr()) let exc = object);
+				let exc = object.root(cx);
 				Stack::from_object(cx, ExceptionStackOrNull(exc.handle().into()))
 			}
 		} else {

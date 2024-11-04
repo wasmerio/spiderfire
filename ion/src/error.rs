@@ -11,7 +11,7 @@ use std::fmt::{Display, Formatter};
 use mozjs::error::{throw_internal_error, throw_range_error, throw_type_error};
 use mozjs::jsapi::{CreateError, JS_ReportErrorUTF8, JSExnType, JSObject, JSProtoKey, UndefinedHandleValue};
 
-use crate::{Context, ErrorReport, Exception, Object, Stack, Value};
+use crate::{Context, ErrorReport, Exception, Heap, Object, Stack, Value};
 use crate::conversions::ToValue;
 use crate::exception::ThrowException;
 use crate::stack::Location;
@@ -112,7 +112,7 @@ pub struct Error {
 	pub kind: ErrorKind,
 	pub message: Cow<'static, str>,
 	pub location: Option<Location>,
-	pub object: Option<*mut JSObject>,
+	pub object: Option<Heap<*mut JSObject>>,
 }
 
 impl Error {
@@ -135,8 +135,8 @@ impl Error {
 	}
 
 	pub fn to_object<'cx>(&self, cx: &'cx Context) -> Option<Object<'cx>> {
-		if let Some(object) = self.object {
-			return Some(cx.root(object).into());
+		if let Some(object) = self.object.as_ref() {
+			return Some(object.root(cx).into());
 		}
 		if self.kind != ErrorKind::None {
 			unsafe {
@@ -222,7 +222,7 @@ impl From<Error> for ErrorReport {
 
 impl<E: error::Error> From<E> for Error {
 	fn from(error: E) -> Error {
-		Error::new(error.to_string(), None)
+		Error::new(error.to_string(), ErrorKind::None)
 	}
 }
 
