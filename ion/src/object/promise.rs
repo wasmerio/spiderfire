@@ -30,7 +30,7 @@ pub struct Promise {
 
 impl Debug for Promise {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_struct("Promise").finish()
+		f.debug_struct("Promise").field("ptr", &self.promise.get()).finish()
 	}
 }
 
@@ -133,6 +133,13 @@ impl Promise {
 		Promise {
 			promise: TracedHeap::new(unsafe { CallOriginalPromiseReject(cx.as_ptr(), val.handle().into()) }),
 		}
+	}
+
+	/// Creates a new [Promise], that is rejected with an ion::Error.
+	pub fn rejected_with_error(cx: &Context, err: crate::Error) -> Promise {
+		let mut val = Value::undefined(cx);
+		err.to_value(cx, &mut val);
+		Self::rejected(cx, val)
 	}
 
 	/// Creates a new [Promise], that is rejected with the pending exception.
