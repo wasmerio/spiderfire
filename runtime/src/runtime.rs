@@ -15,7 +15,10 @@ use ion::module::{init_module_loader, ModuleLoader};
 use ion::object::new_global;
 use mozjs::rust::{RealmOptions, SIMPLE_GLOBAL_CLASS};
 
-use crate::event_loop::{EventLoop, promise_rejection_tracker_callback};
+use crate::{
+	event_loop::{promise_rejection_tracker_callback, EventLoop},
+	globals::abort::AbortSignal,
+};
 use crate::event_loop::future::FutureQueue;
 use crate::event_loop::macrotasks::MacrotaskQueue;
 use crate::event_loop::microtasks::{JOB_QUEUE_TRAPS, MicrotaskQueue};
@@ -226,6 +229,8 @@ impl<ML: ModuleLoader + 'static, Std: StandardModules + 'static> RuntimeBuilder<
 				standard_modules.init_globals(cx, &global);
 			}
 		}
+
+		AbortSignal::init_pipe_to_handling(cx);
 
 		Runtime { global, cx, realm }
 	}

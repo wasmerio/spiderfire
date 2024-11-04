@@ -12,7 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
 use chrono::Duration;
-use mozjs::jsapi::JSObject;
+use mozjs::{
+	glue::JS_GetReservedSlot,
+	jsapi::{InitPipeToHandling, JSObject},
+};
 use mozjs::jsval::{JSVal, UndefinedValue};
 use tokio::sync::watch::{channel, Receiver, Sender};
 
@@ -127,6 +130,29 @@ pub struct AbortSignal {
 impl Debug for AbortSignal {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		f.debug_struct("AbortSignal").finish()
+	}
+}
+
+impl AbortSignal {
+	pub fn init_pipe_to_handling(cx: &Context) {
+		unsafe {
+			InitPipeToHandling(
+				&Self::class().base as *const _,
+				Some(abort_signal_is_aborted),
+				cx.as_ptr(),
+			);
+		}
+	}
+}
+
+unsafe extern "C" fn abort_signal_is_aborted(signal: *mut JSObject) -> bool {
+	// We can't go through ion::ClassDefinition because that requires a rooted
+	// object, and we don't have a context to root into.
+	unsafe {
+		let mut value = UndefinedValue();
+		JS_GetReservedSlot(signal, 0, &mut value);
+		let signal = &*(value.to_private().cast::<AbortSignal>());
+		signal.get_aborted()
 	}
 }
 
