@@ -10,7 +10,7 @@ use bytes::Bytes;
 use http::HeaderMap;
 use http::header::CONTENT_TYPE;
 use hyper::Method;
-use ion::string::byte::ByteString;
+use ion::{string::byte::ByteString};
 use ion::{TracedHeap, HeapPointer, Heap, Object};
 use ion::typedarray::{ArrayBufferWrapper, Uint8ArrayWrapper};
 use mozjs::jsapi::JSObject;
@@ -47,8 +47,21 @@ pub struct Request {
 	#[trace(no_trace)]
 	pub(crate) method: Method,
 	pub(crate) headers: Heap<*mut JSObject>,
+
+	/// To gain a bit of speed, we try to keep native buffers around for as long as possible.
+	/// This gives rise to a few scenarios:
+	///   * The request body is null/empty. In this case, this will be Some(FetchBodyInner::None).
+	///     In this case, the body will always remain unused.
+	///   * The request body comes from a native source, so it's a buffer of bytes. Then...
+	///     * If the body is requested as a stream, we turn it into a stream
+	///     * If text/json/array buffer/etc. is requested, we use the bytes to provide that
+	///       data and set this to None.
+	///   * The request body is a stream. In this case...
+	///     * When a stream is requested, we will simply return the stream.
+	///     * If text/json/etc. is requested, we use Request::is_body_used (which itself uses
+	///       ReadableStream::is_disturbed) to make sure we don't re-use a stream body that's
+	///       already been used, then consume the stream and set this to None.
 	pub(crate) body: Option<FetchBody>,
-	pub(crate) body_used: bool,
 
 	#[trace(no_trace)]
 	pub(crate) locations: Vec<Url>,
@@ -92,35 +105,33 @@ impl Request {
 		Headers::get_mut_private(cx, &self.headers.root(cx).into()).unwrap()
 	}
 
-	pub fn body_if_not_used(&self) -> Result<&FetchBody> {
-		match &self.body {
-			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
-			Some(body) => Ok(body),
+	pub fn body_if_not_used(&self, cx: &Context) -> Result<&FetchBody> {
+		if self.get_body_used(cx) {
+			Err(ion::Error::new("Body already used", ion::ErrorKind::Normal))
+		} else {
+			Ok(self.body.as_ref().unwrap())
 		}
 	}
 
-	pub fn take_body(&mut self) -> Result<FetchBody> {
-		if matches!(self.body, Some(FetchBody { ref body, .. }) if matches!(body, FetchBodyInner::None)) {
+	pub fn take_body(&mut self, cx: &Context) -> Result<FetchBody> {
+		if self.get_body_used(cx) {
+			return Err(ion::Error::new("Body already used", ion::ErrorKind::Normal));
+		}
+
+		if matches!(self.body, Some(FetchBody { body: FetchBodyInner::None, .. })) {
 			return Ok(FetchBody {
 				body: FetchBodyInner::None,
 				source: None,
 				kind: None,
 			});
 		}
-		match self.body.take() {
-			None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
-			Some(body) => Ok(body),
-		}
+
+		Ok(self.body.take().unwrap())
 	}
 
-	async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
-		let this = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap();
-		Ok(this
-			.take_body()?
-			.into_bytes(cx)
-			.await?
-			.map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
-			.unwrap_or_else(String::new))
+	pub async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
+		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body(&cx)?;
+		body.into_text(cx).await
 	}
 
 	pub fn try_clone(&mut self, cx: &Context) -> Result<Self> {
@@ -134,7 +145,6 @@ impl Request {
 			method,
 			headers: Heap::new(Headers::new_object(cx, Box::new(self.get_headers_object(cx).clone()))),
 			body: self.body.as_mut().map(|b| b.try_clone(cx)).transpose()?,
-			body_used: self.body_used,
 
 			locations: vec![url],
 
@@ -174,7 +184,6 @@ impl Request {
 			method,
 			headers,
 			body,
-			body_used: self.body_used,
 
 			locations: vec![url],
 
@@ -222,7 +231,6 @@ impl Request {
 					method: Method::GET,
 					headers: Heap::new(std::ptr::null_mut()),
 					body: Some(FetchBody::default()),
-					body_used: false,
 
 					locations: vec![url],
 
@@ -431,18 +439,38 @@ impl Request {
 
 	#[ion(get)]
 	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
-		let body = self.take_body()?;
-		let stream = match body.body {
+		if self.get_body_used(cx) {
+			return Err(ion::Error::new("Body already used", ion::ErrorKind::Normal));
+		}
+
+		let stream = match self.body.as_ref().unwrap().body {
 			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
-			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
-			FetchBodyInner::Stream(stream) => stream,
+			FetchBodyInner::Bytes(_) => {
+				let body = self.body.take().unwrap();
+				let FetchBodyInner::Bytes(bytes) = body.body else {
+					unreachable!()
+				};
+				let stream = ion::ReadableStream::from_bytes(cx, bytes);
+				let new_body = FetchBody {
+					body: FetchBodyInner::Stream(stream.clone()),
+					..body
+				};
+				self.body = Some(new_body);
+				stream
+			}
+			FetchBodyInner::Stream(ref stream) => stream.clone(),
 		};
+
 		Ok(stream.get())
 	}
 
 	#[ion(get, name = "bodyUsed")]
-	pub fn get_body_used(&self) -> bool {
-		self.body.is_none()
+	pub fn get_body_used(&self, cx: &Context) -> bool {
+		match &self.body {
+			None => true,
+			Some(FetchBody { body: FetchBodyInner::Stream(stream), .. }) => stream.is_disturbed(cx),
+			_ => false,
+		}
 	}
 
 	#[ion(name = "arrayBuffer")]
@@ -451,7 +479,7 @@ impl Request {
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
-				let body = this.take_body()?;
+				let body = this.take_body(&cx)?;
 				let (_, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
 				let bytes = bytes?.unwrap_or_default();
 				Ok(ArrayBufferWrapper::from(bytes.as_ref()))
@@ -464,7 +492,7 @@ impl Request {
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
-				let body = this.take_body()?;
+				let body = this.take_body(&cx)?;
 				let (_, bytes) = cx.await_native_cx(|cx| body.into_bytes(cx)).await;
 				let bytes = bytes?.unwrap_or_default();
 				Ok(Uint8ArrayWrapper::from(bytes.as_ref()))
@@ -477,7 +505,7 @@ impl Request {
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
-				let body = this.take_body()?;
+				let body = this.take_body(&cx)?;
 				let headers = this.get_headers_object(&cx);
 				let header = headers.get(ByteString::from(CONTENT_TYPE.to_string().into()).unwrap()).unwrap();
 				body.into_blob(cx, header).await
@@ -494,7 +522,7 @@ impl Request {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
-				let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
+				let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body(&cx)?;
 				body.into_json(cx).await
 			})
 		}
@@ -514,7 +542,7 @@ impl Request {
 						ErrorKind::Type,
 					));
 				};
-				this.take_body()?.into_form_data(cx, content_type).await
+				this.take_body(&cx)?.into_form_data(cx, content_type).await
 			})
 		}
 	}

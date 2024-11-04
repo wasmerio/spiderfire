@@ -38,6 +38,8 @@ pub struct Response {
 	reflector: Reflector,
 
 	pub(crate) headers: Heap<*mut JSObject>,
+
+	// See comments on Request::body.
 	pub(crate) body: Option<FetchBody>,
 
 	pub(crate) kind: ResponseKind,
@@ -129,8 +131,12 @@ impl Response {
 		Headers::get_private(cx, &obj).unwrap()
 	}
 
-	pub fn take_body(&mut self) -> Result<FetchBody> {
-		if matches!(self.body, Some(FetchBody { ref body, .. }) if matches!(body, FetchBodyInner::None)) {
+	pub fn take_body(&mut self, cx: &Context) -> Result<FetchBody> {
+		if self.get_body_used(cx) {
+			return Err(ion::Error::new("Body already used", ion::ErrorKind::Normal));
+		}
+
+		if matches!(self.body, Some(FetchBody { body: FetchBodyInner::None, .. })) {
 			return Ok(FetchBody {
 				body: FetchBodyInner::None,
 				source: None,
@@ -138,19 +144,16 @@ impl Response {
 			});
 		}
 
-		match self.body.take() {
-			None => Err(Error::new("Response body has already been used.", None)),
-			Some(body) => Ok(body),
-		}
+		Ok(self.body.take().unwrap())
 	}
 
 	pub async fn take_body_bytes(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<Bytes> {
-		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
+		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body(&cx)?;
 		Ok(body.into_bytes(cx).await?.unwrap_or_default())
 	}
 
 	pub async fn take_body_text(this: &impl HeapPointer<*mut JSObject>, cx: Context) -> Result<String> {
-		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
+		let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body(&cx)?;
 		body.into_text(cx).await
 	}
 
@@ -348,18 +351,39 @@ impl Response {
 	}
 
 	#[ion(get)]
-	pub fn get_body(&mut self, cx: &Context) -> Result<*mut JSObject> {
-		let stream = match self.take_body()?.body {
+	pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
+		if self.get_body_used(cx) {
+			return Err(ion::Error::new("Body already used", ion::ErrorKind::Normal));
+		}
+
+		let stream = match self.body.as_ref().unwrap().body {
 			FetchBodyInner::None => ion::ReadableStream::from_bytes(cx, Bytes::from(vec![])),
-			FetchBodyInner::Bytes(bytes) => ion::ReadableStream::from_bytes(cx, bytes),
-			FetchBodyInner::Stream(stream) => stream,
+			FetchBodyInner::Bytes(_) => {
+				let body = self.body.take().unwrap();
+				let FetchBodyInner::Bytes(bytes) = body.body else {
+					unreachable!()
+				};
+				let stream = ion::ReadableStream::from_bytes(cx, bytes);
+				let new_body = FetchBody {
+					body: FetchBodyInner::Stream(stream.clone()),
+					..body
+				};
+				self.body = Some(new_body);
+				stream
+			}
+			FetchBodyInner::Stream(ref stream) => stream.clone(),
 		};
+
 		Ok(stream.get())
 	}
 
 	#[ion(get, name = "bodyUsed")]
-	pub fn get_body_used(&self) -> bool {
-		self.body.is_none()
+	pub fn get_body_used(&self, cx: &Context) -> bool {
+		match &self.body {
+			None => true,
+			Some(FetchBody { body: FetchBodyInner::Stream(stream), .. }) => stream.is_disturbed(cx),
+			_ => false,
+		}
 	}
 
 	#[ion(name = "arrayBuffer")]
@@ -391,7 +415,7 @@ impl Response {
 		unsafe {
 			future_to_promise::<_, _, _, Error>(cx, move |cx| async move {
 				let this = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
-				let body = this.take_body()?;
+				let body = this.take_body(&cx)?;
 				let headers = this.get_headers_object(&cx);
 				let header = headers.get(ByteString::from(CONTENT_TYPE.to_string().into()).unwrap()).unwrap();
 				body.into_blob(cx, header).await
@@ -410,7 +434,7 @@ impl Response {
 		let this = TracedHeap::new(self.reflector.get());
 		unsafe {
 			future_to_promise(cx, move |cx| async move {
-				let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body()?;
+				let body = Self::get_mut_private(&cx, &cx.root(this.to_ptr()).into()).unwrap().take_body(&cx)?;
 				body.into_json(cx).await
 			})
 		}
@@ -430,7 +454,7 @@ impl Response {
 						ErrorKind::Type,
 					));
 				};
-				this.take_body()?.into_form_data(cx, content_type).await
+				this.take_body(&cx)?.into_form_data(cx, content_type).await
 			})
 		}
 	}

@@ -17,7 +17,7 @@ use crate::{
 	Local,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ReadableStream {
 	// Since streams are async by nature, they cannot be tied to the lifetime
 	// of one Context.
